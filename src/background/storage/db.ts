@@ -3,7 +3,7 @@
  *
  * 与原库（'IwaraDownloadTool'，页面 origin）不同源（extension origin），库改名为 'IwaraAssistant'。
  * schema 版本独立演进：v1 = videos / follows / friends / idmap（与原 v22 的表结构一致）。
- * 存量油猴数据迁移（GM 导出 JSON → 导入）在 M4 options 向导落地。
+ * 存量油猴数据迁移（GM 导出 JSON → 导入）由 options 迁移向导处理。
  *
  * 类型策略：不 extends idb 的 DBSchema（其 value 约束要求隐式索引签名，
  * 与 Iwara.* / VideoInfo 等 ambient interface 不兼容）；store 结构以下方常量为准，
@@ -275,7 +275,7 @@ export const db = {
         await conn.delete('friends', id)
     },
 
-    /** MediaCenter ID ↔ Iwara ID 映射写入（M4 迁移导入 / MediaCenter 推送用） */
+    /** MediaCenter ID ↔ Iwara ID 映射写入（迁移导入 / MediaCenter 推送用） */
     async putIdmap(entry: { ID: string; href: string }): Promise<void> {
         const conn = await dbPromise
         await conn.put('idmap', entry)

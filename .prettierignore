@@ -4,7 +4,6 @@ dist
 temp
 *.json
 # 自动生成的文件（勿手动编辑）
-src/i18n.ts
 package-lock.json
-# 只读参考骨架（源项目快照，永不修改）
-reference
+# 由 npm run fixtures:capture 生成的站点结构快照（重新格式化只会制造无意义 diff）
+e2e/playwright/fixtures/iwara-list.html

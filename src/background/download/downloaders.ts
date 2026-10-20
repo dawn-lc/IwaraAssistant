@@ -2,7 +2,7 @@
  * 下载执行器 —— 原 download/{download,aria2}.ts 的后台移植（4 通道）
  *
  * - browser：downloads.download（相对文件名，含子目录；两宿主同构）
- * - aria2：JSON-RPC addUri（cookie 经页面转发；WebSocket 追踪 M3）
+ * - aria2：JSON-RPC addUri（cookie 经页面转发；WebSocket 追踪）
  * - iwaradl：POST /api/tasks
  * - others：后台标签页打开富化后的下载地址（替代 GM_openInTab）
  */

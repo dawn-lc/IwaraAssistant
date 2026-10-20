@@ -1,5 +1,5 @@
 /**
- * options 表单基础组件 —— 帮助即保存（docs/06：options 直写 storage，无集中保存按钮）
+ * options 表单基础组件 —— 帮助即保存（docs/01：options 直写 storage，无集中保存按钮）
  *
  * 文案策略：界面文案统一走 `shared/i18n` 的字典（`src/shared/locales/*.json`），
  * 与页内菜单/右键菜单/系统通知同一份来源——`browser.i18n` 只留给 manifest 层

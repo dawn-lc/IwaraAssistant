@@ -1,18 +1,18 @@
 # 01 架构设计
 
-## 四个运行时上下文
+## 运行时上下文
 
-原油猴脚本只有一种上下文（页面沙箱 + `unsafeWindow` 逃逸），扩展化后拆分为四个各司其职的运行时：
+扩展按运行时边界拆分：页面两个世界（MAIN / ISOLATED）、后台、options、popup。
 
 ```mermaid
 flowchart TB
     subgraph page["iwara.tv 页面（两个世界）"]
         direction LR
-        MW["src/content/main-world.ts<br/>world: MAIN · run_at: document_start"]
+        MW["src/content/mainWorld.ts<br/>world: MAIN · run_at: document_start"]
         ISO["src/content/isolated.ts<br/>world: ISOLATED"]
     end
     subgraph extension["扩展上下文"]
-        BG["src/background/index.ts<br/>调度中枢（Chrome SW / Firefox event page）"]
+        BG["src/background/index.ts<br/>调度中枢（Chrome SW / Firefox 持久后台页）"]
         OPT["src/options/ 配置中心"]
         SP["src/popup/ 配置页入口"]
     end
@@ -27,13 +27,13 @@ flowchart TB
 
 ### 职责矩阵
 
-| 运行时            | 职责                                                                                                                                                                                                  | 来自原项目的对应物                                          | 不再负责                                                                                                    |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| MAIN 世界脚本     | ①`document_start` 劫持 `window.fetch`（原 main.ts:44）；②捕获 `/videos`、`/user/token`、`Authorization` 头；③下行改写 `/videos` 响应体                                                                | `network/fetchInterceptor.ts`、`main.ts` 启动段             | 解析入库（交给后台）、锁、DOM、**任何 `window.*` 全局暴露**（原 `core/hijack.ts` 的调试钩子不迁移，见下节） |
-| ISOLATED 世界脚本 | DOM 注入（卡片按钮、选择条）、`document.cookie` 采集、双向消息桥                                                                                                                                      | `ui/*` 页内部件、`context/*`                                | 配置面板（迁 options）、RPC（迁后台）、锁、一切状态反馈（notifications 接管）                               |
-| Background        | 下载调度总管：任务队列（唯一写者）、三通道下载（browser/aria2/iwaradl）、RPC、`alarms` 定时、`downloads.onChanged` 事件、aria2 WebSocket 保活、`contextMenus`、`notifications` 完成提醒、角标队列计数 | `download/*`、`features/aria2Track.ts`、`core/*` 同步锁全家 | —                                                                                                           |
-| Options           | 配置读写、数据迁移导入（GM 数据 JSON）、任务队列可视化                                                                                                                                                | `ui/configPanel.ts`、`ui/configUi.ts`、`ui/setup.ts`        | 与宿主 DOM 共存的全部竞态处理                                                                               |
-| Popup             | **只做配置页入口**：九项页签导航（与 options 共用 `shared/optionsTabs.ts`），点击复用已开的 options 标签页并落到对应 hash；不展示队列                                                                 | 无（源项目无对应物）                                        | 队列查看与操作（全部归 options 任务页签）                                                                   |
+| 运行时            | 职责                                                                                                                                                                                                | 不负责                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| MAIN 世界脚本     | ①`document_start` 劫持 `window.fetch`；②捕获 `/videos`、`/user/token`、`Authorization` 头；③下行改写 `/videos` 响应体                                                                               | 解析入库（交给后台）、锁、DOM、**任何 `window.*` 全局暴露**（见下节）     |
+| ISOLATED 世界脚本 | DOM 注入（卡片按钮、选择条）、`document.cookie` 采集、双向消息桥                                                                                                                                    | 配置面板（在 options）、RPC（在后台）、锁、状态反馈（notifications 接管） |
+| Background        | 下载调度总管：任务队列（唯一写者）、四通道下载（browser/aria2/iwaradl/others）、RPC、`alarms` 定时、`downloads.onChanged` 事件、aria2 WebSocket 保活、`contextMenus`、`notifications`、角标队列计数 | —                                                                         |
+| Options           | 配置读写、数据迁移导入、任务队列可视化、好友审批、使用引导                                                                                                                                          | 与宿主 DOM 共存的竞态处理                                                 |
+| Popup             | **只做配置页入口**：九项页签导航（与 options 共用 `shared/optionsTabs.ts`），点击复用已开的 options 标签页并落到对应 hash；不展示队列                                                               | 队列查看与操作（全部归 options 任务页签）                                 |
 
 ## 源码目录结构
 
@@ -66,7 +66,6 @@ flowchart TB
 | `runtime/`  | 宿主平台能力（横切）                           | `alarms`、`notify`、`clipboard`、`contextMenus`、`keepAlive`、`guardRules`                                                            |
 
 **后端目录必须同名**：同一角色的文件在不同后端目录里叫同一个名字（`client` = 连接与指令门面，`tracker` = 对账，`recover` = 恢复）。
-`iwaradl` 的门面曾经叫 `index.ts`，与 `aria2/client.ts` 不对称——同一件事两个名字，找代码时得猜。
 
 **消息路由只做派发**：`index.ts` 的 switch 每个分支一行，实现体都在领域目录（例如
 `REMOVE_TASK` → `download/queueActions.ts`，`LEGACY_DB_*` → `storage/legacyImport.ts`）。
@@ -108,13 +107,13 @@ content/
 
 ### `src/shared/` 为什么平铺
 
-它是**叶子工具库**：28 个文件里只有 8 处互相引用（`analyzePath → i18n`、`migrationStream → legacyDb` 之类），没有任何服务依赖网络。文件名即用途（`task` / `url` / `paging`），再套一层目录反而让「这个纯函数在哪」需要先猜目录。
+它是**叶子工具库**：30 个文件里只有少量互相引用（`analyzePath → i18n`、`migrationStream → legacyDb` 之类），没有任何服务依赖网络。文件名即用途（`task` / `url` / `paging`），再套一层目录反而让「这个纯函数在哪」需要先猜目录。
 
 判据：**有内部依赖网络的服务模块要按领域分目录；彼此独立的叶子工具平铺**。
 
 ### `test/`：与源文件同名
 
-26 个测试全部平铺且**文件名与被测模块一致**（`shared/task.ts` → `test/task.test.ts`）。
+30 个测试全部平铺且**文件名与被测模块一致**（`shared/task.ts` → `test/task.test.ts`）。
 这一层不需要按 `src/` 的五个领域再分一层目录：找测试的唯一途径是「我知道要看哪个模块」，
 而同名文件比路径更快。合并后的测试文件内部用 `── 某主题 ──` 分节（例如 `task.test.ts` 的
 通道能力 / 重启对账 / 取消策略三节）。
@@ -124,8 +123,10 @@ content/
 ```
 e2e/
   playwright/       Playwright（只跑 Chromium，直载 dist/chrome）
-    specs/          9 个 spec
-    helpers/        fixtures（launchPersistentContext + SW console 捕获）
+    specs/          10 个 spec
+    helpers/        fixtures（launchPersistentContext + SW console 捕获）、site（读站点快照 + 回放 API 录制）
+    fixtures/       iwara-list.html（真实站点结构快照）、api/*.json（真实 API 响应）
+                    两者都由 capture.ts 本地刷新（headed Chrome 过 Cloudflare），CI 不跑
   wdio/             WebdriverIO（Chrome + Firefox 同一份用例）
     extension.spec.ts   常规套件（同一 session 顺序验收）
     live/               真实站点 / 真实 aria2（E2E_LIVE=1 才收集）
@@ -139,7 +140,7 @@ e2e/
 WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”会同时丢掉两边的优势。
 
 ⚠️ **`wdio/extension.spec.ts` 故意不拆成多个文件**：WDIO 每个 spec 文件会重建 session（重装扩展 +
-重启浏览器），而 24 个用例共享同一个已加载的扩展与同一份 storage 演进（空队列 → 建任务 → 清队列）。
+重启浏览器），而 25 个用例共享同一个已加载的扩展与同一份 storage 演进（空队列 → 建任务 → 清队列）。
 拆文件会让耗时从 ~18 秒变成几分钟，而用例间的顺序依赖（撤销权限用例必须最后跑）也会变得不可见。
 这是「同一 session 的连续验收流程」，不是「该拆没拆」。
 
@@ -156,7 +157,7 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 `run_at: "document_start"` 的平台定义就是**在任何 DOM 被构建、任何页面脚本被执行之前注入**（[Chrome 文档](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts#run_time)、MDN 同表述）。因此：
 
 - `content/main-world.js` 的**第一行代码就已抢在页面所有脚本之前**；平台注入顺序不依赖 bundle 体积（同一时刻注入、按声明顺序执行）。
-- 曾经为了追求「更早」而拆出 `content/early-hook.js`（零依赖桩，暴露 `window.__iwaraAssistantFetchHook.install()` 供第二段接管）。实测标记显示两段写入时 DOM 状态完全相同（都是 `readyState=loading;body=0;elements=0`）——**时机收益为零，攻击面却不为零**。已删除。
+- 不为追求「更早」拆早期桩：`document_start` 已是平台能提供的最早时机，额外早跑桩没有收益，且会扩大攻击面。
 
 当前注入顺序（均在 `document_start`，manifest `content_scripts` 顺序即执行顺序）：
 
@@ -167,7 +168,7 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 | 3   | `content/page-ui.js`    | ISOLATED | ~26KB，最重，排最后不阻塞握手脚本                                          |
 | —   | `content/page-ui.css`   | 页面样式 | 声明式注入（挂在第 3 条的 `css` 上）；CSS 先于同条目的 JS 应用             |
 
-> **样式不走 JS**。源项目（油猴版）因为平台没有声明式 CSS 能力，只能 `GM_addStyle`；扩展有 `content_scripts[].css`，所以样式在**浏览器层面**注入（`document_start` 期间、DOM 构建前），`page-ui.js` 里一行注入代码都没有。beautify / widescreen 也从「条件 `GM_addStyle`」改为「常驻规则 + `html.ia-*` 类作用域」——开关只切类，无运行时注入。
+> **样式不走 JS**。样式由 `content_scripts[].css` 在**浏览器层面**注入（`document_start` 期间、DOM 构建前），`page-ui.js` 里没有任何样式注入代码。beautify / widescreen 使用「常驻规则 + `html.ia-*` 类作用域」，开关只切类，无运行时注入。
 
 时机证据（不是「看起来挺早」，而是可断言的事实）：
 
@@ -192,24 +193,24 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 - **`skipGlobalsShim`**：MAIN 入口构建时必须开启，否则 browser shim 会向页面写入 `window.browser = window.chrome`。
 - **无 `web_accessible_resources`**：`content/main-world.js` 由声明式 `world: "MAIN"` 注入，不需要页面可加载；WAR 会让页面能 `fetch(runtime.getURL(...))` 拿走源码。
 
-**已知保留项（继承原脚本，非疏漏）**：`/user/token` 响应里的 refresh token 写入页面 `localStorage`（原 userscript 靠它跨页共享会话）。页面本来就能读自己的 `localStorage`，故不增加信任面，但也意味着无法承诺「token 不落到页面」——已写入 [PRIVACY.md](../PRIVACY.md) 与 README。
+**已知保留项（有意接受）**：`/user/token` 响应里的 refresh token 会写入页面 `localStorage`（跨页面共享会话需要）。页面本来就能读自己的 `localStorage`，故不增加信任面，但也意味着无法承诺「token 不落到页面」——已写入 [PRIVACY.md](../PRIVACY.md) 与 README。
 
 ## UI 技术栈分野：React（扩展页）与命令式（页面注入）
 
 **两条 UI 路线按运行时边界划分，不搞全局统一**：
 
-| 区域                         | 技术                                                | 理由                                                                                                                                                                                                                                                                                            |
-| ---------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| options / popup / side panel | **React 19**（`jsx: automatic`，esbuild 原生支持）  | App 型 UI：表单状态多、状态源是后台推送（`DOWNLOAD_STATE` / `storage.onChanged` → `useSyncExternalStore` 订阅）；不随页面导航注入，React 体积无成本；配置校验复用 `shared/config-schema`（+zod）；React 产品构建无 eval，MV3 CSP 无碍                                                           |
-| 页面注入（卡片按钮、选择条） | **保留原 `renderNode` 命令式**（core/extension.ts） | 控件本质是"事件转发器"，无可 reconcile 的应用状态；React+ReactDOM ≈45KB gz 每次导航注入不划算；iwara 本身是 React 站点，页面里再挂 React 树徒增节点归属心智负担；且扩展 ISOLATED 世界与站点隔离后，原 `core/hijack.ts` 的 `originalNodeAppendChild` 等防御性备份可删，renderNode 迁移时一并瘦身 |
+| 区域                         | 技术                                               | 理由                                                                                                                                                                                                                                 |
+| ---------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| options / popup              | **React 19**（`jsx: automatic`，esbuild 原生支持） | App 型 UI：表单状态多、状态源是后台推送（`DOWNLOAD_STATE` / `storage.onChanged` → `useSyncExternalStore` 订阅）；不随页面导航注入，React 体积无成本；配置校验复用 `shared/configSchema`（+zod）；React 产品构建无 eval，MV3 CSP 无碍 |
+| 页面注入（卡片按钮、选择条） | **命令式 `renderNode`**                            | 控件本质是「事件转发器」，无可 reconcile 的应用状态；React+ReactDOM ≈45KB gz 每次导航注入不划算；iwara 本身是 React 站点，页面里再挂 React 树徒增节点归属心智负担；ISOLATED 世界与站点隔离后也无需宿主节点防御性备份                 |
 
-**页面内组件复杂度上限（设计红线）**：注入元素只允许两类轻量控件——可点击的下载/操作按钮、卡片勾选/选择条。**一切状态反馈（成功/失败/入队提示）不再自建 toast，统一走 `browser.notifications` 系统通知**（原 `core/notify.ts`/`toastify.ts` 整体不迁移）；**进度列表、任务队列、历史记录、错误详情等一切有状态展示一律不进页面**，由扩展自有页面呈现（options 任务面板 / side panel）——这些数据的家本来就在后台，展示层放扩展页零拷贝成本，也不用对抗站点样式与 DOM 变更。因此**不存在"页内组件升级到 React/Preact"的路径**：未来某个交互确实复杂时，正确动作是往 options/side panel/notifications 加功能，而不是把组件搬进页面。页面注入样式沿用独立命名空间隔离站点 CSS（见 05 文档）。
+**页面内组件复杂度上限（设计红线）**：注入元素只允许两类轻量控件——可点击的下载/操作按钮、卡片勾选/选择条。**一切状态反馈（成功/失败/入队提示）统一走 `browser.notifications` 系统通知**；**进度列表、任务队列、历史记录、错误详情等一切有状态展示一律不进页面**，由扩展自有页面呈现（options 任务面板）——这些数据的家本来就在后台，展示层放扩展页零拷贝成本，也不用对抗站点样式与 DOM 变更。因此**不存在"页内组件升级到 React/Preact"的路径**：未来某个交互确实复杂时，正确动作是往 options/notifications 加功能，而不是把组件搬进页面。页面注入样式沿用独立命名空间隔离站点 CSS（见 [05-features.md](05-features.md)）。
 
 **扩展页的 toast 不自研**：options 侧用 `sonner`——保存反馈、队列操作、迁移导出都是"通知"，本质是队列而非单值（旧的全局字符串会被后到的覆盖）；错误文本需要可关闭、可停留阅读；aria-live / 键盘可达 / reduced-motion 由库提供。页面只挂一个 `<Toaster>`（`src/options/toaster.tsx`，仅配置主题/位置/a11y），业务代码直接调用 `toast`，不再套一层命名包装函数。它只进 options bundle（该入口本来就有 React），**content script 不引入任何 React/UI 库**——两条路线互不越界。
 
-**配置导入导出与设置入口只在扩展页**：页内菜单不再有"导出配置/导入配置/打开设置"（源项目把这三项塞进页内，本扩展改成 options「迁移」页签的导入导出 + 工具栏弹窗的页签入口）。理由：这是低频运维/导航操作，且页内实现必然重复一遍校验/合并逻辑；菜单只留高频的下载与选择动作，`flash` 提示与 `overlay.css` 的导入分支随之删除（overlay 仅剩手动下载对话框）。
+**配置导入导出与设置入口只在扩展页**：options「迁移」页签负责导入导出，工具栏 popup 负责页签入口；页内菜单只保留高频的下载与选择动作，避免在页面里重复一遍校验/合并逻辑。
 
-**迁移页必须支持粘贴，而不只是选文件**：源项目的「导出配置」实现是 `GM_setClipboard(stringify(config))`（`ui/setup.ts`）与一个 `<textarea>` 粘贴导入（`ui/configUi.ts`）——它从不产生文件。所以迁移页的主入口是「粘贴框 + 导入粘贴内容」，文件选择只是同一管线的另一个输入源。两种来源的形态不同：旧脚本剪贴板里是**裸配置对象**，本扩展导出的是**完整迁移包** `{config, videos, follows, friends, idmap}`；`shared/migrationStream.ts` 按「有 config/四表键 → 包；否则含已知配置键 → 裸配置；都不是 → 报错」识别（形态与类型定义在 `shared/migrationPayload.ts`）。第三分支是安全阀：若不报错而按空配置处理，zod 会用默认值覆盖用户配置。
+**迁移页必须支持粘贴，而不只是选文件**：旧版脚本的「导出配置」只产生剪贴板里的**裸配置 JSON**，不产生文件。因此迁移页的主入口是「粘贴框 + 导入粘贴内容」，文件选择只是同一管线的另一个输入源。两种来源的形态不同：旧脚本剪贴板里是**裸配置对象**，本扩展导出的是**完整迁移包** `{config, videos, follows, friends, idmap}`；`shared/migrationStream.ts` 按「有 config/四表键 → 包；否则含已知配置键 → 裸配置；都不是 → 报错」识别（形态与类型定义在 `shared/migrationPayload.ts`）。第三分支是安全阀：若不报错而按空配置处理，zod 会用默认值覆盖用户配置。
 
 **整份载荷不得序列化成一个字符串（导出/导入的铁律）**：V8 的单字符串上限是 2^29−24 字符（≈512 MiB），而视频库单条记录可达数 MB——`JSON.stringify(整个载荷)` 会直接抛 `allocation size overflow`，`file.text()` 在导入端会撞同一个上限（"自己导出的备份自己导不回来"）。因此两端都必须增量：
 
@@ -225,52 +226,15 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 
 目标：**非交互状态下页面零 DOM 注入，常驻 JS 只有"两个薄壳"**。
 
-| 注入物            | 形态                                         | 说明                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MAIN 世界纯转发器 | JS（常驻，最小化）                           | 仅两件事：①`fetch` 劫持；②对 `/videos` 响应做**纯函数改写**（点赞/私有过滤用响应自带字段；"缓存回填"用后台经下行通道推送的预载列表，**不在页面查库**——解析、入库、字段展开全部在后台，MAIN 不引入 idb/parse 依赖）                                                                                                                                                                                         |
-| ISOLATED 薄桥     | JS（常驻，最小化）                           | CustomEvent⇄runtime 消息桥 + `document.cookie` 采集 + 按需按钮渲染器，无业务逻辑                                                                                                                                                                                                                                                                                                                           |
-| 声明式 CSS        | `content_scripts[].css`（manifest 静态文件） | beautify / widescreen / 自定义皮肤从 `GM_addStyle` 运行时注入改为**声明式**——浏览器在导航时自动应用，不占 JS、无执行时机问题                                                                                                                                                                                                                                                                               |
-| 按需 DOM          | 选择模式激活 / `enableCardButtons` 开启时    | 批量选择工具条 + 卡片按钮；正常浏览默认 0 个注入节点                                                                                                                                                                                                                                                                                                                                                       |
-| 引导体验          | `runtime.onInstalled`（安装/更新事件）       | **首次运行引导浮层整体删除，不留**（`ui/setup.ts` 的 `editConfig.inject`/`showGuideOverlay`、`features/onboarding.ts` 均不迁移）；改为 options 内置「使用引导」页签（安装引导 + host 权限检测 + 钓鱼防护说明），`runtime.onInstalled(reason)`：`install` / `update` 都打开引导页（`install` 时聚焦）——页面零注入零打扰。**不内置更新日志**：发布说明留在商店页与 release notes，避免每版都要在代码里补一份 |
+| 注入物            | 形态                                         | 说明                                                                                                                                                                                                                                                                |
+| ----------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MAIN 世界纯转发器 | JS（常驻，最小化）                           | 仅两件事：①`fetch` 劫持；②对 `/videos` 响应做**纯函数改写**（点赞/私有过滤用响应自带字段；"缓存回填"用后台经下行通道推送的预载列表，**不在页面查库**——解析、入库、字段展开全部在后台，MAIN 不引入 idb/parse 依赖）                                                  |
+| ISOLATED 薄桥     | JS（常驻，最小化）                           | CustomEvent⇄runtime 消息桥 + `document.cookie` 采集 + 按需按钮渲染器，无业务逻辑                                                                                                                                                                                    |
+| 声明式 CSS        | `content_scripts[].css`（manifest 静态文件） | beautify / widescreen / 自定义皮肤由浏览器在导航时自动应用，不占 JS、无执行时机问题                                                                                                                                                                                 |
+| 按需 DOM          | 选择模式激活 / `enableCardButtons` 开启时    | 批量选择工具条 + 卡片按钮；正常浏览默认 0 个注入节点                                                                                                                                                                                                                |
+| 引导体验          | `runtime.onInstalled`（安装/更新事件）       | options 内置「使用引导」页签（安装引导 + host 权限检测 + 钓鱼防护说明），`runtime.onInstalled(reason)`：`install` / `update` 都打开引导页（`install` 时聚焦）——页面零注入零打扰。**不内置更新日志**：发布说明留在商店页与 release notes，避免每版都要在代码里补一份 |
 
-交互动手的另一个主入口是 **`contextMenus`**（视频链接/卡片右键：下载、加入队列、复制路径）与 **`commands`** 快捷键（进入/退出选择模式）——两者都是平台原生 UI，零注入成本。
-
-## 旧模块 → 新模块迁移映射
-
-### 直接删除的机制（后台单例天然替代）
-
-| 旧模块                                                                | 机制                                       | 删除原因                                 |
-| --------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------- |
-| `core/gmLock.ts`                                                      | GM 存储 + 心跳 + TTL 租约 + `pruneExpired` | 后台是唯一消费者，不存在竞争             |
-| `core/webLock.ts`                                                     | `navigator.locks` 跨标签页互斥             | 同上                                     |
-| `core/mutex.ts`                                                       | WebSocket 劫持互斥                         | 同上                                     |
-| `core/multiPage.ts`                                                   | BroadcastChannel 在场检测 + 选举 + suicide | 后台常驻职责，无"谁来当家"               |
-| `core/gmSyncDictionary.ts` / `core/syncDictionary.ts`                 | `GM_addValueChangeListener` 跨页字典       | 队列移入后台，单一写者                   |
-| `core/hijack.ts` 中 storage/appendChild/console 防御性备份            | 防宿主冲突                                 | 不寄生页面，无需防                       |
-| `aria2Track` 的 3 个 `setInterval`（选举/重扫/清锁）+ `pagehide` 让位 | aria2Track.ts:905                          | → `browser.alarms` 两个 alarm + 事件驱动 |
-
-### 迁移的模块
-
-| 旧模块                                                                                             | 新位置                                                                                              | 形态变化                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core/db.ts`（IndexedDB 视频库）                                                                   | `src/background/storage/db.ts`                                                                      | 后台运行，`idb` 依赖不变；content 只经消息查库                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `core/config.ts`                                                                                   | `src/shared/config-schema.ts` + 后台 `configStore.ts`                                               | 存 `browser.storage.local`；schema/默认值沿用；写操作收敛到后台+options                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `download/download.ts`、`download/aria2.ts`、`download/downloadPath.ts`、`download/linkCheck.ts`   | `src/background/download/`                                                                          | `GM_download` → `browser.downloads`；`GM_xmlhttpRequest` → 后台 `fetch`；`GM_openInTab` → `browser.tabs.create({active:false})`                                                                                                                                                                                                                                                                                                                                                           |
-| `features/aria2Track.ts`                                                                           | `src/background/backends/aria2/`                                                                    | 轮询→事件（`downloads.onChanged` 只覆盖 browser 通道；aria2 通道保留 WebSocket 通知 + alarm 兜底重扫）。`client.ts`（RPC）/`ws.ts`（连接）/`tracker.ts`（对账）/`recover.ts`（恢复）                                                                                                                                                                                                                                                                                                      |
-| `ui/configPanel.ts` 等 ~1.5k 行注入 UI                                                             | `src/options/`                                                                                      | 标准 options 页，直接操作 storage，无注入竞态                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `i18n.ts` + 字典                                                                                   | `src/shared/i18n.ts`（i18next）+ `src/shared/locales/*.json`（+ manifest `_locales/` 仅 `extName`） | **运行时多语言（i18next）**：四个上下文共用同一个实例（键名编译期校验、`{name}` 插值、`initAsync:false` 同步初始化）。翻译**无中间层**：React 组件用 `react-i18next` 的 `useTranslation()`（实例由 `options/main.tsx` 与 `popup/main.tsx` 的 `I18nextProvider` 注入），content/background/非组件模块用 `i18n.t()`；键名与返回类型由 `src/shared/i18next.d.ts` 的 `CustomTypeOptions` 提供；`react-i18next` 因此不会进 content/background 包；`browser.i18n.getMessage` 只用于 manifest 层 |
-| `features/pageSync.ts`、`mediaSync.ts`、`friendRequests.ts`                                        | 页面采集逻辑留在 ISOLATED；**触发调度移后台**                                                       | 后台 `alarms` + `tabs.sendMessage` 唤醒对应页面执行扫描，页面不再自跑常驻定时器                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `core/extension.ts` 的 `renderNode`                                                                | `src/content/widgets/` 命令式形态保留                                                               | 扩展页不使用（React 接管）；页面注入继续用它（见上文 UI 技术栈分野）——一并删除 `core/hijack.ts` 中 appendChild/remove/console 的防御性备份（扩展世界无需防宿主）                                                                                                                                                                                                                                                                                                                          |
-| `ui/setup.ts`（首次运行引导浮层 `editConfig.inject`/`showGuideOverlay`）、`features/onboarding.ts` | **不迁移（删除）**                                                                                  | 页内引导浮层违反注入最小化原则；改为 options「使用引导」页签，`runtime.onInstalled` `install` 自动打开（详见 01 文档「注入最小化原则」表）                                                                                                                                                                                                                                                                                                                                                |
-| `core/notify.ts`、`ui/toastify.ts`、`features/progress.ts`                                         | **不迁移（删除）**                                                                                  | 页内 toast/页内进度条废除：反馈走 `browser.notifications`，进度走侧栏/options 任务面板（见 01 文档设计红线）                                                                                                                                                                                                                                                                                                                                                                              |
-
-### 保留原样的模块
-
-| 模块                                               | 说明                                                                                                                          |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `network/fetchInterceptor.ts` 核心逻辑             | 原样进 MAIN 世界 bundle；三件事不变：读 Authorization 头、读响应体入库、**改写** `/videos` 响应（点赞过滤/私有过滤/缓存回填） |
-| `core/path.ts`、`core/env.ts` 工具函数、dayjs 扩展 | 共享模块，双上下文引用                                                                                                        |
-| `downloadPath` 的路径模板与清洗                    | 双上下文使用（页面预览 + 后台落盘）；目录清洗规则按目标下载器分派                                                             |
+交互动手的另一个主入口是 **`contextMenus`**（视频链接 / 视频页右键「下载此视频」）——平台原生 UI，零注入成本。
 
 ## Background 双宿主同一 bundle
 
@@ -288,28 +252,26 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 
 **保活（Chrome，默认关闭）**：用户可在「高级 → 扩展行为」打开 `keepBackgroundAlive`。实现见 `src/background/runtime/keepAlive.ts`：offscreen 文档每 20 秒向 SW 发一次端口消息。收益只有一件事——WS 通知不必等 `scan-aria2`（5 min）兜底；代价是 SW 不再被空闲回收。**它不是官方能力**，Chrome 文档明确要求「避免无限期保活」，所以默认关闭、失败静默退回 alarms。Firefox 侧该开关无效（持久后台页本就不挂起）。
 
-## 定时任务清单（全部迁 `browser.alarms`）
+## 定时任务清单（`browser.alarms`）
 
-| alarm（期名）  | 周期                  | 来源（替代）                                  | 动作                     |
-| -------------- | --------------------- | --------------------------------------------- | ------------------------ |
-| `scan-aria2`   | 5 min                 | 原 `ARIA2_TRACK_SCAN_INTERVAL` 的 setInterval | 全量扫 aria2 任务入队    |
-| `ws-keepalive` | 2 min                 | WebSocket 心跳                                | 探活重连（仅在未连接时） |
-| `retry-failed` | 可配置（默认 30 min） | 原 retry hook 的手工触发                      | 扫描失败任务按策略重试   |
-| `refresh-sync` | 可配置                | pageSync/friendRequests 的页内循环            | 按标签页广播扫描指令     |
-
-选举/`pruneExpired` 类 alarm 不复存在。
+| alarm          | 周期                  | 动作                   |
+| -------------- | --------------------- | ---------------------- |
+| `scan-aria2`   | 5 min                 | 全量扫 aria2 任务入队  |
+| `ws-keepalive` | 2 min                 | WebSocket 探活重连     |
+| `retry-failed` | 可配置（默认 30 min） | 扫描失败任务按策略重试 |
+| `refresh-sync` | 可配置                | 按标签页广播扫描指令   |
 
 ## 状态与数据
 
 - **配置**：`storage.local`（含自定义 RPC 端点、下载模式、路径模板）；跨标签页即时生效靠 content 动作前读缓存（低频）+ `storage.onChanged` 失效广播（后台发出）。
-- **视频库**：IndexedDB（**后台专属**）。任何上下文需要读写都经消息：`GET_VIDEOS`（查询）/ `DB_EXPORT_PAGE`（全量导出分页）/ `LEGACY_DB_BATCH`（批量写入）。options 与后台虽同为扩展 origin、物理上能直接 `openDB`，但**分层上禁止**——两个写入者会让事务语义与错误归属都无法界定（早期迁移页曾直接 import `background/storage/db` 直写，已改）。
-- **任务队列**：`storage.local` 持久化 + 后台内存运行副本；启动时从 storage 恢复。旧版数据迁移：options 提供导入向导，从油猴脚本导出的 JSON（配置 + 可选视频库）载入（见 roadmap M4）。
+- **视频库**：IndexedDB（**后台专属**）。任何上下文需要读写都经消息：`GET_VIDEOS`（查询）/ `DB_EXPORT_PAGE`（全量导出分页）/ `LEGACY_DB_BATCH`（批量写入）。options 与后台虽同为扩展 origin、物理上能直接 `openDB`，但**分层上禁止**——两个写入者会让事务语义与错误归属都无法界定。
+- **任务队列**：`storage.local` 持久化 + 后台内存运行副本；启动时从 storage 恢复。旧版数据迁移：options 提供导入向导，读取旧脚本页面数据库或粘贴配置（见 [05-features.md](05-features.md#数据与迁移)）。
 
 ## 权限与页面能力的边界
 
 Chrome 平台约束（已核验）：
 
-- `webRequest` MV3 只读且**永不暴露响应体**，`declarativeNetRequest` 不改 body——故响应体改写必须留页内注入（详见 [05-feature-mapping.md](05-feature-mapping.md)）。
+- `webRequest` MV3 只读且**永不暴露响应体**，`declarativeNetRequest` 不改 body——故响应体改写必须留页内注入（详见 [05-features.md](05-features.md)）。
 - `chrome.debugger`（CDP）虽能改 body，但常驻挂调试器带横幅/权限警告/DevTools 互斥，**显式不采用**。
 - Authorization 头捕获：现 MAIN 劫持已覆盖（请求发出前 init.headers），无需 `webRequest`。
 
@@ -319,7 +281,7 @@ Chrome 平台约束（已核验）：
 
 ### 钓鱼仿冒防护
 
-源项目在油猴里用 `confirm` + 封网络 API 做这件事；扩展版同样需要它，但形态不同。
+钓鱼仿冒防护需要全屏警告与网络封锁；页面 JS 层只是最里面那层。
 
 **三层防线（页面 JS 层只是最里面那层）**
 

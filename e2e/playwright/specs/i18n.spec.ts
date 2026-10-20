@@ -9,16 +9,7 @@
  * 用例修改了共享会话的 config，结尾必须还原，否则后续用例的中文断言会炸。
  */
 import { test, expect, openExtensionPage } from '../helpers/fixtures'
-
-/** 伪造 iwara 列表页（content_scripts.matches 命中 *://*.iwara.tv/*） */
-function stubPage(): string {
-    return `<!doctype html><html><head><meta charset="utf-8"><title>stub iwara</title></head>
-<body><main class="container"><div class="videoTeaser">
-    <a class="videoTeaser__thumbnail" href="/video/langVideo1"><img alt=""></a>
-    <a class="videoTeaser__title" href="/video/langVideo1" title="Lang One">Lang One</a>
-    <a class="username" href="/profile/someone" title="Someone">Someone</a>
-</div></main></body></html>`
-}
+import { iwaraListPage } from '../helpers/site'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -26,7 +17,7 @@ test('界面语言：切换立即生效 + reload 仍在 + 页内菜单共用同�
     const { context, page, extensionId } = sharedSession
 
     // 伪造站点（页内菜单需要真实注入环境）
-    await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: stubPage() }))
+    await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: iwaraListPage() }))
     const iwara = await context.newPage()
     await iwara.goto('https://www.iwara.tv/videos')
     await expect(iwara.locator('html[data-ia-bridge]')).toHaveAttribute('data-ia-bridge', /ready|no-ack/, { timeout: 15_000 })

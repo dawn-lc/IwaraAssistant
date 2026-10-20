@@ -9,7 +9,7 @@
  *        本世界不解析入库、不查库、无 idb 依赖（docs/01 注入最小化原则）
  *
  * Chrome 平台上这是响应体改写的唯一非 CDP 途径（webRequest 无 body、DNR 不改 body）。
- * Firefox 可选 filterResponseData 后台通道，见 docs/02（M5 可选增强）。
+ * Firefox 可选 filterResponseData 后台通道，见 docs/02（可选增强）。
  *
  * 注意：此世界没有 browser.* API，全部数据经 CustomEvent(JSON) 上行。
  * 构建时对本入口设了 `skipGlobalsShim`——**不要**把 browser shim 带进 MAIN world，

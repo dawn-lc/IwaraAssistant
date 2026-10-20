@@ -1,6 +1,6 @@
 /**
  * 下载路径渲染 —— 原 download/downloadPath.ts 移植
- * 模板渲染（sanitize 规则链）→ analyzePath；三通道统一经 buildDownloadUrl 富化地址
+ * 模板渲染（sanitize 规则链）→ analyzePath；四通道统一经 buildDownloadUrl 富化地址
  */
 import { analyzePath, type AnalyzedPath } from '../../shared/analyzePath'
 import { replaceEmojis, replaceVariable, truncate } from '../../shared/strings'
@@ -36,7 +36,7 @@ export function getDownloadPath(videoInfo: FullVideoInfo): AnalyzedPath {
 
 /**
  * 从视频信息构建带 videoid/download 参数的下载地址（原 buildDownloadUrl）：
- * - videoid：任务反查视频 ID 的基础（M3 aria2 追踪依赖）
+ * - videoid：任务反查视频 ID 的基础（aria2 追踪依赖）
  * - download：本地文件名（执行器识别）
  */
 export function buildDownloadUrl(videoInfo: FullVideoInfo, localPath: AnalyzedPath): URL {

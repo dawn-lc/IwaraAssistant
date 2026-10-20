@@ -61,7 +61,7 @@ esbuild 构建时以 `inject` 选项把它注入所有入口（content/SW/option
     - Chrome 对照：`host_permissions` 被视为**必需权限**，`permissions.remove()` 直接报 `You cannot remove required permissions`，`permissions.request()` 则报 `Cannot request required permission`；用户只能在扩展详情页把「网站访问权限」改成「点击时」。两个平台都**没有**可在扩展内完成的重新授权路径。
     - **MV2 又不一样**（Firefox 158 实测）：`<all_urls>` 在 MV2 里只能写进 `permissions`，属于必需权限，`permissions.remove({origins})` **返回 true 但什么也不做**（随后 `contains()` 仍为 true）。也就是说 MV2 产物下「扩展内撤销」这条路根本不存在，只有用户在扩展管理页手动关站点访问才会真的失效。
     - 自动化边界：正因为没有「点一下就好」的按钮，WDIO 的撤销用例断言的是「界面与 `contains()` 始终一致 + 无按钮 + 撤销成功时提示文本指回扩展管理页」，并且**必须放在最后**（万一真的撤销，Firefox 本次会话内无法恢复）。
-4. **下载子目录**：两宿主都支持。曾经因为 Bugzilla 1280044（2016 年提的 Firefox 缺陷）而对 Firefox 做文件名扁平化，但那条 bug 在 **Firefox 51（2017-01）就已 FIXED**；Firefox 158 实测 `filename: 'a/b/c.txt'` 会自动建出两层目录（`~/Downloads/a/b/c.txt`，`state: complete`）。现在 `toDownloadFilename` 只有一条路径，两个宿主的目录结构完全一致，不再需要提示用户切通道。
+4. **下载子目录**：两宿主都支持（Bugzilla 1280044 已修复；Firefox 158 实测 `filename: 'a/b/c.txt'` 会自动建出两层目录，`state: complete`）。`toDownloadFilename` 只有一条路径，两个宿主的目录结构完全一致。
 5. **Firefox 的本地网络访问策略只拦 MV3 扩展，不拦 MV2 扩展**（Firefox 158 实测；同一份代码、同一个 `_generated_background_page.html`、同一个 `moz-extension://` 源，唯一变量是 `manifest_version`）：
 
     | 发起上下文                                       | MV3               | MV2             |

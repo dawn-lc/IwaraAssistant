@@ -1,8 +1,8 @@
-# 商店上架素材（M6）
+# 商店上架素材
 
 双路线：**AMO 上传审核**（默认，零配置）与 **Firefox 自建签名自更新**（设环境变量，包内注入 `gecko.update_url`）。Chrome Web Store 仅一条路线（上传审核）。
 
-> 迁移期纪律（docs/06）：发布后**保留油猴脚本并行一个发布周期**，README 提供迁移指引；确认无误后用户再禁用旧脚本。
+> 首轮发布建议保留旧版脚本一个发布周期，README 提供迁移指引；确认无误后用户再禁用旧脚本。发布流程见 [06-testing-and-release.md](06-testing-and-release.md)。
 
 ## 一、Chrome Web Store
 
@@ -116,17 +116,17 @@ No data collection. No telemetry. Everything stays in your browser.
 
 ### 简体中文
 
-**Summary**: 批量下载与管理 iwara.tv 视频：Browser/Aria2/iwaradl 三通道、列表过滤、元数据缓存、系统通知任务队列。
+**Summary**: 批量下载与管理 iwara.tv 视频：Browser/Aria2/iwaradl/直链四通道、列表过滤、元数据缓存、系统通知任务队列。
 
 **Description**:
-Iwara Assistant 是 IwaraDownloadTool 油猴脚本的扩展化版本：
+Iwara Assistant 是面向 iwara.tv 的浏览器扩展：
 
 - 右键视频链接 → 「Iwara Assistant → 下载此视频」。
 - 四条下载通道：浏览器内建（默认，进度与完成情况真实回传）、Aria2（WebSocket 实时推送，完成/失败即时通知）、iwaradl、后台标签页开直链。
 - 保存路径模板（逐段清洗：NFKC / emoji 折叠 / 长度截断）+ 实时预览。
 - 信息流过滤：隐藏已点赞内容；可把已收录的私有/不公开视频回填到首页时间线。
 - 后台视频库 + 任务队列持久化（浏览器关掉标签页任务照跑），完成/失败走系统通知 + 角标。
-- RPC 端点随安装一次授予站点访问（没有逐地址授权弹窗）、油猴数据迁移向导、内置使用引导。
+- RPC 端点随安装一次授予站点访问（没有逐地址授权弹窗）、旧版数据迁移向导、内置使用引导。
 
 不收集任何数据，无遥测；一切数据只留在你的浏览器里。
 

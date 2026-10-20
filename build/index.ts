@@ -228,7 +228,7 @@ async function writeManifest(version: string): Promise<void> {
         manifest['permissions'] = [...current, ...extraPermissions.filter((permission) => !current.includes(permission))]
     }
 
-    // Firefox 自更新发版路线（M6 可选）：设 IWARA_ASSISTANT_UPDATE_URL 环境变量时注入 gecko.update_url，
+    // Firefox 自更新发版路线（可选）：设 IWARA_ASSISTANT_UPDATE_URL 环境变量时注入 gecko.update_url，
     // 签名用 AMO 账号密钥自签（web-ext sign --api-key …）。注意该键与 AMO 上传审核互斥（AMO 会剥离校验）；
     // 默认不设 → 走 AMO 上传审核路线，无 update_url。
     if (target === 'firefox') {

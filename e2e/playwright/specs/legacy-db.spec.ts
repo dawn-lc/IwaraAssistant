@@ -10,6 +10,7 @@
  * 页面里直接建旧库，再重载触发 content script 检测。
  */
 import { test, expect, openExtensionPage } from '../helpers/fixtures'
+import { iwaraListPage } from '../helpers/site'
 
 /** 旧库名与表结构（对齐 IwaraDownloadTool v22：videos / follows / friends / idmap） */
 async function seedLegacyDb(): Promise<void> {
@@ -48,22 +49,13 @@ async function seedLegacyDb(): Promise<void> {
     db.close()
 }
 
-function stubPage(): string {
-    return `<!doctype html><html><head><meta charset="utf-8"><title>stub iwara</title></head>
-<body><main class="container"><div class="videoTeaser">
-    <a class="videoTeaser__thumbnail" href="/video/legacyVideo1"><img alt=""></a>
-    <a class="videoTeaser__title" href="/video/legacyVideo1" title="Legacy One">Legacy One</a>
-    <a class="username" href="/profile/someone" title="Someone">Someone</a>
-</div></main></body></html>`
-}
-
 test.describe.configure({ mode: 'serial' })
 
 test('旧脚本页面数据库：自动检测 → 迁移页显示条数 → 一键导入到扩展库', async ({ sharedSession }) => {
     const { context, page, extensionId } = sharedSession
 
-    // 伪造 iwara 站点（content_scripts.matches 命中 *://*.iwara.tv/*）
-    await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: stubPage() }))
+    // 真实站点结构夹具（content_scripts.matches 命中 *://*.iwara.tv/*）
+    await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: iwaraListPage() }))
 
     // 导入必须在**已打开的 iwara 标签页**里执行（页面 IDB 只有那里的脚本能读），
     // 所以这里单独开一个 tab，options 页用原来的 page
@@ -120,7 +112,10 @@ test('旧脚本页面数据库：自动检测 → 迁移页显示条数 → 一�
         db.close()
         return result
     })
-    expect(stored.videos).toHaveLength(303)
+    // 只数「本次迁移的 303 条」：共享会话里其它用例（如 api-hook 的 fetch 钩子）
+    // 也会让扩展入库，用全表长度断言会被无关用例污染
+    const migrated = stored.videos.filter((video) => /^(bulkVideo|legacyVideo)/.test((video as { ID: string }).ID))
+    expect(migrated).toHaveLength(303)
     expect(stored.videos.some((video: unknown) => (video as { ID: string }).ID === 'legacyVideoHuge')).toBe(true)
     expect(stored.follows).toHaveLength(1)
     expect(stored.friends).toHaveLength(1)

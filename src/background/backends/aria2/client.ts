@@ -46,7 +46,7 @@ export function isAria2Configured(): boolean {
     return typeof path === 'string' && path !== ''
 }
 
-/** tellActive/tellStopped 的取值字段（M3 扫描对账与 ID 提取共用） */
+/** tellActive/tellStopped 的取值字段（扫描对账与 ID 提取共用） */
 export const EXTRACT_VIDEO_ID_FIELDS = ['gid', 'status', 'files', 'bittorrent', 'errorMessage', 'errorCode']
 
 /**

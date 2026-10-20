@@ -1,0 +1,610 @@
+{
+    "count": 33,
+    "limit": 32,
+    "page": 0,
+    "results": [
+        {
+            "id": "fixtureVideo1",
+            "slug": "fixture-video-1",
+            "title": "Fixture Video 1",
+            "body": null,
+            "status": "active",
+            "rating": "r15",
+            "private": false,
+            "unlisted": false,
+            "thumbnail": 15,
+            "embedUrl": null,
+            "liked": false,
+            "numLikes": 3,
+            "numViews": 16,
+            "numComments": 0,
+            "file": {
+                "id": "fixtureFile1",
+                "type": "video",
+                "path": "fixture/1",
+                "name": "fixture1.mp4",
+                "mime": "video/mp4",
+                "size": 105682393,
+                "width": 1280,
+                "height": 720,
+                "duration": 207,
+                "numThumbnails": 16,
+                "animatedPreview": true,
+                "createdAt": "2024-01-02T12:00:00.000Z",
+                "updatedAt": "2024-01-02T12:00:00.000Z"
+            },
+            "customThumbnail": null,
+            "user": {
+                "id": "fixtureUser1",
+                "name": "Fixture User 1",
+                "username": "fixture_user_1",
+                "status": "active",
+                "role": "user",
+                "followedBy": false,
+                "following": false,
+                "friend": false,
+                "premium": false,
+                "creatorProgram": true,
+                "locale": "en",
+                "seenAt": "2024-01-02T12:00:00.000Z",
+                "avatar": {
+                    "id": "fixtureAvatar1",
+                    "type": "image",
+                    "path": "fixture/1",
+                    "name": "fixture1.png",
+                    "mime": "image/png",
+                    "size": 17937,
+                    "width": 176,
+                    "height": 176,
+                    "duration": null,
+                    "numThumbnails": null,
+                    "animatedPreview": false,
+                    "createdAt": "2024-01-02T12:00:00.000Z",
+                    "updatedAt": "2024-01-02T12:00:00.000Z"
+                },
+                "createdAt": "2024-01-02T12:00:00.000Z",
+                "updatedAt": "2024-01-02T12:00:00.000Z"
+            },
+            "tags": [
+                {
+                    "id": "fixtureTag1_1",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag1_2",
+                    "type": "category",
+                    "sensitive": false
+                }
+            ],
+            "siteId": "iwara",
+            "createdAt": "2024-01-02T12:00:00.000Z",
+            "updatedAt": "2024-01-02T12:00:00.000Z"
+        },
+        {
+            "id": "fixtureVideo2",
+            "slug": "fixture-video-2",
+            "title": "Fixture Video 2",
+            "body": null,
+            "status": "active",
+            "rating": "r15",
+            "private": false,
+            "unlisted": false,
+            "thumbnail": 12,
+            "embedUrl": null,
+            "liked": false,
+            "numLikes": 8,
+            "numViews": 130,
+            "numComments": 0,
+            "file": {
+                "id": "fixtureFile2",
+                "type": "video",
+                "path": "fixture/2",
+                "name": "fixture2.mp4",
+                "mime": "video/mp4",
+                "size": 138944792,
+                "width": 1920,
+                "height": 1080,
+                "duration": 180,
+                "numThumbnails": 16,
+                "animatedPreview": true,
+                "createdAt": "2024-01-03T12:00:00.000Z",
+                "updatedAt": "2024-01-03T12:00:00.000Z"
+            },
+            "customThumbnail": null,
+            "user": {
+                "id": "fixtureUser2",
+                "name": "Fixture User 2",
+                "username": "fixture_user_2",
+                "status": "active",
+                "role": "user",
+                "followedBy": false,
+                "following": false,
+                "friend": false,
+                "premium": false,
+                "creatorProgram": true,
+                "locale": "en",
+                "seenAt": "2024-01-03T12:00:00.000Z",
+                "avatar": {
+                    "id": "fixtureAvatar2",
+                    "type": "image",
+                    "path": "fixture/2",
+                    "name": "fixture2.png",
+                    "mime": "image/png",
+                    "size": 10834,
+                    "width": 256,
+                    "height": 256,
+                    "duration": null,
+                    "numThumbnails": null,
+                    "animatedPreview": false,
+                    "createdAt": "2024-01-03T12:00:00.000Z",
+                    "updatedAt": "2024-01-03T12:00:00.000Z"
+                },
+                "createdAt": "2024-01-03T12:00:00.000Z",
+                "updatedAt": "2024-01-03T12:00:00.000Z"
+            },
+            "tags": [
+                {
+                    "id": "fixtureTag2_1",
+                    "type": "category",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag2_2",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag2_3",
+                    "type": "general",
+                    "sensitive": false
+                }
+            ],
+            "siteId": "iwara",
+            "createdAt": "2024-01-03T12:00:00.000Z",
+            "updatedAt": "2024-01-03T12:00:00.000Z"
+        },
+        {
+            "id": "fixtureVideo3",
+            "slug": "fixture-video-3",
+            "title": "Fixture Video 3",
+            "body": null,
+            "status": "active",
+            "rating": "r15",
+            "private": false,
+            "unlisted": false,
+            "thumbnail": 1,
+            "embedUrl": null,
+            "liked": false,
+            "numLikes": 1,
+            "numViews": 55,
+            "numComments": 0,
+            "file": {
+                "id": "fixtureFile3",
+                "type": "video",
+                "path": "fixture/3",
+                "name": "fixture3.mp4",
+                "mime": "video/mp4",
+                "size": 212398930,
+                "width": 1920,
+                "height": 1080,
+                "duration": 159,
+                "numThumbnails": 16,
+                "animatedPreview": true,
+                "createdAt": "2024-01-04T12:00:00.000Z",
+                "updatedAt": "2024-01-04T12:00:00.000Z"
+            },
+            "customThumbnail": null,
+            "user": {
+                "id": "fixtureUser3",
+                "name": "Fixture User 3",
+                "username": "fixture_user_3",
+                "status": "active",
+                "role": "user",
+                "followedBy": false,
+                "following": false,
+                "friend": false,
+                "premium": false,
+                "creatorProgram": false,
+                "locale": "en",
+                "seenAt": "2024-01-04T12:00:00.000Z",
+                "avatar": {
+                    "id": "fixtureAvatar3",
+                    "type": "image",
+                    "path": "fixture/3",
+                    "name": "fixture3.png",
+                    "mime": "image/png",
+                    "size": 337007,
+                    "width": 1408,
+                    "height": 1408,
+                    "duration": null,
+                    "numThumbnails": null,
+                    "animatedPreview": false,
+                    "createdAt": "2024-01-04T12:00:00.000Z",
+                    "updatedAt": "2024-01-04T12:00:00.000Z"
+                },
+                "createdAt": "2024-01-04T12:00:00.000Z",
+                "updatedAt": "2024-01-04T12:00:00.000Z"
+            },
+            "tags": [
+                {
+                    "id": "fixtureTag3_1",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag3_2",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag3_3",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag3_4",
+                    "type": "category",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag3_5",
+                    "type": "source",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag3_6",
+                    "type": "general",
+                    "sensitive": false
+                }
+            ],
+            "siteId": "iwara",
+            "createdAt": "2024-01-04T12:00:00.000Z",
+            "updatedAt": "2024-01-04T12:00:00.000Z"
+        },
+        {
+            "id": "fixtureVideo4",
+            "slug": "fixture-video-4",
+            "title": "Fixture Video 4",
+            "body": null,
+            "status": "active",
+            "rating": "r15",
+            "private": false,
+            "unlisted": false,
+            "thumbnail": 0,
+            "embedUrl": null,
+            "liked": false,
+            "numLikes": 3,
+            "numViews": 51,
+            "numComments": 0,
+            "file": {
+                "id": "fixtureFile4",
+                "type": "video",
+                "path": "fixture/4",
+                "name": "fixture4.mp4",
+                "mime": "video/mp4",
+                "size": 20289640,
+                "width": 1920,
+                "height": 1080,
+                "duration": 20,
+                "numThumbnails": 16,
+                "animatedPreview": true,
+                "createdAt": "2024-01-05T12:00:00.000Z",
+                "updatedAt": "2024-01-05T12:00:00.000Z"
+            },
+            "customThumbnail": null,
+            "user": {
+                "id": "fixtureUser4",
+                "name": "Fixture User 4",
+                "username": "fixture_user_4",
+                "status": "active",
+                "role": "user",
+                "followedBy": false,
+                "following": false,
+                "friend": false,
+                "premium": false,
+                "creatorProgram": false,
+                "locale": "en",
+                "seenAt": "2024-01-05T12:00:00.000Z",
+                "avatar": {
+                    "id": "fixtureAvatar4",
+                    "type": "image",
+                    "path": "fixture/4",
+                    "name": "fixture4.png",
+                    "mime": "image/png",
+                    "size": 1101086,
+                    "width": 1024,
+                    "height": 1024,
+                    "duration": null,
+                    "numThumbnails": null,
+                    "animatedPreview": false,
+                    "createdAt": "2024-01-05T12:00:00.000Z",
+                    "updatedAt": "2024-01-05T12:00:00.000Z"
+                },
+                "createdAt": "2024-01-05T12:00:00.000Z",
+                "updatedAt": "2024-01-05T12:00:00.000Z"
+            },
+            "tags": [
+                {
+                    "id": "fixtureTag4_1",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_2",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_3",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_4",
+                    "type": "category",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_5",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_6",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_7",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_8",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_9",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_10",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_11",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_12",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag4_13",
+                    "type": "general",
+                    "sensitive": false
+                }
+            ],
+            "siteId": "iwara",
+            "createdAt": "2024-01-05T12:00:00.000Z",
+            "updatedAt": "2024-01-05T12:00:00.000Z"
+        },
+        {
+            "id": "fixtureVideo5",
+            "slug": "fixture-video-5",
+            "title": "Fixture Video 5",
+            "body": null,
+            "status": "active",
+            "rating": "r15",
+            "private": false,
+            "unlisted": false,
+            "thumbnail": 0,
+            "embedUrl": null,
+            "liked": false,
+            "numLikes": 4,
+            "numViews": 97,
+            "numComments": 0,
+            "file": {
+                "id": "fixtureFile5",
+                "type": "video",
+                "path": "fixture/5",
+                "name": "fixture5.mp4",
+                "mime": "video/mp4",
+                "size": 305910354,
+                "width": 2560,
+                "height": 1440,
+                "duration": 221,
+                "numThumbnails": 16,
+                "animatedPreview": true,
+                "createdAt": "2024-01-06T12:00:00.000Z",
+                "updatedAt": "2024-01-06T12:00:00.000Z"
+            },
+            "customThumbnail": null,
+            "user": {
+                "id": "fixtureUser5",
+                "name": "Fixture User 5",
+                "username": "fixture_user_5",
+                "status": "active",
+                "role": "user",
+                "followedBy": false,
+                "following": false,
+                "friend": false,
+                "premium": false,
+                "creatorProgram": true,
+                "locale": "en",
+                "seenAt": "2024-01-06T12:00:00.000Z",
+                "avatar": {
+                    "id": "fixtureAvatar5",
+                    "type": "image",
+                    "path": "fixture/5",
+                    "name": "fixture5.png",
+                    "mime": "image/png",
+                    "size": 80651,
+                    "width": 377,
+                    "height": 338,
+                    "duration": null,
+                    "numThumbnails": null,
+                    "animatedPreview": false,
+                    "createdAt": "2024-01-06T12:00:00.000Z",
+                    "updatedAt": "2024-01-06T12:00:00.000Z"
+                },
+                "createdAt": "2024-01-06T12:00:00.000Z",
+                "updatedAt": "2024-01-06T12:00:00.000Z"
+            },
+            "tags": [
+                {
+                    "id": "fixtureTag5_1",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag5_2",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag5_3",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag5_4",
+                    "type": "character",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag5_5",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag5_6",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag5_7",
+                    "type": "category",
+                    "sensitive": false
+                }
+            ],
+            "siteId": "iwara",
+            "createdAt": "2024-01-06T12:00:00.000Z",
+            "updatedAt": "2024-01-06T12:00:00.000Z"
+        },
+        {
+            "id": "fixtureVideo6",
+            "slug": "fixture-video-6",
+            "title": "Fixture Video 6",
+            "body": null,
+            "status": "active",
+            "rating": "r15",
+            "private": false,
+            "unlisted": false,
+            "thumbnail": 15,
+            "embedUrl": null,
+            "liked": false,
+            "numLikes": 70,
+            "numViews": 717,
+            "numComments": 1,
+            "file": {
+                "id": "fixtureFile6",
+                "type": "video",
+                "path": "fixture/6",
+                "name": "fixture6.mp4",
+                "mime": "video/mp4",
+                "size": 175704667,
+                "width": 1920,
+                "height": 1080,
+                "duration": 143,
+                "numThumbnails": 16,
+                "animatedPreview": true,
+                "createdAt": "2024-01-07T12:00:00.000Z",
+                "updatedAt": "2024-01-07T12:00:00.000Z"
+            },
+            "customThumbnail": null,
+            "user": {
+                "id": "fixtureUser6",
+                "name": "Fixture User 6",
+                "username": "fixture_user_6",
+                "status": "active",
+                "role": "user",
+                "followedBy": false,
+                "following": false,
+                "friend": false,
+                "premium": false,
+                "creatorProgram": true,
+                "locale": "en",
+                "seenAt": "2024-01-07T12:00:00.000Z",
+                "avatar": {
+                    "id": "fixtureAvatar6",
+                    "type": "image",
+                    "path": "fixture/6",
+                    "name": "fixture6.png",
+                    "mime": "image/png",
+                    "size": 53373,
+                    "width": 400,
+                    "height": 400,
+                    "duration": null,
+                    "numThumbnails": null,
+                    "animatedPreview": false,
+                    "createdAt": "2024-01-07T12:00:00.000Z",
+                    "updatedAt": "2024-01-07T12:00:00.000Z"
+                },
+                "createdAt": "2024-01-07T12:00:00.000Z",
+                "updatedAt": "2024-01-07T12:00:00.000Z"
+            },
+            "tags": [
+                {
+                    "id": "fixtureTag6_1",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag6_2",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag6_3",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag6_4",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag6_5",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag6_6",
+                    "type": "category",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag6_7",
+                    "type": "general",
+                    "sensitive": false
+                },
+                {
+                    "id": "fixtureTag6_8",
+                    "type": "general",
+                    "sensitive": false
+                }
+            ],
+            "siteId": "iwara",
+            "createdAt": "2024-01-07T12:00:00.000Z",
+            "updatedAt": "2024-01-07T12:00:00.000Z"
+        }
+    ]
+}

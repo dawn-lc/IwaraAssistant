@@ -15,7 +15,7 @@ import { FriendsTab } from './tabs/FriendsTab'
 import { AdvancedTab } from './tabs/AdvancedTab'
 
 /**
- * options 配置中心（M4）——取代油猴版注入式 configPanel
+ * options 配置中心
  * 页签经 location.hash 深链（#tasks / #guide），onInstalled 由此自动打开引导
  *
  * 页签清单在 `shared/optionsTabs.ts`，与工具栏 popup（配置页入口）共用：

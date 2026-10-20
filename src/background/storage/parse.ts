@@ -2,8 +2,8 @@
  * parseVideoInfo 的 'cache' 路径迁移（原 network/video.ts）—— 纯函数
  *
  * 仅从 Iwara.Video RAW 展开字段（Type: cache → partial），不发任何网络请求；
- * 网络侧的 'full' 解析（/video/:id + 文件源 + 评论）随 M2 下载通道迁移。
- * 字段集合与原 partial 返回值逐字段对齐，落库形态不变（M4 迁移导入可直接对拍）。
+ * 网络侧的 'full' 解析（/video/:id + 文件源 + 评论）随下载通道实现。
+ * 字段集合与原 partial 返回值逐字段对齐，落库形态不变（迁移导入可直接对拍）。
  */
 import { isNullOrUndefined } from '../../shared/strings'
 import type { PartialVideoInfo, FailVideoInfo } from '../../shared/videoInfo'

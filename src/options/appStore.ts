@@ -1,5 +1,5 @@
 /**
- * options 全局状态桥 —— useSyncExternalStore 订阅 storage（docs/06 M4）
+ * options 全局状态桥 —— useSyncExternalStore 订阅 storage（docs/01）
  * 数据源即持久层：config / downloadQueue 的 storage.local 变更（含后台 DOWNLOAD_STATE
  * 落盘）经 storage.onChanged 全量反映，options 无私有副本。
  */

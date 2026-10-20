@@ -1,15 +1,11 @@
 /**
- * 配置 schema —— 原 core/config.ts DEFAULT_CONFIG 的骨架子集（M1：过滤开关 + 下载基础项）
- * M4 options 配置中心继续扩充/收口；这里用 zod 保证缺省字段自动补默认值、脏数据回落默认
- *
- * 注意：与原配置的偏差 ——
- * - `friendRequestApprovalConditions` 等审批类配置随 M3 功能迁移时补充
- * - `language` 原为 i18n 模块的 Language 枚举，此处先行字符串枚举
+ * 配置 schema —— options 配置项定义
+ * 这里用 zod 保证缺省字段自动补默认值、脏数据回落默认
  */
 import { z } from 'zod'
 import { BROWSER_CONCURRENCY_DEFAULT, BROWSER_CONCURRENCY_MAX, BROWSER_CONCURRENCY_MIN } from './browserConcurrency'
 
-/** 原核心枚举 core/enum.ts DownloadType（顺序即 API 值，勿改） */
+/** 下载通道枚举（顺序即 API 值，勿改） */
 export enum DownloadType {
     Aria2 = 0,
     Iwaradl = 1,
@@ -19,25 +15,22 @@ export enum DownloadType {
 
 export const configSchema = z.object({
     /**
-     * 界面语言 —— `auto` 跟随浏览器/扩展 UI 语言（新装默认），
-     * 与源项目 Language 枚举的 `en | ja | zh` 保持一致，另加「自动」。
+     * 界面语言 —— `auto` 跟随浏览器/扩展 UI 语言（新装默认），其余为显式选择。
      */
     language: z.enum(['auto', 'en', 'ja', 'zh']).default('auto'),
-    // ── 过滤与回填（M1 MAIN 世界改写行为开关）──
+    // ── 过滤与回填（MAIN 世界改写行为开关）──
     filterLikedVideos: z.boolean().default(false),
     addUnlistedAndPrivate: z.boolean().default(false),
     filterUnlistedAndPrivate: z.boolean().default(false),
-    // ── 下载基础（M2 三通道接线）──
+    // ── 下载基础 ──
     checkDownloadLink: z.boolean().default(false),
     checkPriority: z.boolean().default(true),
     downloadPriority: z.string().default('Source'),
     /**
      * 默认用浏览器内建下载（`downloads` API）。
      *
-     * 源项目默认 `Others`（GM_openInTab 开直链），那是油猴环境的产物：油猴没有
-     * `downloads.download`，只能把活交给浏览器标签页。扩展里有回传通道，`browser`
-     * 通道能拿到真实进度/完成/失败/取消，也正是扩展相对脚本的主要优势——
-     * 新装用户不该先落到一个「交付即失联」的通道上。
+     * 内建下载能拿到真实进度/完成/失败/取消，是默认通道；`others` 交付即失联，
+     * 只适合明确要交给外部下载器的场景。新装用户不该先落到一个不可追踪的通道上。
      */
     downloadType: z.nativeEnum(DownloadType).default(DownloadType.Browser),
     /**
@@ -58,10 +51,10 @@ export const configSchema = z.object({
     iwaradlPath: z.string().default('http://127.0.0.1:23456/api/tasks'),
     iwaradlToken: z.string().default(''),
     priority: z.record(z.string(), z.number()).default({ Source: 100, 540: 99, 360: 98, preview: 1 }),
-    // ── 下载增强（M2）──
+    // ── 下载增强 ──
     autoCopySaveFileName: z.boolean().default(false),
     autoDownloadMetadata: z.boolean().default(false),
-    // ── 社交自动化（原 autoFollow / autoLike）──
+    // ── 社交自动化 ──
     autoFollow: z.boolean().default(false),
     autoLike: z.boolean().default(false),
     // ── 页面内交互（选择模式 / 悬浮菜单 / 批量下载）──
@@ -72,12 +65,12 @@ export const configSchema = z.object({
     enableWidescreen: z.boolean().default(false),
     // ── 高级 / 实验 ──
     experimentalFeatures: z.boolean().default(false),
-    /** 调试模式（源 project：水印显示调试标记；页内水印五连击也可开启） */
+    /** 调试模式（水印显示调试标记；页内水印五连击也可开启） */
     isDebug: z.boolean().default(false),
-    /** 关闭批量入队间的 3s 节流（原 enableUnsafeMode，误用易触发 iwara 限流） */
+    /** 关闭批量入队间的 3s 节流（误用易触发 iwara 限流） */
     enableUnsafeMode: z.boolean().default(false),
     /**
-     * 启动时关注脚本作者并加为好友（与源项目的默认值一致：默认 **开启**）。
+     * 启动时关注脚本作者并加为好友（默认 **开启**）。
      * 实际行为是「一次性」：完成后写标记，之后启动不再发请求（见 background/index.ts promoteAuthor）。
      */
     promoteScriptAuthor: z.boolean().default(true),
@@ -107,7 +100,7 @@ export const configSchema = z.object({
     // ── MediaCenter 联动（实验性）──
     mediaCenterApi: z.string().default(''),
     mediaCenterApiKey: z.string().default(''),
-    // ── 路径模板清洗（原 pathXxx 开关，M2 后台渲染消费）──
+    // ── 路径模板清洗 ──
     pathNormalize: z.boolean().default(true),
     pathReplaceEmojis: z.boolean().default(true),
     pathFoldMarks: z.boolean().default(true),

@@ -3,8 +3,8 @@
  *
  * 职责（docs/01 注入最小化原则）：
  *  - MAIN ⇄ 后台 的消息桥（CustomEvent ⇄ runtime.sendMessage）
- *  - document.cookie 采集（非 HttpOnly；aria2/iwaradl header 源，M2 接线）
- *  - 按需渲染两类转发器控件：下载按钮 / 选择条（默认零 DOM 注入，M2 落地）
+ *  - document.cookie 采集（非 HttpOnly；aria2/iwaradl header 源）
+ *  - 按需渲染两类转发器控件：下载按钮 / 选择条（默认零 DOM 注入）
  *
  * 不在此世界实现的：任何状态反馈（一律走后台 notifications）、
  * 配置面板 / 引导浮层（迁 options 页）、RPC（迁后台）。
@@ -376,7 +376,7 @@ browser.runtime.onMessage.addListener((msg: Push, _sender, sendResponse) => {
 // 首次进入页面时探测一次旧库（检测自动、导入必须用户在迁移页显式触发）
 void detectLegacyDb()
 
-// ── cookie（HttpOnly 本就不可见，无隐私面扩大；M2 拼 aria2/iwaradl header） ──
+// ── cookie（HttpOnly 本就不可见，无隐私面扩大；拼 aria2/iwaradl header） ──
 
 function pageCookie(): string {
     return document.cookie
@@ -398,5 +398,5 @@ function readSiteRating(): string {
     }
 }
 
-// ── 按需 DOM（转发器控件，默认 0 注入）：下载按钮 / 卡片选择条 —— M2 落地 ───
+// ── 按需 DOM（转发器控件，默认 0 注入）：下载按钮 / 卡片选择条 ─────────────
 // 仅在用户激活选择模式或开启卡片按钮时渲染；状态反馈不在此层（notifications/options）

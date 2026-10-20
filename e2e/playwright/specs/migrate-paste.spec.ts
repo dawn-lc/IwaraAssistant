@@ -28,6 +28,21 @@ async function writeConfig(page: Page, config: Record<string, unknown>): Promise
     }, config)
 }
 
+/**
+ * 结果行是**本地化文案**，本 spec 断言中文，所以先把界面语言钉成 `zh`。
+ *
+ * 不能依赖 `config.language: 'auto'` 的解析结果：迁移导入本身会写 config，
+ * 写盘触发的 `watchLanguage` 会重新解析 auto（`browser.i18n.getUILanguage()`），
+ * 宿主 / 无头环境给出的语言不同，结果框就会切成英文——CI 上实际发生过
+ * （同一个 spec 前一条用例中文、后一条英文）。显式 `zh` 与浏览器语言无关。
+ */
+async function pinChinese(page: Page): Promise<void> {
+    const config = await readConfig(page)
+    if (config['language'] === 'zh') return
+    await writeConfig(page, { ...config, language: 'zh' })
+    await expect(page.locator('h1')).toContainText('设置')
+}
+
 /** 直接读扩展 origin 的 IndexedDB（与后台/options 同源） */
 async function readDb(page: Page): Promise<{ videos: Array<{ ID: string }>; follows: Array<{ id: string }>; idmap: Array<{ ID: string }> }> {
     return page.evaluate(async () => {
@@ -73,6 +88,7 @@ test('粘贴油猴脚本「导出配置」的裸 JSON：识别为配置并合并
     await expect(page.locator('nav.tabs')).toBeVisible()
     const backup = await readConfig(page)
     try {
+        await pinChinese(page)
         // 源项目 Config 里可能有我们 schema 没有的键（authorization 等），必须如实提示而不是静默写入
         await page.locator(PASTE).fill(JSON.stringify({ downloadPath: '/Paste/%#TITLE#%.mp4', filterLikedVideos: true, promoteScriptAuthor: true, authorization: 'old-token' }))
         await page.locator(RUN).click()
@@ -98,6 +114,7 @@ test('粘贴完整迁移包：四表写入与结构不合规如实计数', async
     await expect(page.locator('nav.tabs')).toBeVisible()
     const backup = await readConfig(page)
     try {
+        await pinChinese(page)
         const payload = {
             config: { downloadPath: '/Paste/Package/%#TITLE#%.mp4' },
             videos: [
@@ -132,6 +149,7 @@ test('非法 JSON / 无关 JSON：明确报错且不动现有配置', async ({ s
     const { page, extensionId } = sharedSession
     await openExtensionPage(page, extensionId, 'options/index.html#migrate')
     await expect(page.locator('nav.tabs')).toBeVisible()
+    await pinChinese(page)
     const before = await readConfig(page)
 
     await page.locator(PASTE).fill('{ not json')
@@ -160,6 +178,7 @@ test('导出 / 复制时不污染导入按钮文案（各自独立的进行中�
     const probe = await page.context().newPage()
     await probe.goto(`chrome-extension://${extensionId}/options/index.html#migrate`)
     await expect(probe.locator('nav.tabs')).toBeVisible()
+    await pinChinese(probe)
 
     const exportSection = probe.locator('section.card').filter({ has: probe.locator('h2', { hasText: '导出全部数据' }) })
     const exportButton = exportSection.locator('button').first()
@@ -200,6 +219,7 @@ test('导出为 JSON 文件：增量序列化后的格式与 JSON.stringify(…,
     const probe = await page.context().newPage()
     await probe.goto(`chrome-extension://${extensionId}/options/index.html#migrate`)
     await expect(probe.locator('nav.tabs')).toBeVisible()
+    await pinChinese(probe)
 
     // 接管下载：不落盘，直接读回 Blob URL 的文本
     await probe.evaluate(() => {
@@ -240,6 +260,7 @@ test('导出显示进度条：确定态 + 当前表与条数文案', async ({ sh
     const probe = await page.context().newPage()
     await probe.goto(`chrome-extension://${extensionId}/options/index.html#migrate`)
     await expect(probe.locator('nav.tabs')).toBeVisible()
+    await pinChinese(probe)
 
     // 库里必须有记录，否则总量是 0（进度条只能是不确定态）——那测不到确定态这条断言。
     // 走 LEGACY_DB_BATCH 播种而不是直写 IndexedDB：它就是生产用的写入路径。
@@ -305,6 +326,7 @@ test('选择文件导入：流式解码跨块不丢记录', async ({ sharedSessi
     })
 
     try {
+        await pinChinese(page)
         await page.locator('input[type=file]').setInputFiles({
             name: 'IwaraAssistant-export.json',
             mimeType: 'application/json',

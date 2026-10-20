@@ -6,20 +6,38 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一分支连推多次时，取消上一轮还在跑的 run（省掉整轮 runner 时间）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # 所有步骤都是「本地能跑的命令」，不在 CI 里引入额外魔法：
 # 单元测试用 node --test（无框架依赖），构建/打包/校验都走 package.json scripts。
+#
+# CI 不跑 WebdriverIO（它只在本机 `test:e2e:wdio*` 用），所以跳过 chromedriver 的
+# postinstall 下载——否则每个 job 都要各下一份 ~7 MB 的驱动，纯浪费。
+# 将来加 WDIO job 时，在该 job 里覆盖这个变量为 'false'。
+env:
+  CHROMEDRIVER_SKIP_DOWNLOAD: "true"
+
+permissions:
+  contents: read
 
 jobs:
+  # 一个 job 做完「校验 + 构建 + 打包」：build 脚本末尾已经会产出 dist/*.zip，
+  # 之前单独拆一个 package job 只是把同样的 npm ci + build 再跑一遍。
   verify:
-    name: 类型 / 单测 / 构建 / Firefox 校验
+    name: 类型 / 单测 / 构建 / Firefox 校验 / 打包
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # --no-audit/--no-fund 省掉安装后的审计请求；--prefer-offline 优先用 npm 缓存
+      - run: npm ci --no-audit --no-fund --prefer-offline
       - name: 类型检查（扩展 + 单测 + e2e）
         run: |
           npm run type-check
@@ -29,42 +47,10 @@ jobs:
         run: npm run format:check
       - name: 单元测试
         run: npm run test:unit
-      - name: 构建（Chrome + Firefox）
+      - name: 构建并打包（Chrome + Firefox → dist/*.zip）
         run: npm run build
       - name: Firefox 清单校验（web-ext lint）
         run: npm run lint:firefox
-
-  e2e-chromium:
-    name: Chromium 扩展 e2e（Playwright）
-    runs-on: ubuntu-latest
-    needs: verify
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: 安装 Playwright Chromium
-        run: npx playwright install --with-deps chromium
-      - name: 构建并运行 e2e
-        run: |
-          npm run build
-          npm run test:e2e:headless
-
-  package:
-    name: 打包产物（zip）
-    runs-on: ubuntu-latest
-    needs: verify
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      # npm run build 末尾已自动打包（dist/*.zip），这里不必再跑 npm run package
-      - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
           name: extension-zips
@@ -72,3 +58,37 @@ jobs:
             dist/chrome.zip
             dist/firefox.zip
           if-no-files-found: error
+          retention-days: 14
+
+  # 与 verify 并行：e2e 自己会构建 dist/chrome，不需要 verify 的产物。
+  # 代价是 verify 失败时 e2e 也会跑完（公开仓标准 runner 不计分钟），
+  # 换来的是总时长从「verify + e2e」变成「max(verify, e2e)」。
+  e2e-chromium:
+    name: Chromium 扩展 e2e（Playwright）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund --prefer-offline
+      # Playwright 的浏览器不在 npm 缓存里：不缓存的话每次 run 都要重新下 ~150 MB。
+      # 键用 Playwright 自身版本（而不是 package-lock 哈希），其他依赖变动不会白白失效。
+      - name: 读取 Playwright 版本
+        id: playwright-version
+        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+      - name: 缓存 Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      - name: 安装 Playwright Chromium
+        # 命中缓存时 Playwright 会跳过浏览器下载；--with-deps 仍要跑（系统依赖不走缓存）
+        run: npx playwright install --with-deps chromium
+      - name: 构建 Chrome 产物并运行 e2e
+        # e2e 只用 dist/chrome：不必再构建 Firefox / 打 zip
+        run: |
+          npm run build:chrome
+          npm run test:e2e:headless

@@ -1,4 +1,4 @@
-/** 跨模块共享常量（M3：alarms 与追踪器） */
+/** 跨模块共享常量（alarms 与追踪器） */
 /** aria2 终态去重记录保留天数（原 ARIA2_TRACK_DONE_RETENTION = 30d） */
 export const DONE_RECORD_TTL_DAYS = 30
 /** 失败任务自动重试上限（retry-failed alarm） */

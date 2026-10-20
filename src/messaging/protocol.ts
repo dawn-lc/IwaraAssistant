@@ -7,7 +7,7 @@ import type { FullVideoInfo as DbFullVideoInfo } from '../shared/videoInfo'
 import type { LegacyCounts, LegacyImportProgress, LegacyStore } from '../shared/legacyDb'
 import type { PageType } from '../shared/pageType'
 
-/** 全量视频信息（M2 下载负载）——直接沿用视频库全量记录形态 */
+/** 全量视频信息（下载负载）——直接沿用视频库全量记录形态 */
 export type FullVideoInfo = DbFullVideoInfo
 
 /** MAIN 世界改写所需的配置子集（经 CONFIG_SYNC 下行，JSON 通道可序列化） */

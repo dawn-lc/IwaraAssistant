@@ -64,7 +64,7 @@ async function writeViaOffscreen(text: string): Promise<boolean> {
  */
 export async function copyText(text: string): Promise<boolean> {
     if (text === '') return false
-    // 1) 有 DOM 的扩展上下文（Firefox 事件页；Chrome 里不存在 navigator.clipboard）
+    // 1) 有 DOM 的扩展上下文（Firefox 持久后台页；Chrome 里不存在 navigator.clipboard）
     try {
         const clipboard = (globalThis as { navigator?: Navigator }).navigator?.clipboard
         if (clipboard?.writeText) {

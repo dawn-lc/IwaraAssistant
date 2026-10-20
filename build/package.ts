@@ -1,5 +1,5 @@
 /**
- * 商店打包（node --import tsx/esm ./build/package.ts [chrome|firefox]）—— M6 交付物
+ * 商店打包（node --import tsx/esm ./build/package.ts [chrome|firefox]）—— 发布交付物
  *
  * 产物：
  *   dist/chrome.zip   —— Chrome Web Store 上传包

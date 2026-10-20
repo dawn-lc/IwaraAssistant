@@ -1,6 +1,6 @@
 /**
  * Background —— 装配层：事件监听注册 + 启动恢复 + 消息路由。
- * Chrome: manifest.background.service_worker；Firefox: manifest.background.scripts（事件页）
+ * Chrome: manifest.background.service_worker；Firefox: manifest.background.scripts（MV2 持久后台页）
  * 构建：单文件 IIFE；禁用常驻内存假设——状态先持久化再处理（docs/01 挂起协议）
  *
  * 本文件不 import globals shim：esbuild `inject` 已保证其最先执行。

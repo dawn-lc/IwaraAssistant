@@ -4,7 +4,7 @@
  * 能力（与 HTTP RPC 端点完全同构，aria2 官方支持 ws:// 端点）：
  *  - 发指令：addUri / tellStatus / remove… 经 WS 发送，实时无轮询开销
  *  - 收推送：aria2.onDownloadStart/Complete/Error 等通知自动到达，完成/失败即时感知
- *  - 保活：SW/事件页收到 WS 帧即重置空闲计时（Chrome 116+/Firefox 事件页同纪律，docs/01）
+ *  - 保活：SW/持久后台页收到 WS 帧即重置空闲计时（Chrome 116+，docs/01）
  *
  * 断线策略：指数退避自动重连（1s 起，封顶 60s，连续失败 6 次后暂停等待 keepalive alarm）；
  * ws-keepalive alarm（2 min）兜底拉起——SW 挂起重入后常规定时器不可靠，alarm 保证自愈。

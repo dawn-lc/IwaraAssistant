@@ -32,6 +32,7 @@
         "test:e2e:manual:firefox": "npm run build:firefox && node --import tsx/esm ./build/env.ts E2E_MANUAL=1 WDIO_BROWSER=firefox -- wdio run ./wdio.conf.ts",
         "test:unit": "node --import tsx/esm --test \"test/*.test.ts\"",
         "test:firefox:smoke": "node --import tsx/esm ./e2e/firefox-smoke.mts",
+        "fixtures:capture": "node --import tsx/esm ./e2e/playwright/fixtures/capture.ts",
         "type-check": "tsc --noEmit",
         "type-check:e2e": "tsc -p e2e/tsconfig.json --noEmit",
         "type-check:wdio": "tsc -p e2e/wdio/tsconfig.json --noEmit",

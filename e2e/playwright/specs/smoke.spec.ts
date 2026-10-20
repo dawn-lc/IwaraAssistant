@@ -1,5 +1,5 @@
 /**
- * 冒烟：扩展装载 + SW 启动（docs/06 M0 验收的自动化版）
+ * 冒烟：扩展装载 + SW 启动（docs/06 测试分层的自动化版）
  * ——SW console 应出现 background up 标记（含宿主标签），且 options 页可打开
  */
 import { expect } from '@playwright/test'

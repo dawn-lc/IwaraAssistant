@@ -11,30 +11,19 @@
  * 与源项目一致（失败原因在队列/通知里可见，页面勾选不承担「待重试」语义）。
  */
 import { test, expect, openExtensionPage } from '../helpers/fixtures'
+import { iwaraListPage } from '../helpers/site'
 
-function stubPage(): string {
-    return `<!doctype html><html><head><meta charset="utf-8"><title>stub iwara</title></head>
-<body><main class="container">
-  <div class="videoTeaser">
-    <a class="videoTeaser__thumbnail" href="/video/selVideo1"><img alt=""></a>
-    <a class="videoTeaser__title" href="/video/selVideo1" title="Sel One">Sel One</a>
-    <a class="username" href="/profile/someone" title="Someone">Someone</a>
-  </div>
-  <div class="videoTeaser">
-    <a class="videoTeaser__thumbnail" href="/video/selVideo2"><img alt=""></a>
-    <a class="videoTeaser__title" href="/video/selVideo2" title="Sel Two">Sel Two</a>
-    <a class="username" href="/profile/someone" title="Someone">Someone</a>
-  </div>
-</main></body></html>`
-}
+/** 夹具里的卡片数（`npm run fixtures:capture` 生成 6 张） */
+const CARD_COUNT = 6
 
 test.describe.configure({ mode: 'serial' })
 
 test('批量下载后页内勾选自动取消（对齐源项目 analyzeDownloadTask 的逐项 delete）', async ({ sharedSession }) => {
     const { context, page, extensionId } = sharedSession
 
-    // 站点伪造 + API 直接失败：批量流程走「解析失败 → failed 任务」分支，仍然算已处理
-    await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: stubPage() }))
+    // 真实站点结构夹具（脚本/图片/真实内容已脱敏），API 直接失败：
+    // 批量流程走「解析失败 → failed 任务」分支，仍然算已处理
+    await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: iwaraListPage() }))
     await context.route('**/api.iwara.tv/**', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"stub"}' }))
 
     // 先开扩展页（读 storage 用；扩展页才有 browser.* API）
@@ -51,9 +40,9 @@ test('批量下载后页内勾选自动取消（对齐源项目 analyzeDownloadT
     await iwara.goto('https://www.iwara.tv/videos')
     await expect(iwara.locator('html[data-ia-bridge]')).toHaveAttribute('data-ia-bridge', /ready|no-ack/, { timeout: 15_000 })
 
-    // autoInjectCheckbox 默认开启 + 列表页 → 复选框自动注入
+    // autoInjectCheckbox 默认开启 + 列表页 → 复选框自动注入（每张卡片一个）
     const boxes = iwara.locator('input.selectButton')
-    await expect(boxes).toHaveCount(2, { timeout: 15_000 })
+    await expect(boxes).toHaveCount(CARD_COUNT, { timeout: 15_000 })
 
     await boxes.nth(0).click()
     await boxes.nth(1).click()

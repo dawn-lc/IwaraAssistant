@@ -2,7 +2,7 @@
 
 ## 双 manifest 派生
 
-沿用原仓库 build 的占位符习惯（mata.json 的 `%#release_tag#%`），构建脚本由单一源模板派生两份 manifest，差异集中、可审阅：
+构建脚本由单一源模板派生两份 manifest，差异集中、可审阅：
 
 ```
 manifest/manifest.base.json       （公共骨架，MV3 形状，含 %##占位符##%）
@@ -22,7 +22,7 @@ manifest/manifest.base.json       （公共骨架，MV3 形状，含 %##占位�
 manifest['version'] = await readExtensionVersion(root)
 ```
 
-理由：manifest 里的版本是**产物**，不是源。历史上它和 `package.json` 是两个手写真源，改一处不影响另一处——`npm version minor` 之后打出来的包还是旧版本号。
+理由：manifest 里的版本是**产物**，不是源。两个手写真源会出现「改了 `package.json`，打出来的包还是旧版本号」的问题。
 
 `build/version.ts` 负责校验，**失败即让构建失败，且发生在清理 dist 之前**（不留下半个产物目录）：
 
@@ -96,39 +96,41 @@ manifest['version'] = await readExtensionVersion(root)
 }
 ```
 
-> **样式走 `css` 字段，不走 JS。** 源项目（油猴）只能用 `GM_addStyle`，扩展有声明式注入能力：`content_scripts[].css` 由浏览器在 `document_start` 期间、DOM 构建之前应用，且 **CSS 先于同一条目的 `js`**。源文件是 `src/content/css/*.css`（真实 `.css`，由 `index.css` `@import` 汇总），构建期 bundle 成单个 `content/page-ui.css`。
+> **样式走 `css` 字段，不走 JS。** `content_scripts[].css` 由浏览器在 `document_start` 期间、DOM 构建之前应用，且 **CSS 先于同一条目的 `js`**。源文件是 `src/content/css/*.css`（真实 `.css`，由 `index.css` `@import` 汇总），构建期 bundle 成单个 `content/page-ui.css`。
 
 > **`options_ui.browser_style` 只在 Firefox MV2 变体里写 `false`。** 该键在 Chrome 不存在，MV3 下也已废弃（Firefox 118+ 移除）；但 Firefox MV2 的默认值是 `true`，会向 options 页注入 `chrome://browser/content/extension.css`（`body` 变 flex 列、禁用文本选择），与 Chrome 的渲染不一致。Firefox 变体单独覆盖 `options_ui` 并显式关闭它，见 `manifest/variants.ts`。
 
 ## 权限清单的取舍
 
-| 权限                                 | 用途                                                                                                                                                                                                                                                                                                                            | 对应旧行为                                                               |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `storage`                            | 配置/队列持久化                                                                                                                                                                                                                                                                                                                 | `GM_getValue/setValue/listValues/deleteValue` + `addValueChangeListener` |
-| `downloads`                          | 内建下载 + 元数据 JSON                                                                                                                                                                                                                                                                                                          | `GM_download`                                                            |
-| `clipboardWrite`                     | `autoCopySaveFileName` 自动复制保存文件名（由 offscreen 文档代写）。页内「导出配置到剪贴板」已随导入/导出菜单项一并移除（改由 options「迁移」页签导出文件）                                                                                                                                                                     | `GM_setClipboard`                                                        |
-| `offscreen`（**仅 Chrome**）         | 两个用途：① 写入 `autoCopySaveFileName` 的保存文件名（SW 没有 DOM，`navigator.clipboard` 不存在）；② 用户开启「保持后台活跃」时充当保活心跳的发送端。默认**用完立即 `closeDocument()`**；只有保活开启时文档才长期存在（由 `background/runtime/keepAlive.ts` 持有）。Firefox 是 MV2 持久后台页（有 DOM）且无此 API，不声明该权限 | `GM_setClipboard`                                                        |
-| `alarms`                             | 4 个定时扫描/重连                                                                                                                                                                                                                                                                                                               | 3 个 `setInterval` + 页内重试循环                                        |
-| `contextMenus`                       | 右键"下载此视频"（链接 / 视频页）                                                                                                                                                                                                                                                                                               | 页面注入菜单按钮（保留注入 UI，菜单为补充）                              |
-| `notifications`                      | **唯一反馈通道**：成功/失败/入队提示全部走系统通知，替代原自建 toast 的全部场景（`core/notify.ts`/`ui/toastify.ts` 不迁移）；批量入队按任务键去重聚合，防通知轰炸。点击通知打开它登记过的页面（登记表存 `storage.session`，因为 `onClicked` 可能在 SW 被回收之后才触发）                                                        | 原为页内 toast（toast 机制整体废除）                                     |
-| `host_permissions: <all_urls>`       | 两处用途：① 后台 fetch 用户自填的 aria2/iwaradl/MediaCenter 端点；② 任意站点判断主机名，做钓鱼仿冒防护。**不是**为了读写任意站点内容（iwara 专属脚本仍只匹配 `*://*.iwara.tv/*`），见下文「全站 host 权限」                                                                                                                     | `@connect *` + `@match` 全站守卫                                         |     | `declarativeNetRequest` | 钓鱼防护的**主防线**：给「疑似仿冒」的标签页下一条 session 规则，拦住除顶层导航外的一切请求（img / font / 表单 / beacon / 跨域 iframe / Worker）。不申请 `feedback`（不需要读匹配日志），不带任何静态规则集 | 源脚本只能改 `fetch` / `XHR` / `WebSocket` |     | **不需要** `cookies` | `document.cookie`（非 HttpOnly）由 ISOLATED 采集转发 | aria2/iwaradl 的 Cookie header |
-| **不需要** `tabs`                    | `tabs.create/sendMessage/query` 均无需 `tabs` 权限（仅读取 url/title 等敏感字段需要；本项目不需要）                                                                                                                                                                                                                             | `GM_openInTab`                                                           |
-| **不需要** `unlimitedStorage`        | 大库走 IndexedDB                                                                                                                                                                                                                                                                                                                | IndexedDB（原已使用）                                                    |
-| **不需要** `scripting`               | 世界注入全部由静态 `content_scripts` 声明覆盖                                                                                                                                                                                                                                                                                   | —                                                                        |
-| **不需要** `debugger` / `webRequest` | 响应体改写走页内注入（见 02/05）                                                                                                                                                                                                                                                                                                | —                                                                        |
+| 权限                                 | 用途                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage`                            | 配置/队列持久化                                                                                                                                                                                                                                                                                                                 |
+| `downloads`                          | 内建下载 + 元数据 JSON                                                                                                                                                                                                                                                                                                          |
+| `clipboardWrite`                     | `autoCopySaveFileName` 自动复制保存文件名（由 offscreen 文档代写）；配置导出改由 options「迁移」页签生成文件                                                                                                                                                                                                                    |
+| `offscreen`（**仅 Chrome**）         | 两个用途：① 写入 `autoCopySaveFileName` 的保存文件名（SW 没有 DOM，`navigator.clipboard` 不存在）；② 用户开启「保持后台活跃」时充当保活心跳的发送端。默认**用完立即 `closeDocument()`**；只有保活开启时文档才长期存在（由 `background/runtime/keepAlive.ts` 持有）。Firefox 是 MV2 持久后台页（有 DOM）且无此 API，不声明该权限 |
+| `alarms`                             | 4 个定时扫描/重连                                                                                                                                                                                                                                                                                                               |
+| `contextMenus`                       | 右键「下载此视频」（链接 / 视频页）                                                                                                                                                                                                                                                                                             |
+| `notifications`                      | **唯一反馈通道**：成功/失败/入队提示全部走系统通知；批量入队按任务键去重聚合，防通知轰炸。点击通知打开它登记过的页面（登记表存 `storage.session`，因为 `onClicked` 可能在 SW 被回收之后才触发）                                                                                                                                 |
+| `host_permissions: <all_urls>`       | 两处用途：① 后台 fetch 用户自填的 aria2/iwaradl/MediaCenter 端点；② 任意站点判断主机名，做钓鱼仿冒防护。**不是**为了读写任意站点内容（iwara 专属脚本仍只匹配 `*://*.iwara.tv/*`），见下文「全站 host 权限」                                                                                                                     |
+| `declarativeNetRequest`              | 钓鱼防护的**主防线**：给「疑似仿冒」的标签页下一条 session 规则，拦住除顶层导航外的一切请求（img / font / 表单 / beacon / 跨域 iframe / Worker）。不申请 `feedback`（不需要读匹配日志），不带任何静态规则集                                                                                                                     |
+| **不需要** `cookies`                 | `document.cookie`（非 HttpOnly）由 ISOLATED 采集转发                                                                                                                                                                                                                                                                            |
+| **不需要** `tabs`                    | `tabs.create/sendMessage/query` 均无需 `tabs` 权限（仅读取 url/title 等敏感字段需要；本项目不需要）                                                                                                                                                                                                                             |
+| **不需要** `unlimitedStorage`        | 大库走 IndexedDB                                                                                                                                                                                                                                                                                                                |
+| **不需要** `scripting`               | 世界注入全部由静态 `content_scripts` 声明覆盖                                                                                                                                                                                                                                                                                   |
+| **不需要** `debugger` / `webRequest` | 响应体改写走页内注入（见 01 / 05）                                                                                                                                                                                                                                                                                              |
 
 ## 全站 host 权限：一次声明，两处用途
 
 manifest 只声明一条 host 权限（`<all_urls>`），不再有 `optional_host_permissions`。两个彼此独立的理由都指向同一个结论——**授权面无法事先枚举**：
 
-1. **自定义 RPC 端点**：原 mata.json 的 `connect` 就是 `"*"`（aria2/iwaradl 地址用户自填，默认 `127.0.0.1`，也可能是 NAS、局域网、公网反代）。逐地址申请的代价是：每换一次地址就要用户点一次浏览器原生权限气泡。
+1. **自定义 RPC 端点**：aria2/iwaradl 地址由用户自填（默认 `127.0.0.1`，也可能是 NAS、局域网、公网反代）。逐地址申请的代价是：每换一次地址就要用户点一次浏览器原生权限气泡。
 2. **钓鱼仿冒防护**：`src/content/guard/isolated.ts` 需在**任意**站点判断主机名，见 [01-architecture.md](01-architecture.md#钓鱼仿冒防护)。逐站点模型下，受害者第一次点开的仿冒站恰恰不在授权清单里——防护最需要生效的时刻，它恰是失效的。
 
 ### 为什么 UI 里没有「授权」按钮了
 
 `permissions.request()` **只能申请 optional 权限**，对 manifest 里声明的 required host 权限无效（Chrome 直接报 `Cannot request required permission`）。所以引导页的站点访问区块是纯**诊断**：读 `permissions.contains({origins:['<all_urls>']})`，如实显示「已获得 / 已被撤销」并指出恢复路径（浏览器扩展管理页把站点访问放开为「所有网站」）。
 
-> 已删除的实现：`ensureOriginPermission` / `hasOriginPermission` / `ensurePatternPermission`，以及 RPC 页签与高级页签里的授权按钮。`src/shared/permissions.ts` 现在只剩 `ALL_SITES_PATTERN` 与 `hasAllSitesAccess()`。
+> 权限模块只保留 `ALL_SITES_PATTERN` 与 `hasAllSitesAccess()`；required host 权限无法在运行时通过 `permissions.request()` 补授，因此 UI 只做诊断，不提供授权按钮。
 
 ### 商店审核需要准备的理由
 
@@ -138,7 +140,7 @@ manifest 只声明一条 host 权限（`<all_urls>`），不再有 `optional_hos
 
 ### 未授权时的真实行为（必须按这个写文案）
 
-用户仍可在扩展管理页把站点访问收窄成「点击时」或在 Firefox 上撤销主机权限。此时行为与旧版一致，判断规则不变：
+用户仍可在扩展管理页把站点访问收窄成「点击时」或在 Firefox 上撤销主机权限。此时判断规则不变：
 
 **未授权 ≠ 请求一定失败**：扩展 fetch 一个没有 host 权限的站点时，只要对方返回宽松的 CORS 头，请求照样成功（实测：`CHECK_LINK` 对一个未授权的 HTTPS 站点返回 200）。反过来，aria2 这类本机守护进程默认不发 CORS 头，同一个「未授权」配置下就会失败。
 
