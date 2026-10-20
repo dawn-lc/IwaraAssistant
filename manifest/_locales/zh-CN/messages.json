@@ -1,0 +1,29 @@
+{
+    "extName": {
+        "message": "Iwara Assistant"
+    },
+    "guardBadge": {
+        "message": "疑似仿冒站点"
+    },
+    "guardTitle": {
+        "message": "这看起来是一个仿冒的 Iwara 网站"
+    },
+    "guardDescription": {
+        "message": "当前页面不是 Iwara 官方网站，请勿输入账号、密码或其他敏感信息。"
+    },
+    "guardHostLabel": {
+        "message": "当前站点："
+    },
+    "guardOfficialLabel": {
+        "message": "官方域名："
+    },
+    "guardLeave": {
+        "message": "离开此站点"
+    },
+    "guardProceed": {
+        "message": "我已了解风险，继续访问"
+    },
+    "guardFooter": {
+        "message": "显示此警告期间，该页面发出的所有请求都会被浏览器拦下（只有跳转到其他地址不受影响）。"
+    }
+}

@@ -1,0 +1,29 @@
+{
+    "extName": {
+        "message": "Iwara Assistant"
+    },
+    "guardBadge": {
+        "message": "Suspicious site"
+    },
+    "guardTitle": {
+        "message": "This looks like a fake Iwara website"
+    },
+    "guardDescription": {
+        "message": "This page is not an official Iwara site. Do not enter your account, password, or any other sensitive information."
+    },
+    "guardHostLabel": {
+        "message": "Current site: "
+    },
+    "guardOfficialLabel": {
+        "message": "Official domains:"
+    },
+    "guardLeave": {
+        "message": "Leave this site"
+    },
+    "guardProceed": {
+        "message": "I understand the risk, continue"
+    },
+    "guardFooter": {
+        "message": "While this warning is shown, the browser blocks every request this page makes — only navigating away still works."
+    }
+}

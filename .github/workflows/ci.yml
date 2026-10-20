@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 所有步骤都是「本地能跑的命令」，不在 CI 里引入额外魔法：
+# 单元测试用 node --test（无框架依赖），构建/打包/校验都走 package.json scripts。
+
+jobs:
+  verify:
+    name: 类型 / 单测 / 构建 / Firefox 校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 类型检查（扩展 + 单测 + e2e）
+        run: |
+          npm run type-check
+          npm run type-check:e2e
+          npm run type-check:wdio
+      - name: 格式检查（prettier）
+        run: npm run format:check
+      - name: 单元测试
+        run: npm run test:unit
+      - name: 构建（Chrome + Firefox）
+        run: npm run build
+      - name: Firefox 清单校验（web-ext lint）
+        run: npm run lint:firefox
+
+  e2e-chromium:
+    name: Chromium 扩展 e2e（Playwright）
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 安装 Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: 构建并运行 e2e
+        run: |
+          npm run build
+          npm run test:e2e:headless
+
+  package:
+    name: 打包产物（zip）
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # npm run build 末尾已自动打包（dist/*.zip），这里不必再跑 npm run package
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zips
+          path: |
+            dist/chrome.zip
+            dist/firefox.zip
+          if-no-files-found: error

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+    <!--
+        Chrome offscreen 文档（reasons: CLIPBOARD / BLOBS）。
+        两个用途：
+        1. 后台 SW 没有 DOM、无 navigator.clipboard，只能由这里代写剪贴板
+           —— 写完由后台立即 closeDocument()，不做常驻；
+        2. 用户开启「保持后台活跃」时，本页承担保活心跳（每 20s 向 SW 发一次端口消息）。
+           此时文档由 background/keepAlive.ts 持有，不再随剪贴板写入关闭。
+        Firefox 不使用本页（MV2 持久后台页有 DOM，直接调 Async Clipboard API）。
+    -->
+
+    <head>
+        <meta charset="UTF-8" />
+        <title>Iwara Assistant — clipboard</title>
+    </head>
+
+    <body>
+        <script src="offscreen.js"></script>
+    </body>
+</html>

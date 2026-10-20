@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Iwara Assistant — Settings</title>
+        <link rel="stylesheet" href="options.css" />
+    </head>
+    <body>
+        <h1 data-i18n="optionsTitle">Iwara Assistant</h1>
+        <!-- 配置项由 configPanel 迁移：下载模式 / 路径模板 / aria2 / iwaradl / 过滤开关 … -->
+        <form id="configForm"></form>
+        <section id="migration">
+            <h2 data-i18n="migrationTitle">从油猴脚本导入</h2>
+            <input type="file" id="migrationFile" accept="application/json" />
+            <button type="button" id="migrationImport" data-i18n="import">导入</button>
+        </section>
+        <script src="options.js" type="module"></script>
+    </body>
+</html>

@@ -1,0 +1,56 @@
+/**
+ * 卡片美化 —— 逐行对齐源项目 `src/css/beautify.css`
+ *
+ * 与源项目的唯一差异：源项目按配置**条件 `GM_addStyle`**（不在配置里就不加载规则），
+ * 这里改为**常驻声明式样式 + `html.ia-beautify` 类作用域**：
+ * 开关只切换 `<html>` 上的类，无运行时样式注入、无重复解析、切换即时生效。
+ */
+
+html.ia-beautify .page-profile__content * > .col-6.col-sm-4.col-lg-3,
+html.ia-beautify .moreFromUser__item,
+html.ia-beautify .moreLikeThis__item {
+    margin-bottom: 2%;
+}
+
+html.ia-beautify .videoTeaser {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border-radius: 6px;
+    border: 2px solid color-mix(in srgb, var(--text) 20%, transparent);
+    overflow: hidden;
+    transition:
+        background-color 0.2s ease,
+        border-color 0.2s ease;
+    background-color: var(--body-alt);
+}
+
+html.ia-beautify .videoTeaser:hover {
+    background-color: color-mix(in srgb, var(--body-alt) 90%, var(--text));
+}
+
+html.ia-beautify .videoTeaser__content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    padding: 2%;
+}
+
+html.ia-beautify .videoTeaser__title {
+    padding-left: 2%;
+    padding-right: 2%;
+}
+
+html.ia-beautify .videoTeaser__bottom {
+    margin-top: auto !important;
+    height: auto !important;
+    padding-bottom: 2%;
+    padding-left: 2%;
+    padding-right: 2%;
+}
+
+@media (max-width: 720px) {
+    html.ia-beautify .page-videoList__item {
+        padding: 0 6px 0 2px !important;
+    }
+}

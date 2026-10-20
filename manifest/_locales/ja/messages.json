@@ -1,0 +1,29 @@
+{
+    "extName": {
+        "message": "Iwara Assistant"
+    },
+    "guardBadge": {
+        "message": "偽装サイトの疑い"
+    },
+    "guardTitle": {
+        "message": "これは Iwara の偽サイトの可能性があります"
+    },
+    "guardDescription": {
+        "message": "このページは Iwara の公式サイトではありません。アカウント、パスワード、その他の機密情報を入力しないでください。"
+    },
+    "guardHostLabel": {
+        "message": "現在のサイト："
+    },
+    "guardOfficialLabel": {
+        "message": "公式ドメイン："
+    },
+    "guardLeave": {
+        "message": "このサイトを離れる"
+    },
+    "guardProceed": {
+        "message": "リスクを理解して続行"
+    },
+    "guardFooter": {
+        "message": "この警告の表示中は、このページからの通信はブラウザによってすべてブロックされます（別のアドレスへの移動のみ可能）。"
+    }
+}

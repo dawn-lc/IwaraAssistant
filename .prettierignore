@@ -1,0 +1,10 @@
+# 依赖与构建产物
+node_modules
+dist
+temp
+*.json
+# 自动生成的文件（勿手动编辑）
+src/i18n.ts
+package-lock.json
+# 只读参考骨架（源项目快照，永不修改）
+reference

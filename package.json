@@ -27,6 +27,8 @@
         "test:e2e:wdio:live:chrome": "node --import tsx/esm ./build/env.ts E2E_LIVE=1 WDIO_BROWSER=chrome -- wdio run ./wdio.conf.ts",
         "test:e2e:wdio:live:firefox": "node --import tsx/esm ./build/env.ts E2E_LIVE=1 WDIO_BROWSER=firefox -- wdio run ./wdio.conf.ts",
         "test:e2e:wdio:live:human": "node --import tsx/esm ./build/env.ts E2E_LIVE=1 E2E_HUMAN=1 -- wdio run ./wdio.conf.ts",
+        "test:e2e:manual": "npm run build:chrome && node --import tsx/esm ./build/env.ts E2E_MANUAL=1 WDIO_BROWSER=chrome -- wdio run ./wdio.conf.ts",
+        "test:e2e:manual:firefox": "npm run build:firefox && node --import tsx/esm ./build/env.ts E2E_MANUAL=1 WDIO_BROWSER=firefox -- wdio run ./wdio.conf.ts",
         "test:unit": "node --import tsx/esm --test \"test/*.test.ts\"",
         "test:firefox:smoke": "node --import tsx/esm ./e2e/firefox-smoke.mts",
         "type-check": "tsc --noEmit",

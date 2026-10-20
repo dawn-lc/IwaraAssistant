@@ -1,0 +1,31 @@
+/**
+ * 宽屏 —— 逐行对齐源项目 `src/css/widescreen.css`
+ *
+ * 同 beautify：源项目条件 `GM_addStyle`，这里常驻 + `html.ia-widescreen` 作用域。
+ */
+
+html.ia-widescreen .container,
+html.ia-widescreen .container-fluid {
+    max-width: 85% !important;
+}
+
+html.ia-widescreen .videoTeaser__title,
+html.ia-widescreen .videoTeaser__byline,
+html.ia-widescreen .videoTeaser .byline {
+    line-clamp: 1 !important;
+    -webkit-line-clamp: 1 !important;
+}
+
+@media (max-width: 720px) {
+    html.ia-widescreen .container,
+    html.ia-widescreen .container-fluid {
+        max-width: 100% !important;
+    }
+
+    html.ia-widescreen .videoTeaser__title,
+    html.ia-widescreen .videoTeaser__byline,
+    html.ia-widescreen .videoTeaser .byline {
+        line-clamp: 2 !important;
+        -webkit-line-clamp: 2 !important;
+    }
+}

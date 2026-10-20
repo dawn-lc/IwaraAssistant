@@ -1,0 +1,74 @@
+/**
+ * 卡片控件与水印 —— 逐行对齐源项目 `src/css/videoCard.css`
+ *
+ * 契约（源项目 e2e 同款断言）：
+ * - `input.selectButton[videoID]`：38×38、右上、z-index 100、
+ *   `accent-color: var(--primary)`（跟随站点主题变量）
+ * - `.follow` / `.downloaded`：状态角标（本扩展尚未接数据通道，样式先就位）
+ * - `.deleteButton`：源项目每卡片删除按钮（本扩展不启用，保留以对齐契约）
+ * - `.fixed-bottom-right`：右下角水印
+ */
+
+.videoTeaser {
+    position: relative;
+}
+
+.selectButton {
+    accent-color: var(--primary);
+    position: absolute;
+    width: 38px;
+    height: 38px;
+    right: 0;
+    cursor: pointer;
+    z-index: 100;
+    top: 22px;
+}
+
+.follow {
+    bottom: 24px;
+    right: 2px;
+    border-radius: 2px;
+    position: absolute;
+    padding: 3px 5px;
+    background-color: rgba(0, 0, 0, 0.8);
+    pointer-events: none;
+}
+
+.downloaded {
+    bottom: 46px;
+    right: 2px;
+    border-radius: 2px;
+    position: absolute;
+    padding: 3px 5px;
+    background-color: rgba(0, 0, 0, 0.8);
+    pointer-events: none;
+}
+
+.deleteButton {
+    accent-color: var(--danger);
+    position: absolute;
+    width: 38px;
+    height: 38px;
+    left: 0;
+    cursor: pointer;
+    z-index: 100;
+    border: none;
+    padding: 0;
+    margin: 3px;
+    top: 22px;
+}
+
+.fixed-bottom-right {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    background-color: var(--body);
+    color: var(--text);
+    border-top: 1px solid var(--primary);
+    border-left: 1px solid var(--primary);
+    border-top-left-radius: 6px;
+    padding: 2px 5px;
+    margin: 0;
+    user-select: none;
+    z-index: 100;
+}

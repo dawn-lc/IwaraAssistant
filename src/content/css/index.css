@@ -1,0 +1,23 @@
+/**
+ * 页内 UI 样式入口 —— 构建期由 esbuild 打包为 `content/page-ui.css`，
+ * 由 manifest `content_scripts[].css` **声明式注入**（浏览器在 document_start
+ * 期间、DOM 构建之前应用），因此运行时代码里没有任何样式注入逻辑。
+ *
+ * 与源项目的对应关系（`D:\code\IwaraDownloadTool\src\css\*`）：
+ *   menu.css      ← menu.css
+ *   videoCard.css ← videoCard.css（卡片复选框/角标 + 水印）
+ *   overlay.css   ← overlay.css
+ *   beautify.css  ← beautify.css（改为 html.ia-* 类作用域，常驻）
+ *   widescreen.css← widescreen.css（同）
+ *
+ * 不移植：源 `toast.css`（页内 toast 引擎）——页内反馈只保留系统通知与
+ * options 内的 sonner；导入导出已从菜单移除，flash 提示随之删除。
+ *
+ * 顺序有意义：后加载的规则在同等特异性下覆盖前面的，菜单/卡片是基础层，放前面。
+ */
+
+@import './menu.css';
+@import './videoCard.css';
+@import './overlay.css';
+@import './beautify.css';
+@import './widescreen.css';

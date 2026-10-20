@@ -1,0 +1,9 @@
+# 依赖与构建产物
+node_modules/
+dist/
+temp/
+*.log
+# 图标：源文件是 assets/icons/logo.svg，PNG 由 npm run build / build:icons 生成，不入库
+assets/icons/*.png
+# 注意：package-lock.json **必须提交**——CI 用 `npm ci` 需要它才能复现依赖树
+# （源油猴项目忽略它是历史习惯，扩展项目有 CI，不能沿用）

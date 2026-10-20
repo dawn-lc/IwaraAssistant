@@ -1,0 +1,130 @@
+/**
+ * 手动下载对话框的模态层 —— 逐行对齐源项目 `src/css/overlay.css`
+ *
+ * 契约：`#pluginOverlay > .main`（源项目同构），淡入 + 面板入场动画、按钮态与主题变量。
+ * 源项目的两套分支**不移植**：「粘贴 JSON 导入配置」（配置导入导出在 options「迁移」页签）
+ * 与其中的自定义勾选框 `.checkbox*`（没有消费者，样式随之删除）。
+ */
+
+#pluginOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.75);
+    z-index: 2147483645;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    animation: iaOverlayFadeIn 0.15s ease;
+}
+
+@keyframes iaOverlayFadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+#pluginOverlay .main {
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1.7;
+    width: 520px;
+    max-width: calc(100% - 40px);
+    max-height: 70vh;
+    background-color: var(--body);
+    padding: 28px 32px;
+    margin: 10px;
+    overflow-y: auto;
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+    scrollbar-width: thin;
+    scrollbar-color: var(--muted) transparent;
+    animation: iaOverlayPanelIn 0.2s ease;
+}
+
+@keyframes iaOverlayPanelIn {
+    from {
+        opacity: 0;
+        transform: translateY(-14px) scale(0.98);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+#pluginOverlay .main p {
+    margin: 0 0 12px 0;
+}
+
+#pluginOverlay .main p:last-child {
+    margin-bottom: 0;
+}
+
+#pluginOverlay .main textarea {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 10px 0;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+    background: color-mix(in srgb, var(--body) 92%, var(--text));
+    color: var(--text);
+    font:
+        13px/1.5 ui-monospace,
+        SFMono-Regular,
+        Consolas,
+        monospace;
+    resize: vertical;
+}
+
+#pluginOverlay button {
+    padding: 10px 40px;
+    color: var(--primary-text);
+    font-size: 15px;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: var(--primary);
+    transition:
+        filter 0.15s,
+        transform 0.1s;
+}
+
+#pluginOverlay button:hover:not([disabled]) {
+    filter: brightness(1.12);
+}
+
+#pluginOverlay button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+#pluginOverlay .ia-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+#pluginOverlay .ia-actions button.ia-ghost {
+    background: color-mix(in srgb, var(--text) 16%, transparent);
+    color: var(--text);
+}
+
+@media (max-width: 640px) {
+    #pluginOverlay .main {
+        width: 100%;
+        max-width: none;
+    }
+}

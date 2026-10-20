@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Iwara Assistant",
+  "version": "0.1.0",
+  "default_locale": "en",
+  "author": "dawn-lc",
+  "description": "%#description#%",
+  "icons": {
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage", "downloads", "clipboardWrite", "alarms", "contextMenus", "notifications"],
+  "optional_host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "http://*/*", "https://*/*"],
+  "host_permissions": ["*://*.iwara.tv/*"],
+  "background": { "%#background_key#%": "%#background_value#%" },
+  "action": {
+    "default_title": "Iwara Assistant",
+    "default_popup": "popup/index.html"
+  },
+  "options_ui": {
+    "page": "options/index.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.iwara.tv/*"],
+      "js": ["content/isolated.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": false
+    },
+    {
+      "matches": ["*://*.iwara.tv/*"],
+      "js": ["content/main-world.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["content/main-world.js"], "matches": ["*://*.iwara.tv/*"] }
+  ],
+  "%#min_version_key#%": "%#min_version_value#%"
+}
