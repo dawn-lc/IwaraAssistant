@@ -1,8 +1,9 @@
 /**
  * 图标 CLI（`npm run build:icons`）。
  *
- * 几何来源是 `assets/icons/logo.svg`，栅格化在 `build/iconRenderer.ts`（构建也直接用它）。
- * 本脚本**不参与** `npm run build`，只做两件辅助的事：
+ * 唯一设计源是 `assets/icons/logo.svg`，栅格化在 `build/iconRenderer.ts`
+ * （构建也直接用它，底层是 @resvg/resvg-js）。本脚本**不参与** `npm run build`，
+ * 只做两件辅助的事：
  *
  * - 默认：把 16/48/128 写进 `assets/icons/`（本地查看 / 上传商店取用；`.gitignore` 已忽略）
  * - `--size=N`：只输出一张到 `temp/icons/`，检查几何与缩放效果

@@ -10,7 +10,7 @@
  *   options/index.{html,css,js}
  *   popup/index.{html,css,js}
  *   manifest.json            —— manifest.base.json + variants 派生
- *   icons/icon-{16,48,128}.png —— 由 assets/icons/logo.svg 栅格化（见 build/iconRenderer.ts）
+ *   icons/icon-{16,48,128}.png —— 由唯一源文件 assets/icons/logo.svg 经 @resvg/resvg-js 栅格化
  *   _locales/**              —— 静态 i18n 文案（browser.i18n 消费）
  *
  * 关键点：
@@ -214,7 +214,7 @@ async function writeManifest(version: string): Promise<void> {
     await fs.writeFile(path.join(dest, 'manifest.json'), JSON.stringify(manifest, null, 4))
 }
 
-// ── 图标：由 assets/icons/logo.svg 栅格化（Chrome 不支持 manifest 用 SVG）────
+// ── 图标：由唯一源文件 assets/icons/logo.svg 经 resvg 栅格化（Chrome 不支持 manifest 用 SVG）────
 
 async function writeIcons(): Promise<void> {
     await fs.mkdir(path.join(dest, 'icons'), { recursive: true })

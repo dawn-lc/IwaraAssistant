@@ -82,6 +82,16 @@ test('改写失败要大声报错：真的残留 MV3 键说明转换漏了', () 
     assert.equal(manifest['manifest_version'], 2)
 })
 
+test('Firefox 变体关闭 options_ui.browser_style，避免注入 extension.css 造成跨宿主样式差异', async () => {
+    const base = await readBase()
+    const options = firefoxVariant.extra['options_ui'] as Record<string, unknown>
+    const baseOptions = base['options_ui'] as Record<string, unknown>
+
+    assert.equal(options['browser_style'], false, 'MV2 默认 true 会注入 extension.css（body 变 flex、禁用文本选择）')
+    assert.equal(options['page'], baseOptions['page'], 'options 页路径应与 base 保持一致')
+    assert.equal(options['open_in_tab'], baseOptions['open_in_tab'], 'open_in_tab 应与 base 保持一致')
+})
+
 test('真源守卫：Firefox 变体声明 MV2，且持久后台页不会被改成 false', async () => {
     assert.equal(firefoxVariant.manifestVersion, 2)
     const background = firefoxVariant.extra['background'] as { scripts?: string[]; persistent?: boolean }

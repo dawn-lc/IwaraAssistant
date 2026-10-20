@@ -146,7 +146,7 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 ### `build/`：一脚本一职责
 
 `index.ts` 是主流程（入口清单 + manifest 写入 + 静态资产），其余七个各管一件事：
-`icons.ts` / `iconRenderer.ts`（图标栅格化）、`manifestV2.ts`（Firefox 形状改写）、
+`icons.ts` / `iconRenderer.ts`（图标栅格化，resvg）、`manifestV2.ts`（Firefox 形状改写）、
 `package.ts`（ZIP）、`version.ts`（版本校验）、`env.ts`（带环境变量跑命令）、`crc32.ts`。
 
 ## 注入时机与安全

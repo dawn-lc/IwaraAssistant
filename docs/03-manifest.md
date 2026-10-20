@@ -98,6 +98,8 @@ manifest['version'] = await readExtensionVersion(root)
 
 > **样式走 `css` 字段，不走 JS。** 源项目（油猴）只能用 `GM_addStyle`，扩展有声明式注入能力：`content_scripts[].css` 由浏览器在 `document_start` 期间、DOM 构建之前应用，且 **CSS 先于同一条目的 `js`**。源文件是 `src/content/css/*.css`（真实 `.css`，由 `index.css` `@import` 汇总），构建期 bundle 成单个 `content/page-ui.css`。
 
+> **`options_ui.browser_style` 只在 Firefox MV2 变体里写 `false`。** 该键在 Chrome 不存在，MV3 下也已废弃（Firefox 118+ 移除）；但 Firefox MV2 的默认值是 `true`，会向 options 页注入 `chrome://browser/content/extension.css`（`body` 变 flex 列、禁用文本选择），与 Chrome 的渲染不一致。Firefox 变体单独覆盖 `options_ui` 并显式关闭它，见 `manifest/variants.ts`。
+
 ## 权限清单的取舍
 
 | 权限                                 | 用途                                                                                                                                                                                                                                                                                                                            | 对应旧行为                                                               |

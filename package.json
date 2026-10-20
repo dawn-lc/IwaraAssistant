@@ -49,6 +49,7 @@
     },
     "devDependencies": {
         "@playwright/test": "^1.64.0",
+        "@resvg/resvg-js": "^2.6.2",
         "@types/chrome": "^0.1.20",
         "@types/mocha": "^10.0.10",
         "@types/node": "^22.15.0",

@@ -297,7 +297,7 @@ npm run type-check:wdio   # WDIO e2e 类型检查
 - Chrome 111+：`chrome://extensions` → 开发者模式 → 加载已解压的扩展程序 → 选 `dist/chrome`
 - Firefox 128+：`about:debugging#/runtime/this-firefox` → 临时载入附加组件 → 选 `dist/firefox/manifest.json`
 - 打开任意 iwara.tv 页面，页面 console 应出现 `[iwara-assistant] MAIN world injected — fetch hook active` 与 `[iwara-assistant] ISOLATED bridge ready (schema 1)`（随后 `handshake ok`）；扩展 SW/后台页 console 出现 `[iwara-assistant] background up (chrome-service-worker | firefox-background-page)`
-- 图标：几何源文件是 `assets/icons/logo.svg`，`npm run build` 会把它栅格化成 `dist/<target>/icons/icon-{16,48,128}.png`（无需手工步骤；`npm run build:icons` 仅用于另存一份到 `assets/icons/` 供查看或上架）
+- 图标：唯一设计源是 `assets/icons/logo.svg`，`npm run build` 经 @resvg/resvg-js 栅格化成 `dist/<target>/icons/icon-{16,48,128}.png`（无需手工步骤；`npm run build:icons` 仅用于另存一份到 `assets/icons/` 供查看或上架）
 
 ## M5 Firefox 专项结果
 
@@ -308,7 +308,7 @@ npm run type-check:wdio   # WDIO e2e 类型检查
 ## M6 发布（已就绪）
 
 - 打包：`npm run build` 编译完自动打包 → `dist/chrome.zip`（CWS）/ `dist/firefox.zip`（AMO）；只想重打包已有产物用 `npm run package`（或 `package:chrome` / `package:firefox` 单目标）。手写 ZIP：条目路径强制正斜杠（规避 Compress-Archive 反斜杠分隔符兼容问题）、manifest.json 恒在包根。
-- 正式图标：源文件只有 `assets/icons/logo.svg` 一个（设计工具可直接编辑），构建期由 `build/iconRenderer.ts` 栅格化成 16/48/128 PNG。**为什么不能直接用 SVG**：Chrome 的 manifest `icons` 明确不支持 SVG（只收 PNG/BMP/GIF/ICO/JPEG），Chrome Web Store 要求 128×128 PNG；Firefox 92+ 虽支持 SVG，但同一份 SVG 无法按尺寸做不同的光学修正（完整几何在 16px 只有 1~2 像素，实测糊成一团）。所以 16px 走简化图形（实心菱形 + 放大的三角挖空），48/128 用完整几何。
+- 正式图标：唯一设计源是 `assets/icons/logo.svg`（完整图标：底板、渐变、字形都在里面，设计工具可直接编辑）；构建期由 `build/iconRenderer.ts` 调用 @resvg/resvg-js 栅格化成 16/48/128 PNG，16px 也走同一份源文件。**为什么不能直接用 SVG**：Chrome 的 manifest `icons` 明确不支持 SVG（只收 PNG/BMP/GIF/ICO/JPEG），Chrome Web Store 要求 128×128 PNG。小尺寸的可读性由 SVG 设计本身保证——线条与细节不要细到 1px 以下。
 - Firefox 自更新路线（可选）：设 `IWARA_ASSISTANT_UPDATE_URL` 环境变量重建 → manifest 注入 `gecko.update_url` → `web-ext sign` 自签；默认走 AMO 上传审核路线。
 - 商店素材与逐权限审核说明：见 [docs/store-listing.md](docs/store-listing.md)；隐私声明：[PRIVACY.md](PRIVACY.md)（不收集任何数据，对应 Firefox `data_collection_permissions: none`）。
 

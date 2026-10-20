@@ -1,24 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Iwara Assistant 图标 logo —— **几何唯一来源**。
+  Iwara Assistant 图标 —— **唯一设计源文件**（全尺寸 16/48/128/512 都由它渲染）。
 
-  构建期由 build/iconRenderer.ts 读取本文件并栅格化成 PNG
+  构建期由 build/iconRenderer.ts 用 @resvg/resvg-js 栅格化成 PNG
   （manifest 的 icons 见 assets/icons/icon-{16,48,128}.png，由构建直接输出到 dist）。
 
-  改图标只需改这里（Figma / Inkscape / 手写均可），随后重跑 npm run build。
+  改图标只改这一个文件（Figma / Inkscape / 手写均可），随后重跑 npm run build。
+  PNG 是产物，不入库；没有按尺寸分叉的第二份 SVG，改一处即全尺寸生效。
 
-  ⚠️ 两个子路径必须留在**同一个 <path>** 里：
-  第二个子路径以相对命令 `m` 开头，它的起点是第一个子路径 `Z` 之后的当前点。
-  拆成两个 <path> 元素后，解析器会把 `m` 当成从原点出发，logo 会整个错位。
+  ⚠️ 白色字形由两条子路径组成：外壳与中间挖空。两条子路径必须留在**同一个 <path>**
+  里，靠 nonzero 绕向规则形成挖空；拆开或改错绕向会让中间变成实心。
 
-  ⚠️ 栅格化器只支持 M / L / H / V / Z（直线段）。用曲线（C / Q / A）会直接报错，
-  而不是静默画出缺块的图形。
-
-  ⚠️ 本文件带 XML 声明，**不能直接内联进 HTML**（会被当成非法处理指令而整块不渲染）。
-  需要内联时去掉第一行的 `<?xml …?>` 与这段注释；作为外部文件（<img src>、Firefox
-  manifest 图标）使用时保持现状。
+  ⚠️ 16px 直接由本文件缩放得到。设计时请把线条留粗一些：细节低于 1px 会糊成一片。
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1303.92 1410.01" width="1303.92" height="1410.01" fill="currentColor">
-  <path d="M687.58,125.75L480.71,0,0,704.97l480.74,705.04,207.35-126.2,615.83-578.88L687.58,125.75Zm-35.62,935.56l-144.38-148.26-78.69,43.35v-124.26l-123.89-127.71,123.89-127.69v-124.8l78.69,44.46,144.38-148.52,346.85,357.03-346.85,356.39Z"/>
-  <polygon points="474.95 520.84 474.95 889 800.89 705.01"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#61afef" />
+      <stop offset="1" stop-color="#2993e9" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="225.28" fill="url(#plate)" />
+
+  <g transform="translate(142.6881 112.64) scale(0.5664641)" fill="#f8f8ff">
+    <path d="M687.58,125.75L480.71,0,0,704.97l480.74,705.04,207.35-126.2,615.83-578.88L687.58,125.75Zm-35.62,935.56l-144.38-148.26-78.69,43.35v-124.26l-123.89-127.71,123.89-127.69v-124.8l78.69,44.46,144.38-148.52,346.85,357.03-346.85,356.39Z" />
+    <polygon points="474.95 520.84 474.95 889 800.89 705.01" />
+  </g>
 </svg>
+

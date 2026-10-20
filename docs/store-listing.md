@@ -93,7 +93,7 @@ Iwara Assistant turns IwaraDownloadTool from a userscript into a native browser 
 - Save path templates with per-segment sanitizing (NFKC, emoji folding, length caps) and live preview.
 - Feed filters: hide liked videos; optionally merge private/unlisted videos you already have into the home timeline.
 - Background video library (IndexedDB) with the download queue, system notifications, and a badge counter — even with no tabs open.
-- Settings, RPC endpoints (permission requested per origin), migration wizard from the userscript, and a built-in guide/update log.
+- Settings, RPC endpoints (host access is declared once at install; no per-origin permission prompt), migration wizard from the userscript, and a built-in guide/update log.
 
 No data collection. No telemetry. Everything stays in your browser.
 
@@ -116,10 +116,10 @@ Iwara Assistant 是 IwaraDownloadTool 油猴脚本的扩展化版本：
 - 保存路径模板（逐段清洗：NFKC / emoji 折叠 / 长度截断）+ 实时预览。
 - 信息流过滤：隐藏已点赞内容；可把已收录的私有/不公开视频回填到首页时间线。
 - 后台视频库 + 任务队列持久化（浏览器关掉标签页任务照跑），完成/失败走系统通知 + 角标。
-- RPC 端点逐地址授权（不静默）、油猴数据迁移向导、内置使用引导与更新日志。
+- RPC 端点随安装一次授予站点访问（没有逐地址授权弹窗）、油猴数据迁移向导、内置使用引导与更新日志。
 
 不收集任何数据，无遥测；一切数据只留在你的浏览器里。
 
 ## 四、正式图标
 
-图标源文件是 `assets/icons/logo.svg`，`npm run build` 会把它栅格化成 `dist/<target>/icons/icon-{16,48,128}.png`（商店徽章取同一个 128×128 文件即可）。需要单独取用时跑 `npm run build:icons`，它会另存一份到 `assets/icons/`（该目录下的 PNG 不入库）。商店徽章另需 440×280 宣传图（需图像设计工具制作，商店侧单独上传）。
+图标源文件只有 `assets/icons/logo.svg` 一个，`npm run build` 会经 @resvg/resvg-js 栅格化成 `dist/<target>/icons/icon-{16,48,128}.png`（商店徽章取同一个 128×128 文件即可）。需要单独取用时跑 `npm run build:icons`，它会另存一份到 `assets/icons/`（该目录下的 PNG 不入库）。商店徽章另需 440×280 宣传图（需图像设计工具制作，商店侧单独上传）。

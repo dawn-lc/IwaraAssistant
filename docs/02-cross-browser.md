@@ -103,6 +103,8 @@ esbuild 构建时以 `inject` 选项把它注入所有入口（content/SW/option
 
     - 文案仍必须把「被浏览器拦」与「守护进程没起来」分开（`shared/endpoint.ts` 的 `firefoxBlocksLanHttp`）：判据里已经要求 `manifest_version === 2` 时**不**报「浏览器拦了」，否则 MV2 下把端口填错会被误报成策略问题。这是启发式判定（UA + manifest 版本 + 地址形态），要拿真实错误码就得额外申请 `webRequest` 权限订阅 `onErrorOccurred`，为一句提示文案多要这种权限不划算。
 
+6. **options 页样式：Firefox MV2 的 `options_ui.browser_style` 默认 `true`**（MV3 从 Firefox 115 起默认 `false`，118 起移除该键）。默认值会让 Firefox 向扩展页注入 `chrome://browser/content/extension.css`，其中 `html, body { display:flex; flex-direction:column; user-select:none; font:caption }` 等属性会实际生效——Chrome 没有这套样式表，于是同一份 `options.css` 在两宿主的布局与文本选择行为不一致。Firefox 变体现在显式写 `"browser_style": false`（`manifest/variants.ts`），只保留 `src/options/options.css`；该键不能写进 base，否则 Chrome 不认、Firefox MV3 也已废弃。
+
 ## 版本下限声明
 
 - Chrome manifest（MV3）：`"minimum_chrome_version": "111"`

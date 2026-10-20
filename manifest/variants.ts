@@ -65,6 +65,11 @@ export const firefoxVariant: ManifestVariant = {
     },
     manifestVersion: 2,
     extra: {
+        // Firefox MV2 的 options_ui.browser_style 默认 true，会向扩展页注入
+        // chrome://browser/content/extension.css（body 变 flex 列、user-select 被禁用等），
+        // 与 Chrome 的 options 页渲染不一致。显式关闭，让两边都只加载 options.css。
+        // MV3 已废弃该键（Firefox 118+ 移除），所以只放在 Firefox 变体里，不进 base。
+        options_ui: { page: 'options/index.html', open_in_tab: true, browser_style: false },
         // MV2 使用持久化后台页：脚本在浏览器启动时加载并常驻，HTTP/WS 连接与内存状态不会被回收。
         // 这也是 Firefox 侧不再需要「保活」的原因（Chrome MV3 的对照实现见 src/background/runtime/keepAlive.ts）。
         background: { scripts: ['background.js'], persistent: true },
