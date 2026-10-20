@@ -76,8 +76,13 @@ export const firefoxVariant: ManifestVariant = {
         browser_specific_settings: {
             gecko: {
                 id: 'iwara-assistant@dawnlc.me',
+                // 128.0 = `content_scripts[].world: "MAIN"` 的门槛（docs/02）。
+                // 这个下限比 `data_collection_permissions` 的引入版本（桌面 140 / Android 142）低，
+                // 因此 addons-linter 会报两条 KEY_FIREFOX_*_UNSUPPORTED_BY_MIN_VERSION **警告**：
+                // 低版本 Firefox 会忽略该未知键，功能不受影响；而 AMO 对 2025-11-03 之后的新提交
+                // 强制要求声明该键（本例为 required: ['none']）。两者取舍见 docs/store-listing.md。
                 strict_min_version: '128.0',
-                // AMO 数据收集披露（Firefox 141+ 要求声明；本项目不向开发者回传任何数据 → none）
+                // AMO 数据收集披露（Firefox 140+ 支持该键；本项目不向开发者回传任何数据 → none）
                 data_collection_permissions: { required: ['none'] }
             }
         }

@@ -51,6 +51,10 @@ function SiteAccess(): ReactElement {
  */
 const RELEASES = [
     {
+        version: '0.1.14',
+        items: ['guide.changelog.v0114.item1', 'guide.changelog.v0114.item2']
+    },
+    {
         version: '0.1.13',
         items: ['guide.changelog.v0113.item1', 'guide.changelog.v0113.item2', 'guide.changelog.v0113.item3', 'guide.changelog.v0113.item4', 'guide.changelog.v0113.item5', 'guide.changelog.v0113.item6', 'guide.changelog.v0113.item7', 'guide.changelog.v0113.item8']
     },

@@ -327,3 +327,7 @@ npm run type-check:wdio   # WDIO e2e 类型检查
 - TypeScript + esbuild（沿用原仓库工具链习惯，`tsx` 跑构建脚本）
 - `idb`（IndexedDB 视频库整体迁后台）、`dayjs` 保留
 - Playwright（Chromium 扩展 e2e）+ WebdriverIO（Chrome/Firefox 跨浏览器扩展 e2e）
+
+## 许可证
+
+[Apache License 2.0](LICENSE) © 2026 dawn-lc

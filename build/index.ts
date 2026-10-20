@@ -88,7 +88,9 @@ const STATIC_FILES: Array<[string, string]> = [
     ['src/options/options.css', 'options/options.css'],
     ['src/popup/popup.html', 'popup/index.html'],
     ['src/popup/popup.css', 'popup/popup.css'],
-    ['src/offscreen/offscreen.html', 'offscreen.html']
+    ['src/offscreen/offscreen.html', 'offscreen.html'],
+    // Apache-2.0 第 4 条要求随分发附带许可证副本；商店上传的是 zip，所以把 LICENSE 放进产物根目录
+    ['LICENSE', 'LICENSE']
 ]
 
 /** 仅 Chrome 的静态资产（与 `EntryDef.chromeOnly` 配套，避免 Firefox 包携带死文件） */

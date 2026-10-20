@@ -110,6 +110,8 @@ esbuild 构建时以 `inject` 选项把它注入所有入口（content/SW/option
 - Chrome manifest（MV3）：`"minimum_chrome_version": "111"`
 - Firefox manifest（MV2）：`browser_specific_settings.gecko.strict_min_version: "128.0"`（`world: "MAIN"` 的门槛）
 
+> 这个下限低于 `data_collection_permissions` 的引入版本（桌面 140 / Android 142），所以 `addons-linter` 会报两条 `KEY_FIREFOX_*_UNSUPPORTED_BY_MIN_VERSION` 警告。低版本 Firefox 只是忽略该未知键（AMO 又强制要求新提交声明），属**有意保留**的取舍；清零需把最低版本提到 142，代价是放弃 128–141。详见 [store-listing.md](store-listing.md#二amofirefox-add-ons)。
+
 > 若未来放弃 Chrome 111–147 用户，两处提升到 148 并删除 shim 调用即可（指南的"无条件采用"路线），代码零改动。
 
 ## TypeScript 类型策略

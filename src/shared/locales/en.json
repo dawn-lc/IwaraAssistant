@@ -386,6 +386,10 @@
         "changelogTitle": "Changelog",
         "current": "Current version",
         "changelog": {
+            "v0114": {
+                "item1": "Firefox: the settings page no longer inherits the browser's built-in extension stylesheet (it used to be forced into a flex column with text selection disabled), so it now looks the same as on Chrome",
+                "item2": "Icons are rasterized straight from the design-source SVG: rounded corners and the gradient follow the original design, and 16/48/128 all come from that one vector source instead of hand-written approximation code"
+            },
             "v0113": {
                 "item1": "Batch download now de-duplicates: re-selecting videos that are already downloaded or downloading no longer creates duplicate tasks (a zero-cost local queue check, plus a skip when aria2 already has the same video). Previously this piled up duplicate 0% tasks in aria2",
                 "item2": "De-duplication no longer depends on the \"experimental features\" switch: it is a safety net against duplicate submission, while that switch is documented as controlling MediaCenter only. Videos that previously failed are still retried (re-selecting them means trying again)",
