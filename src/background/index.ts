@@ -172,7 +172,7 @@ browser.runtime.onStartup.addListener(() => void boot())
 
 browser.runtime.onInstalled.addListener((details) => {
     console.info('[iwara-assistant] onInstalled:', details.reason)
-    // 首次运行浮层的替代（docs/01）：install 打开使用引导并聚焦；update 打开更新日志
+    // 首次运行浮层的替代（docs/01）：install / update 都打开使用引导，install 时聚焦
     if (details.reason === 'install' || details.reason === 'update') {
         const focus = details.reason === 'install'
         void browser.tabs.create({ url: browser.runtime.getURL('options/index.html#guide'), active: focus })

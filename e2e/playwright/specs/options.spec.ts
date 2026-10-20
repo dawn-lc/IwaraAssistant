@@ -452,13 +452,12 @@ test('高级页：关注扩展作者默认开启，且未登录时不写状态�
     expect(state).toBeUndefined()
 })
 
-test('引导页：权限诊断（无授权按钮）+ 钓鱼防护说明 + 按版本分组的更新日志', async ({ sharedSession }) => {
+test('引导页：权限诊断（无授权按钮）+ 钓鱼防护说明', async ({ sharedSession }) => {
     const { page, extensionId } = sharedSession
     await openExtensionPage(page, extensionId, 'options/index.html#guide')
     await expect(page.locator('nav.tabs')).toBeVisible()
 
-    // 按**标题**定位区块：正文里也会提到这些词（更新日志就写了「新增钓鱼仿冒站点防护」），
-    // 用 hasText 过滤整张卡片会匹配到两张。
+    // 按**标题**定位区块：正文里也会提到这些词，用 hasText 过滤整张卡片会匹配到两张。
     const section = (title: string) => page.locator('section.card').filter({ has: page.locator('h2', { hasText: title }) })
 
     // ① 站点访问权限：只诊断。required host 权限无法 permissions.request，
@@ -476,11 +475,12 @@ test('引导页：权限诊断（无授权按钮）+ 钓鱼防护说明 + 按版
         await expect(guardSection).toContainText(domain)
     }
 
-    // ③ 更新日志：当前版本必须被标出来，否则用户无法判断「这份说明是不是最新」
+    // ③ 关于：版本号如实来自 manifest（页面不再内置更新日志，但版本仍要可见）
     const version = await page.evaluate(() => browser.runtime.getManifest().version)
-    const changelog = section('更新日志')
-    await expect(changelog).toContainText(version)
-    await expect(changelog).toContainText('当前版本')
+    await expect(section('关于')).toContainText(version)
+
+    // ④ 更新日志已从代码里移除（维护成本随版本线性增长），不应再出现该区块
+    await expect(section('更新日志')).toHaveCount(0)
 })
 
 test('任务页签：待办优先排序 / 分组筛选 / 每行语义化主操作', async ({ sharedSession }) => {

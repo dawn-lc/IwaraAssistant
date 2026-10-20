@@ -382,67 +382,7 @@
         "storage": "Data location",
         "storageValue": "Everything stays in this browser: config and queue in storage.local, the video library in the extension's own IndexedDB",
         "privacy": "Privacy",
-        "privacyValue": "No data is collected or uploaded; no developer server, no telemetry. Refresh tokens are stored in the page exactly like the original userscript.",
-        "changelogTitle": "Changelog",
-        "current": "Current version",
-        "changelog": {
-            "v0114": {
-                "item1": "Firefox: the settings page no longer inherits the browser's built-in extension stylesheet (it used to be forced into a flex column with text selection disabled), so it now looks the same as on Chrome",
-                "item2": "Icons are rasterized straight from the design-source SVG: rounded corners and the gradient follow the original design, and 16/48/128 all come from that one vector source instead of hand-written approximation code"
-            },
-            "v0113": {
-                "item1": "Batch download now de-duplicates: re-selecting videos that are already downloaded or downloading no longer creates duplicate tasks (a zero-cost local queue check, plus a skip when aria2 already has the same video). Previously this piled up duplicate 0% tasks in aria2",
-                "item2": "De-duplication no longer depends on the \"experimental features\" switch: it is a safety net against duplicate submission, while that switch is documented as controlling MediaCenter only. Videos that previously failed are still retried (re-selecting them means trying again)",
-                "item3": "Moved \"Check for third-party file host links\" from the Filter tab to the Download tab: it really does block a download (leaving a to-do), so it is download behavior rather than list rewriting. The label and hint now say \"description and comments\" instead of comments only",
-                "item4": "The task queue can now track all four download backends: iwaradl is polled through its task API (every minute, only while there is work), and others tasks are adopted once the browser actually starts downloading. iwaradl can be cancelled too (queued tasks only). Also fixed a real bug: the iwaradl task key was read from the wrong field, so it could never be tracked",
-                "item5": "Built-in download on Firefox no longer flattens subdirectories into underscores: the path template now produces the exact same folder structure on both browsers (the 2016 Firefox bug this was based on had already been fixed in version 51)",
-                "item6": "The default download method for new installs is now \"built-in browser download\": it is the only method that reports real progress/completion/failure back to the queue while depending on no external service. The previous default (Others) only opened a direct-link tab and went silent once the task was handed off",
-                "item7": "New setting \"Simultaneous downloads\": how many built-in browser downloads may run at once (default 3). Selecting a batch of videos used to start them all at once, which meant dozens of parallel connections to the site; now the extra ones queue up and start as earlier downloads finish",
-                "item8": "The task list now shows the real progress reported by aria2 / iwaradl, and the RPC tab has a new \"Backend capacity\" panel (aria2: downloading / queued / speed / concurrency limit; iwaradl: downloading / queued counts). Also fixed a dishonest label: tasks sitting in aria2's own queue used to read \"Downloading\" and now read \"Queued\""
-            },
-            "v0112": {
-                "item1": "The in-page \"Download selected\" item no longer appends a selected count: the count is shown only in the bottom-right watermark (matching the original userscript — the same state was being displayed twice)",
-                "item2": "Removed the in-page \"Remove selected from playlist\" item: playlist entries are removed with the per-card \"Delete\" button, which is the original userscript's only entry point",
-                "item3": "System notifications are now clickable: a task notification opens the task panel, a third-party link notification opens that video page, an approval notification opens the friends page, and a playlist-removal notification opens that playlist"
-            },
-            "v0111": {
-                "item1": "Friend-request approval now has a progress bar: indeterminate while fetching requests and comment evidence, then \"processed / total\" plus approved·skipped·failed counters while working through the list",
-                "item2": "Approval state is persisted: leaving the page and coming back still shows \"Approving…\" with live progress, so it is no longer mistaken for idle and triggered twice",
-                "item3": "A second concurrent run is rejected by the background with \"Approval is already running\"; progress writes are throttled to 200 ms instead of one write per request",
-                "item4": "After a batch download creates its tasks, the in-page checkboxes are cleared as each item is processed (matching the original userscript; items skipped by aria2 de-duplication are cleared too)"
-            },
-            "v0110": {
-                "item1": "Fixed friend-approval condition labels: \"active within {days} days\" / \"account older than {days} days\" no longer render the literal placeholder, and the numbers share the same constants as the checks",
-                "item2": "Fixed friend-request pagination: no longer burns through all 32 pages when the server omits `limit`, and reports honestly when the page cap means only part of the list was processed",
-                "item3": "Approval conditions now default to none selected (no longer \"approve unconditionally\"): with nothing checked the run button is disabled and the reason is shown under the list"
-            },
-            "v019": {
-                "item1": "Firefox build now uses MV2: LAN / private-network endpoints over plain http / ws (e.g. aria2 on a NAS) connect directly — no HTTPS reverse proxy and no need to colocate the service",
-                "item2": "New \"Keep background alive\" switch (Chrome only, off by default): with it on, completion notices ride the aria2 WebSocket instead of waiting for the 5-minute fallback scan",
-                "item3": "Removed the never-effective \"Enable one-click approval\" switch from the friends tab: approval has always been an explicit action on that page, and the condition list plus any / all mode are unchanged"
-            },
-            "v018": {
-                "item1": "Phishing protection upgraded to network-level blocking: while the warning is shown, every request the page makes (images, fonts, form posts, beacons, cross-origin frames) is blocked by the browser — page scripts cannot lift it",
-                "item2": "Only a real click in the warning panel releases the block; the rule is cleaned up when you leave the site, close the tab, or exit the browser"
-            },
-            "v016": {
-                "item1": "Migration tab handles gigabyte-scale libraries: streaming export/import with live export progress",
-                "item2": "New phishing-site protection: warns and blocks network access when a non-official host name contains \"iwara\"",
-                "item3": "External endpoints (aria2 / iwaradl / MediaCenter) now report an actionable reason and the setting to fix, instead of a raw browser error",
-                "item4": "Simpler permission model: all-site access is granted once at install, no per-endpoint prompts"
-            },
-            "v010": {
-                "item1": "Four download channels: Browser / Aria2 / iwaradl / Others",
-                "item2": "Filterable task queue with per-task retry/remove, retry-all-failed and clear-finished",
-                "item3": "Live preview of the download path template plus file name cleaning (NFKC / emoji / illegal characters / truncation)",
-                "item4": "iwara list filtering, unlisted/private cache backfill, card checkboxes and floating menu",
-                "item5": "Automatic video library ingest; cards show followed/downloaded badges and upload time",
-                "item6": "One-click friend request approval with combinable conditions",
-                "item7": "Migration wizard for userscript data (config / video library / follows / friends / ID map)",
-                "item8": "aria2 WebSocket live tracking with alarms-based reconciliation and automatic retry",
-                "item9": "Interface available in 简体中文 / English / 日本語, following the browser language by default"
-            }
-        }
+        "privacyValue": "No data is collected or uploaded; no developer server, no telemetry. Refresh tokens are stored in the page exactly like the original userscript."
     },
     "popup": {
         "hint": "Choose a settings page"

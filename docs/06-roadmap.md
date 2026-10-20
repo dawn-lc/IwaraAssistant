@@ -35,7 +35,7 @@
 
 - options 页以 **React 19** 实现：configPanel 全部配置项（含占位符模板预览、i18n），表单校验接 zod + `shared/config-schema`；`useSyncExternalStore` 订阅 `storage.onChanged` 与 `DOWNLOAD_STATE` 推送
 - **运行时多语言（i18next，与 MediaCenter 同栈）**：`src/shared/locales/{zh,en,ja}.json` 三套字典 + `src/shared/i18n.ts`（`initAsync:false` 同步初始化 / `{name}` 插值 / `getUILanguage()` 映射 / `watchLanguage()` 订阅 `config.language`）；**无中间层**——React 组件用 `useTranslation()`（`I18nextProvider` 注入实例，`react-i18next` 因此只进 React 包），非组件模块用 `i18n.t()`，键名/返回类型由 `src/shared/i18next.d.ts` 的 `CustomTypeOptions` 提供；options、popup、页内菜单、右键菜单、系统通知共用同一实例；语言选择器在「高级 → 扩展行为 → 界面语言」
-- 内置「使用引导」页签（替代已删除的首次运行浮层）：安装引导 + 站点访问权限诊断（`permissions.contains({origins:['<all_urls>']})`，撤销后指回扩展管理页；**不再提供授权按钮**，因为 required 权限无法 `request`）+ 钓鱼防护说明 + 按版本分组的更新日志；`onInstalled` 按 `install`/`update` 分别打开
+- 内置「使用引导」页签（替代已删除的首次运行浮层）：安装引导 + 站点访问权限诊断（`permissions.contains({origins:['<all_urls>']})`，撤销后指回扩展管理页；**不再提供授权按钮**，因为 required 权限无法 `request`）+ 钓鱼防护说明；`onInstalled` 按 `install`/`update` 分别打开（两者都进引导页）。**不内置更新日志**（发布说明走商店页 / release notes）
 - 油猴数据迁移向导（两条通道）：
     1. **页面数据库直读**（首选，无需手工导出）：旧库 `IwaraDownloadTool` 在 iwara.tv origin，content script 首次进页探测并报计数；迁移页点「导入」时后台转发读取、分页读+按体积/条数分批回传、切小事务逐条校验入库（一节写失败就二分到单条，不让一条脏记录废掉整批）。**只含库存四表**（视频库/关注/好友/ID 映射），且导入必须显式触发（自动导入会复活用户已删数据）
     2. **粘贴 / 文件导入**：旧脚本菜单「导出配置」把**裸配置 JSON 复制到剪贴板**（源项目没有导出文件的功能）→ 迁移页文本框粘贴即可；也支持本扩展导出的完整迁移包文件。旧脚本的**配置**在 GM 私有存储里，页面数据库读不到，只能走这条路
