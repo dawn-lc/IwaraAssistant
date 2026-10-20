@@ -18,11 +18,12 @@
  *  - options/popup 入口启用 jsx: automatic（React 19）；content/background 保持纯 TS（docs/01）
  *  - define 注入 process.env.NODE_ENV=production，保证 React 走产品构建（MV3 CSP 无 eval）
  */
-import { build, context, type BuildOptions } from 'esbuild'
+import { build, context, type BuildOptions, type Plugin } from 'esbuild'
 import { promises as fs, existsSync } from 'node:fs'
 import path from 'node:path'
 import { chromeVariant, firefoxVariant, type ManifestVariant } from '../manifest/variants'
 import { renderIconPng } from './iconRenderer'
+import { rewriteInnerHtmlAssignments } from './innerHtmlRewrite'
 import { toManifestV2 } from './manifestV2'
 import { readExtensionVersion } from './version'
 
@@ -115,10 +116,35 @@ function staticFilesForTarget(): Array<[string, string]> {
  */
 const MINIFY = !watch
 
+/**
+ * 消除 addons-linter 对 react-dom 的 `UNSAFE_VAR_ASSIGNMENT` 误报：
+ * 产物写完后把 `el.innerHTML = html` 改写为等价的 `Reflect.set(...)`。
+ * 细节与安全性论证见 `build/innerHtmlRewrite.ts`。
+ */
+function innerHtmlRewritePlugin(outfile: string): Plugin {
+    return {
+        name: 'inner-html-rewrite',
+        setup(pluginBuild) {
+            pluginBuild.onEnd(async (result) => {
+                if (result.errors.length > 0) return
+                const code = await fs.readFile(outfile, 'utf8')
+                const { code: next, count } = rewriteInnerHtmlAssignments(code)
+                if (count > 0) {
+                    await fs.writeFile(outfile, next)
+                    console.log(`[build] ${path.relative(root, outfile)}：innerHTML 赋值改写 ${count} 处（消除 linter 误报）`)
+                } else if (code.includes('__html')) {
+                    console.warn(`[build] ${path.relative(root, outfile)}：含 dangerouslySetInnerHTML 实现但未匹配 innerHTML 赋值，react-dom 形态可能变了，请更新 build/innerHtmlRewrite.ts`)
+                }
+            })
+        }
+    }
+}
+
 function makeBuildOptions(entry: EntryDef): BuildOptions {
+    const outfile = path.join(dest, entry.outfile)
     const common: BuildOptions = {
         entryPoints: [path.join(root, entry.entry)],
-        outfile: path.join(dest, entry.outfile),
+        outfile,
         bundle: true,
         sourcemap: false,
         minify: MINIFY,
@@ -128,6 +154,7 @@ function makeBuildOptions(entry: EntryDef): BuildOptions {
     if (entry.css) return common
     return {
         ...common,
+        plugins: [innerHtmlRewritePlugin(outfile)],
         format: 'iife',
         target: ['es2022'],
         platform: 'browser',

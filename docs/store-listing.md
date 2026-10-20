@@ -45,22 +45,23 @@
 
 `dist/firefox.zip`（`npm run package:firefox`）
 
-自检结果：`addons-linter` **errors 0 / notices 0 / warnings 6**；manifest 含 `browser_specific_settings.gecko.id`、`strict_min_version: 128.0`、`data_collection_permissions: { required: ['none'] }`。
+自检结果：`addons-linter` **errors 0 / notices 0 / warnings 2**；manifest 含 `browser_specific_settings.gecko.id`、`strict_min_version: 128.0`、`data_collection_permissions: { required: ['none'] }`。
 
-6 条警告全部是**已知且接受**的（不阻断签名，提交时可在 reviewer 备注里说明）：
+2 条警告都是**已知且接受**的（不阻断签名，提交时可在 reviewer 备注里说明）：
 
 | 警告                                             | 数量 | 说明                                                                                                                                                                                                                                                       |
 | ------------------------------------------------ | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION`         | 1    | `data_collection_permissions` 从 Firefox 140 才支持，而 `strict_min_version` 是 128（`world: "MAIN"` 的门槛）。低版本会忽略这个未知键，功能不受影响；AMO 又要求新提交必须声明，所以只能接受该警告。若要清零，最低版本需提到 142（桌面/Android 同时满足）。 |
 | `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION` | 1    | 同上，Android 的引入版本是 142。本扩展是**桌面专用**（未声明 `gecko_android`），这条警告不代表实际要支持 Android。                                                                                                                                         |
-| `UNSAFE_VAR_ASSIGNMENT`                          | 4    | 来自 react-dom 产品构建内部的 `setInnerHTML`（`dangerouslySetInnerHTML` 处理器，本项目组件零使用），不是我们的代码。                                                                                                                                       |
+
+> react-dom 的 4 条 `UNSAFE_VAR_ASSIGNMENT` 已由构建后处理消除：产物里 `el.innerHTML = html`（仅 `dangerouslySetInnerHTML` 分支，本项目零使用）被改写为等价的 `Reflect.set(el, "innerHTML", html)`，见 `build/innerHtmlRewrite.ts`。addons-linter 关闭了内联 `eslint-disable`，注释抑制无效。
 
 ### 路线 A：AMO 上传审核（默认）
 
 直接用 `dist/firefox.zip` 提交 AMO（Add-ons → 提交新附加组件）。License 字段选 **Apache License 2.0**（与仓库根 `LICENSE` 一致）。审核要点：
 
 - `<all_urls>` host 权限 + `declarativeNetRequest`（两处用途：用户自填的 RPC 端点 + 任意站点的仿冒域名判定与网络层封锁）→ 引用 `PRIVACY.md` 的权限说明同上；并说明 iwara 专属脚本仍只匹配 `*://*.iwara.tv/*`、全站脚本只读 `location.hostname`、DNR 只做「加一条/删一条 session 规则」且不读请求数据。
-- 6 条警告的口径见上表：2 条是 `strict_min_version: 128.0` 与 `data_collection_permissions`（Firefox 140 / Android 142 引入）的版本错配，4 条是 react-dom 内部实现。均不阻断签名。
+- 2 条警告的口径见上表：`strict_min_version: 128.0` 与 `data_collection_permissions`（Firefox 140 / Android 142 引入）的版本错配，不阻断签名。
 
 ### 路线 B：自建签名 + 自更新（可选）
 

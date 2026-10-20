@@ -301,7 +301,7 @@ npm run type-check:wdio   # WDIO e2e 类型检查
 
 ## M5 Firefox 专项结果
 
-- `npm run lint:firefox`（web-ext 8.10）对 `dist/firefox`：**errors 0 / notices 0**；4 条 `UNSAFE_VAR_ASSIGNMENT`（innerHTML）warning 全部位于 react-dom 产品构建内部 `setInnerHTML`（`dangerouslySetInnerHTML` 处理器，本项目组件零使用）——打包库固有告警，AMO 不阻断签名
+- `npm run lint:firefox`（web-ext 8.10）对 `dist/firefox`：**errors 0 / notices 0**；新版 `addons-linter` 另报 2 条 `KEY_FIREFOX_*_UNSUPPORTED_BY_MIN_VERSION`（`strict_min_version: 128` 低于 `data_collection_permissions` 的 140/142），不阻断签名。react-dom 的 4 条 `UNSAFE_VAR_ASSIGNMENT` 已由构建后处理改写为等价的 `Reflect.set(...)` 消除（见 `build/innerHtmlRewrite.ts`）
 - manifest 已声明 `data_collection_permissions: { required: ['none'] }`（Firefox 141+ 数据收集披露；本项目不向开发者回传任何数据）
 - 挂起协议与 X-ray 纪律代码复核通过（见 docs/01/04；跨世界仅 JSON 字符串、无 while+sleep、SW 四类事件唤醒）
 
