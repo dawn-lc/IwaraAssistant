@@ -444,6 +444,7 @@
         "aria2Recovered": "The download link for video [{id}] had expired; it was re-resolved and the download resumed",
         "aria2RecoverFailed": "Video [{id}] could not be recovered (no fresh link after repeated attempts); retry it manually from the tasks page",
         "aria2TaskMissing": "Video [{id}] no longer exists in aria2 (it may have been cleared, or aria2 was restarted). Check the file, then retry or remove the task",
+        "aria2FileConflict": "The target file for video [{id}] already exists, or the same file is being handled by another aria2 task (aria2 refuses to re-download so as not to truncate it to 0 bytes). Check whether that file is already complete, or remove it / clear the other task and retry",
         "mediaNoMapping": "MediaCenter has no records matching the local video library (neither file hash nor title matched), so there was nothing to sync",
         "notLoggedIn": "Not signed in: sign in on iwara first",
         "noConditions": "No approval conditions selected",

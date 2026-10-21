@@ -26,7 +26,57 @@ export interface Aria2StatusLike {
     totalLength?: string
     completedLength?: string
     downloadSpeed?: string
-    files?: Array<{ uris?: Array<{ uri: string }> }>
+    errorCode?: string
+    files?: Array<{ path?: string; uris?: Array<{ uri: string }> }>
+}
+
+// ── 「这个文件已经在系统里了」类错误（重建救不了，别白烧 8 轮）─────────
+
+/** aria2 errorCode：同一路径已被另一个任务占用（`DUPLICATE_DOWNLOAD`） */
+export const ARIA2_ERROR_DUPLICATE_DOWNLOAD = 11
+/** aria2 errorCode：目标文件已存在但没有控制文件（`FILE_ALREADY_EXISTS`） */
+export const ARIA2_ERROR_FILE_ALREADY_EXISTS = 13
+
+/**
+ * 该错误是否属于「文件层面已存在/被占用」，即**重建也一样会失败**。
+ *
+ * ## 为什么必须单独识别（这条错误文案本身有误导性）
+ *
+ * aria2 的报错写着「delete it or add --allow-overwrite=true」，但翻源码会发现：
+ *
+ * ```cpp
+ * // RequestGroup.cc
+ * void RequestGroup::shouldCancelDownloadForSafety() {
+ *   if (option_->getAsBool(PREF_ALLOW_OVERWRITE)) return;   // ← allow-overwrite 只保护这一条路径
+ *   if (!outfile.exists()) return;
+ *   tryAutoFileRenaming();
+ * }
+ * void RequestGroup::tryAutoFileRenaming() {
+ *   if (!option_->getAsBool(PREF_AUTO_FILE_RENAMING)) {     // ← 只看 auto-file-renaming
+ *     throw ... fmt(MSG_FILE_ALREADY_EXISTS, ...);
+ *   }
+ * }
+ * ```
+ *
+ * 也有一条路径来自 `adjustFilename()`：它发现**同一文件正被另一个 RequestGroup 处理**
+ * （`isSameFileBeingDownloaded`）时同样调 `tryAutoFileRenaming()` —— 那里 `allow-overwrite`
+ * **完全不参与判断**。所以即使我们（与源项目一样）传了 `allow-overwrite: true`，
+ * 只要 aria2 的 `auto-file-renaming=false`，这条消息照样会出现。
+ *
+ * 实测（用户 aria2 1.36.0）：`getOption` 对任务返回 `allow-overwrite="true"`、
+ * `auto-file-renaming="false"`、`continue="true"`，而报错文案仍在要求 allow-overwrite。
+ *
+ * ## 所以重建是无意义的
+ *
+ * 这两种错误的成因都在文件系统那一层：文件还在、或另一个任务正占着同一个输出路径。
+ * `rebuildAria2Task` 走的是「清结果 + addUri」，addUri 换一个新 gid 但**输出路径不变**，
+ * 下一轮必然再撞一次。旧实现会让它白跑 8 轮（每轮一次重解析 + 一次 addUri），
+ * 最后仍标 failed —— 白白打了 16 次网络请求。
+ */
+export function isFileConflictErrorCode(code: string | number | undefined): boolean {
+    if (code === undefined) return false
+    const value = Number(code)
+    return value === ARIA2_ERROR_FILE_ALREADY_EXISTS || value === ARIA2_ERROR_DUPLICATE_DOWNLOAD
 }
 
 /** 下载速度过慢阈值（字节/秒，16 KiB/s）——源 `ARIA2_SLOW_SPEED_THRESHOLD` */

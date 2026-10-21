@@ -28,7 +28,7 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { emptyScanMemory, parseScanMemory, planAria2Group, planResidualAdoption, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
+import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
@@ -544,6 +544,29 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         delete scanMemory.slowPolls[videoId]
         if (queuedTask) {
             await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2RecoverFailed', { id: videoId }) })
+            const failed = findTask({ id: queuedTask.id })
+            if (failed) await notifyTask(failed)
+        }
+        return true
+    }
+
+    // 「文件已存在 / 同路径被另一个任务占着」：**重建一定还会撞**，直接判失败并说明原因。
+    //
+    // 这两个错误码（13 FILE_ALREADY_EXISTS / 11 DUPLICATE_DOWNLOAD）的成因都在文件系统那层：
+    // 目标文件还在，或另一个 aria2 任务正占着同一个输出路径。`rebuildAria2Task` 是
+    // 「清结果 + addUri」，输出路径不变 → 下一轮必然再撞一次。旧实现会让它白跑 8 轮
+    // （每轮一次重解析 + 一次 addUri），最后仍标 failed —— 打 16 次网络请求换一句同样的错。
+    //
+    // ⚠️ 这里**不要**去看 `allow-overwrite`：aria2 抛这条错的两条路径里，
+    // `adjustFilename` → `isSameFileBeingDownloaded` → `tryAutoFileRenaming()`
+    // 那一支**完全无视 allow-overwrite**，只认 `auto-file-renaming`（默认 false）。
+    // 也就是说「加 --allow-overwrite=true」是文案误导，见 `isFileConflictErrorCode` 的注释。
+    if (needsRebuild && isFileConflictErrorCode(winner.errorCode)) {
+        delete scanMemory.recoverAttempts[videoId]
+        delete scanMemory.slowPolls[videoId]
+        console.warn(`[iwara-assistant] ${videoId} 的目标文件已存在或正被其他任务占用（errorCode=${winner.errorCode}），重建无意义，标记失败`)
+        if (queuedTask) {
+            await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2FileConflict', { id: videoId }) })
             const failed = findTask({ id: queuedTask.id })
             if (failed) await notifyTask(failed)
         }

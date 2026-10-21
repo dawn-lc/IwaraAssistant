@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, SLOW_SPEED_THRESHOLD, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isLiveAria2Status, isAria2GidMissingError, parseScanMemory, planAria2Group, planResidualAdoption, recoverExhausted, shouldRestartForSlowSpeed, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, SLOW_SPEED_THRESHOLD, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, parseScanMemory, planAria2Group, planResidualAdoption, recoverExhausted, shouldRestartForSlowSpeed, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
 
@@ -271,6 +271,38 @@ test('残留收编：上限可注入（与 RETRY_MAX_ATTEMPTS 解耦，便于调
     assert.equal(planResidualAdoption('error', true, 7).attempts, 7)
 })
 
+// ── 文件冲突错误（`isFileConflictErrorCode`）────────────────────────────
+// aria2 的报错文案写着「add --allow-overwrite=true」，但源码里有一条分支
+// （adjustFilename → isSameFileBeingDownloaded → tryAutoFileRenaming）
+// **完全无视 allow-overwrite**，只认 auto-file-renaming。
+// 这类错误重建必然再撞同一个文件，必须识别出来直接判失败，而不是白跑 8 轮。
+
+test('文件冲突错误：aria2 的 13（FILE_ALREADY_EXISTS）与 11（DUPLICATE_DOWNLOAD）都算', () => {
+    assert.equal(isFileConflictErrorCode('13'), true)
+    assert.equal(isFileConflictErrorCode(13), true)
+    assert.equal(isFileConflictErrorCode('11'), true)
+    assert.equal(isFileConflictErrorCode(11), true)
+})
+
+test('文件冲突错误：其他错误码不算（403 是 HTTP_PROTOCOL_ERROR=22，重解析确实能救）', () => {
+    assert.equal(isFileConflictErrorCode('22'), false, '403 是链接过期，重解析是新地址能修好的')
+    assert.equal(isFileConflictErrorCode('1'), false)
+    assert.equal(isFileConflictErrorCode('0'), false)
+    assert.equal(isFileConflictErrorCode(''), false)
+})
+
+test('文件冲突错误：缺失/脏值不误判（宁可走正常恢复，也不要漏掉可恢复的任务）', () => {
+    assert.equal(isFileConflictErrorCode(undefined), false)
+    assert.equal(isFileConflictErrorCode('abc'), false)
+    assert.equal(isFileConflictErrorCode('-1'), false)
+})
+
+test('文件冲突错误：判据不依赖 allow-overwrite（那条文案在这个分支上是误导）', () => {
+    // 断言函数签名只收 errorCode：如果将来有人加个 allowOverwrite 参数并据此放行，
+    // 这个用例会编译失败——那时的行为就回到了「白跑 8 轮」。
+    assert.equal(isFileConflictErrorCode.length, 1)
+})
+
 // ── 源码级接线守卫：三类 loser 必须走三条不同的处置路径 ──────────────
 // 纯函数只负责「分类」；「分类之后发什么 RPC」在 tracker 里。
 // 上一版正是在这里出的事：三类 loser 共用 `stopRedundantTask`，而它无条件
@@ -328,4 +360,12 @@ test('接线：扫描必须用 planResidualAdoption 决定收编，而不是自�
 test('接线：收编必须批量落盘（逐条 addTask 会写盘 N 次并让界面刷新 N 次）', () => {
     const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
     assert.match(source, /await addTasks\(pendingAdoptions\)/, '309 条逐条 addTask 会让选项页卡住')
+})
+
+test('接线：文件冲突错误必须在重建之前拦下（否则白跑 8 轮重解析 + addUri）', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    const guard = source.indexOf('isFileConflictErrorCode(winner.errorCode)')
+    assert.ok(guard > 0, 'recoverCore 必须识别文件冲突错误')
+    const rebuild = source.indexOf('await rebuildAria2Task(winner.gid, videoId, winner)', guard)
+    assert.ok(rebuild > guard, '判据必须排在 rebuild 之前')
 })
