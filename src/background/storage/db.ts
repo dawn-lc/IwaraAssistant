@@ -12,6 +12,8 @@
 import { openDB, type IDBPDatabase } from 'idb'
 import { EMPTY_LEGACY_COUNTS, LEGACY_STORES, estimateLegacyRecordBytes, LEGACY_MAX_MESSAGE_BYTES, LEGACY_MAX_MESSAGE_RECORDS, LEGACY_MAX_WRITE_BYTES, LEGACY_MAX_WRITE_RECORDS, planLegacyBatches } from '../../shared/legacyDb'
 import type { LegacyCounts, LegacyStore, LegacyStorePage } from '../../shared/legacyDb'
+import { putUserCacheRecord } from '../../shared/userCache'
+import type { UserCacheStore } from '../../shared/userCache'
 import type { VideoInfo } from '../../shared/videoInfo'
 
 export const DB_NAME = 'IwaraAssistant'
@@ -113,6 +115,36 @@ export async function bulkPutIsolated(store: LegacyStore, records: unknown[]): P
         await writeChunkResilient(conn, store, chunk, result)
     }
     return result
+}
+
+/** 唯一索引冲突（浏览器文案不同，只看 name） */
+function isConstraintViolation(error: unknown): boolean {
+    return error instanceof Error && error.name === 'ConstraintError'
+}
+
+/**
+ * 关注/好友缓存写入（`follows` / `friends`，主键 `id` + `username` 唯一索引）。
+ *
+ * 撞唯一索引时先删过期记录再重写一次——判定与重试流程在 `shared/userCache.ts`，
+ * 那里能单测（IDB 在 Node 里跑不了）。失败**不抛出**：这两张表是接口数据的派生缓存，
+ * `.follow` 角标错一次会下次解析自愈，但让下载因此失败是不可接受的
+ * （用户实测过：视频数据已完整拿到，却因为这里抛 ConstraintError 而整次解析作废）。
+ */
+async function writeUserCache(store: 'follows' | 'friends', user: Iwara.User): Promise<void> {
+    const conn = await dbPromise
+    const adapter: UserCacheStore = {
+        put: async (record) => {
+            await conn.put(store, record)
+        },
+        getByUsername: async (username) => (await conn.getFromIndex(store, 'username', username)) as { id?: unknown } | undefined,
+        remove: async (id) => {
+            await conn.delete(store, id)
+        },
+        isConstraintViolation
+    }
+    const outcome = await putUserCacheRecord(adapter, user)
+    if (outcome === 'failed') console.warn(`[iwara-assistant] ${store} 写入失败（同名唯一索引冲突，已跳过）: id=${user.id} username=${user.username}`)
+    else if (outcome === 'repaired') console.warn(`[iwara-assistant] ${store} 清理过期同名记录后写入: id=${user.id} username=${user.username}`)
 }
 
 /**
@@ -256,8 +288,7 @@ export const db = {
     },
 
     async putFollow(user: Iwara.User): Promise<void> {
-        const conn = await dbPromise
-        await conn.put('follows', user)
+        await writeUserCache('follows', user)
     },
 
     async deleteFollow(id: string): Promise<void> {
@@ -266,8 +297,7 @@ export const db = {
     },
 
     async putFriend(user: Iwara.User): Promise<void> {
-        const conn = await dbPromise
-        await conn.put('friends', user)
+        await writeUserCache('friends', user)
     },
 
     async deleteFriend(id: string): Promise<void> {

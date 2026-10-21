@@ -78,6 +78,29 @@ describe('Iwara Assistant 扩展（双浏览器同构）', () => {
     }
 
     /**
+     * 在**指定标题的卡片里**写入受控输入框。
+     *
+     * 不用「页面里第一个文本框」那种位置选择器：下载页后来加了「下载代理」区块
+     * （地址/用户名/密码三个文本框）并且排在「保存路径模板」之前，
+     * `.row-control input[type="text"]` 于是指向了代理地址，用例静默写错字段。
+     */
+    async function fillInputInCard(cardTitle: string, inputSelector: string, value: string): Promise<void> {
+        await browser.execute(
+            (title, selector, text) => {
+                const card = [...document.querySelectorAll('section.card')].find((element) => element.querySelector('h2')?.textContent?.includes(title))
+                const input = card?.querySelector(selector) as HTMLInputElement | null
+                if (!input) throw new Error(`在「${title}」卡片里找不到输入框 ${selector}`)
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+                setter?.call(input, text)
+                input.dispatchEvent(new Event('input', { bubbles: true }))
+            },
+            cardTitle,
+            inputSelector,
+            value
+        )
+    }
+
+    /**
      * 等待「已保存」toast 出现。
      *
      * 保存反馈已换成 sonner（`data-testid="save-toast"`）；不能用
@@ -194,14 +217,14 @@ describe('Iwara Assistant 扩展（双浏览器同构）', () => {
         await expect($('code.preview')).toHaveText(/\/Iwara\//, { wait: 5000 })
         await expect($('code.preview')).toHaveText(/someone/, { wait: 5000 })
 
-        // 第一个 .row-control 文本输入即路径模板
-        const templateSelector = '.row-control input[type="text"]'
-        await fillInput(templateSelector, '/IwaraTest/%#ALIAS#%/%#ID#%.mp4')
+        // 按卡片标题定位模板输入框：「下载代理」区块排在它之前，位置选择器会打偏
+        const templateInput = 'input[type="text"]'
+        await fillInputInCard('保存路径模板', templateInput, '/IwaraTest/%#ALIAS#%/%#ID#%.mp4')
         // 输入有 400ms 防抖：预览更新必须等
         await expect($('code.preview')).toHaveText(/\/IwaraTest\/Sample Alias\/aBcD1234\.mp4/, { wait: 5000 })
 
         // 还原默认模板
-        await fillInput(templateSelector, DEFAULT_DOWNLOAD_PATH)
+        await fillInputInCard('保存路径模板', templateInput, DEFAULT_DOWNLOAD_PATH)
         await waitForSaveToast()
     })
 
