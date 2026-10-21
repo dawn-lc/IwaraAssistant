@@ -173,7 +173,7 @@ async function handleDownloadComplete(gid: string): Promise<void> {
         await notifyTask(task)
         await markDone(task.videoId)
         // 推送失败会登记待重试（源 `aria2Track` 的 complete 分支：失败不放弃，5 分钟后重试）
-        await pushAfterDownload(task.videoId, task.filename)
+        await pushAfterDownload(task.videoId)
         return
     }
     // 外部任务（用户直接往 aria2 投的）：提取视频 ID 只记去重表，不打扰

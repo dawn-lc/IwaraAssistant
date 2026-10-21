@@ -11,6 +11,7 @@
  */
 import { getConfig } from '../storage/configStore'
 import { db } from '../storage/db'
+import { getDownloadPath } from '../download/downloadPath'
 import { parseVideoFull } from './videoApi'
 import { i18n } from '../../shared/i18n'
 import type { FullVideoInfo } from '../../shared/videoInfo'
@@ -137,15 +138,18 @@ export type PushOutcome = { ok: true } | { ok: false; error: string; networkLeve
 
 /**
  * 推送单条视频到 MediaCenter（未配置/实验特性关闭时静默返回失败）。
- * @param fallbackPath 下载路径（aria2 完成时由任务记录提供；缺省用临时值）
+ *
+ * `filePath` 必须与源实现一致地取 `getDownloadPath(video).fullPath`（**目录 + 文件名**）。
+ * MediaCenter 直接把它写进 `media.filePath`，并用它 probe 文件、校验文件是否存在：
+ * 只传文件名（`FileName` / `fullName`）既 probe 不到文件，库里也会留下缺目录的路径。
  */
-export async function pushToMediaCenter(video: FullVideoInfo, mediaCenterIdOverride?: string, fallbackPathOverride?: string): Promise<PushOutcome> {
+export async function pushToMediaCenter(video: FullVideoInfo, mediaCenterIdOverride?: string): Promise<PushOutcome> {
     if (!isMediaCenterConfigured()) return { ok: false, error: '', networkLevel: false }
 
-    const filePath = fallbackPathOverride ?? video.FileName ?? video.ID
     let mediaCenterId: string | undefined = mediaCenterIdOverride
 
     try {
+        const filePath = getDownloadPath(video).fullPath
         const mapped = await db.getIdmap(video.ID)
         if (mapped?.href) {
             if (await recordExists(mapped.href)) {
@@ -192,17 +196,17 @@ export async function pushToMediaCenter(video: FullVideoInfo, mediaCenterIdOverr
  * 返回**是否真的推送成功**——调用方（`mediaCenterPushQueue`）要靠它决定要不要登记重试。
  * 未配置 MediaCenter 时返回 `true`（本就无事可做，不该产生待重试记录）。
  */
-export async function pushVideoIdToMediaCenter(videoId: string, filename?: string): Promise<boolean> {
+export async function pushVideoIdToMediaCenter(videoId: string): Promise<boolean> {
     if (!isMediaCenterConfigured()) return true
     try {
         const [stored] = await db.getVideosByIds([videoId])
         if (stored && stored.Type === 'full') {
-            const outcome = await pushToMediaCenter(stored, undefined, filename)
+            const outcome = await pushToMediaCenter(stored)
             if (!outcome.ok) console.warn(`[iwara-assistant] MediaCenter push failed: ${outcome.error}`)
             return outcome.ok
         }
         const parsed = await parseVideoFull(videoId)
-        const outcome = await pushToMediaCenter(parsed, undefined, filename)
+        const outcome = await pushToMediaCenter(parsed)
         if (!outcome.ok) console.warn(`[iwara-assistant] MediaCenter push failed: ${outcome.error}`)
         return outcome.ok
     } catch (error) {

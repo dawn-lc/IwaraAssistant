@@ -28,11 +28,14 @@ export const PUSH_RETRY_INTERVAL_MS = 5 * 60 * 1000
 /** 重试次数上限（源无上限，见文件头） */
 export const MAX_PUSH_ATTEMPTS = 24
 
-/** 一条待推送记录（键是 videoId） */
+/**
+ * 一条待推送记录（键是 videoId）。
+ *
+ * 不存落盘路径：推送时按源实现用 `getDownloadPath(video).fullPath` 现算。
+ * 存「文件名」（`fullName`）没有意义，还会让重试把错路径再写一遍。
+ */
 export interface PendingMediaCenterPush {
     videoId: string
-    /** 完成后才知道的落盘文件名，推送时作为 `fallbackPath` */
-    filename?: string
     /** 上次尝试时间（毫秒）；首次登记时是「已尝试过一次」的时刻 */
     lastAttemptAt: number
     /** 已尝试次数 */
@@ -60,10 +63,9 @@ export function isPushExhausted(entry: PendingMediaCenterPush): boolean {
 }
 
 /** 登记/更新一条待推送记录（attempts 累加，时间戳刷新） */
-export function nextPendingPush(previous: PendingMediaCenterPush | undefined, videoId: string, filename: string | undefined, now: number): PendingMediaCenterPush {
+export function nextPendingPush(previous: PendingMediaCenterPush | undefined, videoId: string, now: number): PendingMediaCenterPush {
     return {
         videoId,
-        ...(filename === undefined ? {} : { filename }),
         lastAttemptAt: now,
         attempts: (previous?.attempts ?? 0) + 1
     }
@@ -85,7 +87,6 @@ export function parsePendingPushes(raw: unknown): PendingPushTable {
         if (typeof entry.attempts !== 'number' || !Number.isFinite(entry.attempts)) continue
         result[key] = {
             videoId: entry.videoId,
-            ...(typeof entry.filename === 'string' ? { filename: entry.filename } : {}),
             lastAttemptAt: entry.lastAttemptAt,
             attempts: entry.attempts
         }

@@ -43,22 +43,15 @@ test('脏时间戳不重试（否则写坏的值会让任务永远卡在待推�
 })
 
 test('登记：首次 attempts = 1（调用方已经试过一次才登记）', () => {
-    const first = nextPendingPush(undefined, 'v1', 'a.mp4', now)
+    const first = nextPendingPush(undefined, 'v1', now)
     assert.equal(first.attempts, 1)
-    assert.equal(first.filename, 'a.mp4')
     assert.equal(first.lastAttemptAt, now)
 })
 
 test('登记：已有记录时累加 attempts 并刷新时间戳', () => {
-    const second = nextPendingPush(entry({ attempts: 3 }), 'v1', undefined, now + 1)
+    const second = nextPendingPush(entry({ attempts: 3 }), 'v1', now + 1)
     assert.equal(second.attempts, 4)
     assert.equal(second.lastAttemptAt, now + 1)
-    assert.equal(second.filename, undefined)
-})
-
-test('登记：新的 filename 覆盖旧的（文件名只在完成时才知道）', () => {
-    const next = nextPendingPush(entry({ filename: 'old.mp4' }), 'v1', 'new.mp4', now)
-    assert.equal(next.filename, 'new.mp4')
 })
 
 test('解析：非对象/空值返回空表', () => {
@@ -70,7 +63,7 @@ test('解析：非对象/空值返回空表', () => {
 
 test('解析：逐条丢弃脏记录，不影响其余（一条写坏不该让机制停摆）', () => {
     const parsed = parsePendingPushes({
-        good: { videoId: 'good', lastAttemptAt: now, attempts: 2, filename: 'a.mp4' },
+        good: { videoId: 'good', lastAttemptAt: now, attempts: 2 },
         noId: { lastAttemptAt: now, attempts: 1 },
         noTime: { videoId: 'x', attempts: 1 },
         badTime: { videoId: 'y', lastAttemptAt: 'soon', attempts: 1 },
@@ -78,7 +71,7 @@ test('解析：逐条丢弃脏记录，不影响其余（一条写坏不该让�
         notObject: 'oops'
     })
     assert.deepEqual(Object.keys(parsed), ['good'])
-    assert.deepEqual(parsed['good'], { videoId: 'good', lastAttemptAt: now, attempts: 2, filename: 'a.mp4' })
+    assert.deepEqual(parsed['good'], { videoId: 'good', lastAttemptAt: now, attempts: 2 })
 })
 
 test('解析：可重试的记录读回后仍可重试（跨浏览器重启不丢）', () => {

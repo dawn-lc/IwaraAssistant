@@ -41,9 +41,9 @@ async function writeTable(table: PendingPushTable): Promise<void> {
  * 未配置 MediaCenter 时 `pushVideoIdToMediaCenter` 直接返回 true（无事可做），
  * 不会产生登记条目——否则每个完成的任务都会在表里留一条无意义的记录。
  */
-export async function pushAfterDownload(videoId: string, filename?: string): Promise<void> {
+export async function pushAfterDownload(videoId: string): Promise<void> {
     if (!isMediaCenterConfigured()) return
-    const ok = await pushVideoIdToMediaCenter(videoId, filename)
+    const ok = await pushVideoIdToMediaCenter(videoId)
     if (ok) {
         // 成功：顺手清掉可能存在的旧登记（例如上一次失败后又手动同步成功）
         const table = await readTable()
@@ -54,7 +54,7 @@ export async function pushAfterDownload(videoId: string, filename?: string): Pro
         return
     }
     const table = await readTable()
-    table[videoId] = nextPendingPush(table[videoId], videoId, filename, Date.now())
+    table[videoId] = nextPendingPush(table[videoId], videoId, Date.now())
     await writeTable(table)
     console.warn(`[iwara-assistant] MediaCenter 推送失败，已登记待重试: ${videoId}`)
 }
@@ -84,12 +84,12 @@ export async function flushMediaCenterPushes(): Promise<void> {
             }
             // 还没到重试时间：保留，不写回（表本身已经在存储里）
             if (!shouldRetryPush(entry, now)) continue
-            const ok = await pushVideoIdToMediaCenter(entry.videoId, entry.filename)
+            const ok = await pushVideoIdToMediaCenter(entry.videoId)
             if (ok) {
                 delete table[entry.videoId]
                 console.info(`[iwara-assistant] MediaCenter 推送重试成功: ${entry.videoId}`)
             } else {
-                table[entry.videoId] = nextPendingPush(entry, entry.videoId, entry.filename, now)
+                table[entry.videoId] = nextPendingPush(entry, entry.videoId, now)
             }
             changed = true
         }
