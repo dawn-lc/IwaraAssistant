@@ -28,9 +28,9 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { emptyScanMemory, parseScanMemory, planAria2Group, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
+import { emptyScanMemory, parseScanMemory, planAria2Group, planResidualAdoption, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
-import { addTask, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
+import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
@@ -240,6 +240,12 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
     let stopped = 0
     let rejected = 0
     let lost = 0
+    // 汇总计数：这两类以前是**每轮每任务打一行** debug，用户 aria2 里 191 条 complete +
+    // 309 条 error → 每 5 分钟刷 500 行，淹掉真正的告警。
+    let historyKept = 0
+    let doneSkipped = 0
+    // 收编收集区（循环结束一次落盘，见 addTasks 的说明）
+    const pendingAdoptions: QueueTask[] = []
     if (!isAria2Configured()) return { adopted, stopped, rejected, lost }
     // 计数必须跨轮累计（Chrome SW 空闲 30s 就回收，扫描 5min 一次 → 每次都是新实例）
     await loadScanMemory()
@@ -290,7 +296,7 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
             }
             if (plan.historyLosers.length > 0) {
                 // 历史记录：只记日志，不发任何 RPC
-                console.debug(`[iwara-assistant] aria2 ${videoId} 保留 ${plan.historyLosers.length} 条完成历史（不清理）`)
+                historyKept += plan.historyLosers.length
             }
 
             // ── 恢复：链接过期 / 暂停 / 慢速（源 `processAria2TrackTask` 的 active/paused/error 分支）──
@@ -317,30 +323,40 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
                 else await syncLiveState(queuedTask, winner, nextStatus)
                 continue
             }
-            if (doneMap[videoId] !== undefined && winner.status !== 'active' && winner.status !== 'waiting') {
-                // 30 天内完成过的残留：**只跳过入队，绝不清理 aria2 侧记录**。
-                // 去重表职责是「防重复处理」，不是「删除历史」——完成/失败记录由用户自己管理。
-                // 源项目曾把这里误改成 removeRedundantAria2Task 清结果，导致用户的 aria2 历史被脚本
-                // 静默删除（其 Issue #405），注释与实现都保留这条教训。
-                console.debug(`[iwara-assistant] aria2 ${videoId} 30 天内已完成，跳过残留任务 ${winner.gid}(${winner.status})`)
+            // 这条残留该不该收编、收编时 attempts 取什么（判据在 `planResidualAdoption`，已单测）。
+            // ⚠️ 完成表**只拦完成态**：旧实现把 error / removed 也一起跳过，于是用户 aria2 里
+            // 攒下 309 条 403 残留——它们「30 天内完成过」（同一视频更早那次），但这一次确实失败了，
+            // 跳过既不清理也不入队，用户既看不到也没法重试。
+            const adoption = planResidualAdoption(winner.status, doneMap[videoId] !== undefined)
+            if (!adoption.adopt) {
+                // 完成态残留：只跳过入队，绝不清理 aria2 侧记录（源 Issue #405 的教训）。
+                doneSkipped++
                 continue
             }
 
-            // 补入队（收编）：状态沿用 aria2 真实状态；complete 静默（原 alreadyComplete 语义）
-            const task = await addTask({
+            // 补入队（收编）：状态沿用 aria2 真实状态。
+            // 只收集、不立即落盘：实测用户 aria2 里有 309 条 error 残留，逐条 addTask 会写盘 309 次
+            // 并触发 309 次界面刷新（每次都是整份队列序列化），循环结束后一次提交即可。
+            const failedAdoption = winner.status === 'error' || winner.status === 'removed'
+            pendingAdoptions.push({
                 id: crypto.randomUUID(),
                 videoId,
                 kind: 'aria2',
                 status: statusOfAria2(winner.status),
-                kindRef: winner.gid
+                kindRef: winner.gid,
+                ...(adoption.attempts === undefined ? {} : { attempts: adoption.attempts }),
+                ...(failedAdoption ? { detail: winner.errorMessage ?? i18n.t('notify.aria2AdoptedFailure') } : {})
             })
-            adopted++
             if (winner.status === 'complete') await markDone(videoId)
-            if (winner.status === 'error') {
-                task.detail = winner.errorMessage ?? i18n.t('notify.aria2AdoptedFailure')
-                await syncTask(task)
-            }
-            console.info(`[iwara-assistant] aria2 现有任务已收编: ${videoId} (gid=${winner.gid}, ${winner.status})`)
+        }
+
+        // 收编的条目统一入队（一次落盘）。失败收编不逐条发通知：309 条会淹没通知中心，
+        // 用户从任务面板的「需要处理」分组就能看到它们（排序规则把 attention 置顶）。
+        if (pendingAdoptions.length > 0) {
+            await addTasks(pendingAdoptions)
+            adopted = pendingAdoptions.length
+            const failedCount = pendingAdoptions.filter((task) => task.status === 'failed').length
+            if (failedCount > 0) console.info(`[iwara-assistant] 收编 ${failedCount} 条 aria2 失败任务（已阻止自动重试，需要时请手动重试）`)
         }
 
         // ── 反向对账：队列里仍活跃、但 aria2 已查不到的任务 ──
@@ -376,7 +392,7 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
             }
             lost++
         }
-        console.info(`[iwara-assistant] aria2 扫描完成: 共 ${allTasks.length} 任务（收编 ${adopted}，停止冗余 ${stopped}，无主 ${rejected}，失效 ${lost}）`)
+        console.info(`[iwara-assistant] aria2 扫描完成: 共 ${allTasks.length} 任务（收编 ${adopted}，停止冗余 ${stopped}，无主 ${rejected}，失效 ${lost}，保留完成历史 ${historyKept}，完成表跳过 ${doneSkipped}）`)
     } catch (error) {
         console.warn('[iwara-assistant] aria2 扫描失败:', stringify(error))
     } finally {

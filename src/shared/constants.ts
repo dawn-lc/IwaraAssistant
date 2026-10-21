@@ -3,6 +3,15 @@
 export const DONE_RECORD_TTL_DAYS = 30
 /** 失败任务自动重试上限（retry-failed alarm） */
 export const RETRY_MAX_ATTEMPTS = 3
+/**
+ * `retry-failed` 每轮最多重投几条。
+ *
+ * 没有这个上限时，一轮「共同失败」就会把所有失败任务同时重投：iwaradl 守护进程停掉、
+ * 账号掉登录、直链端点抽风，都会让几十上百条任务同一时刻变成 failed，
+ * 下一次 alarm（30 分钟）就把它们一起打出去，把后端和站点又打一遍。
+ * 5 条 ≈ 一轮几十秒跑完，不至于让用户在界面上看不到进展。
+ */
+export const RETRY_BATCH_LIMIT = 5
 
 // ── offscreen 通道（Chrome 专用）───────────────────────────────────────
 // 放在 shared/ 而不是 background/：offscreen 文档是与后台分开打包的入口，

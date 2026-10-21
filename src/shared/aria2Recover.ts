@@ -16,6 +16,7 @@
  * 那一瞬间：写成「跨过 2 个扫描间隔」实际需要 3 次采样（10~15 分钟），且依赖
  * alarm 调度精度、电脑是否休眠、系统时钟是否被调整。次数没有这些假设。
  */
+import { RETRY_MAX_ATTEMPTS } from './constants'
 import { uriExpiresAt } from './url'
 
 /** 任务状态的最小结构（`Aria2Status` 结构化兼容，避免 shared 反向依赖 background） */
@@ -167,6 +168,52 @@ export function planAria2Group<T extends Aria2StatusLike>(group: readonly T[], q
         else plan.garbageLosers.push(task)
     }
     return plan
+}
+
+// ── 残留收编：aria2 里有、但扩展队列里没有的任务 ──────────────────────
+
+/** 一条残留任务该不该收编成队列任务 */
+export interface ResidualAdoptionPlan {
+    /** 是否补入队（`false` = 本轮完全跳过，不发任何 RPC） */
+    adopt: boolean
+    /**
+     * 收编时的 `attempts` 初值（`undefined` = 从 0 开始，即参与自动重试）。
+     *
+     * 失败残留给**满上限**：它们是历史遗留（实测用户 aria2 里 309 条 403），
+     * `retry-failed` 每 30 分钟扫一遍失败任务，若从 0 开始会在半小时后同时重投 309 个
+     * 早已过期的直链。要重试请用户在任务面板自己点（那会清零计数）。
+     */
+    attempts?: number
+}
+
+/**
+ * 决定「aria2 里有、扩展队列里没有」的残留任务怎么处理。
+ *
+ * ## 完成表只能拦「完成态」，这一条是本函数的全部意义
+ *
+ * 旧实现的判据是 `status !== 'active' && status !== 'waiting'`，于是 `error` / `removed`
+ * 也一起吃「30 天内已完成」的跳过分支。后果是实测出来的：
+ *
+ * - 用户的 aria2 里攒了 **309 条** `error`（`status=403`、`progress=0/0`、直链已过期 2~6 天）；
+ * - 它们几乎都命中完成表——因为**同一视频更早那次下载成功过**（批量投递超发 → 排队
+ *   到真正开跑时直链已失效 → 这次 403，而上一批里成功了一条）；
+ * - 跳过既不清理也不入队：用户在任务面板里**看不到它们**，也没法重试，
+ *   只能眼睁睁看 309 条死任务永远躺在 aria2 里（每 5 分钟还要传 4.6 MB 的 `tellStopped`）。
+ *
+ * 完成表的本职是「别把同一份文件重复处理 / 重复通知」，不是「替用户决定这次失败可以忽略」。
+ * 所以：
+ *
+ * | aria2 状态 | 完成表命中 | 结论 |
+ * |---|---|---|
+ * | `complete` | 命中 | **跳过**（已完成，入队只会制造一条无动作的历史） |
+ * | `complete` | 未命中 | 收编（保持 complete，顺带补记完成表） |
+ * | `error` / `removed` | 任意 | **收编成 failed 待办**（用户要看得见、点得动） |
+ * | `active` / `waiting` / `paused` | 任意 | 收编（外部直加的任务，交给后续同步） |
+ */
+export function planResidualAdoption(status: string, knownDone: boolean, maxAttempts: number = RETRY_MAX_ATTEMPTS): ResidualAdoptionPlan {
+    if (status === 'complete') return knownDone ? { adopt: false } : { adopt: true }
+    if (status === 'error' || status === 'removed') return { adopt: true, attempts: maxAttempts }
+    return { adopt: true }
 }
 
 /**

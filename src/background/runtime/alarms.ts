@@ -12,7 +12,7 @@
  * SW 挂起：alarm 触发即唤醒后台；持久化由队列/配置模块自理（挂起协议 2）。
  * 选举/清锁类 alarm 不复存在（后台即管理器）。
  */
-import { RETRY_MAX_ATTEMPTS } from '../../shared/constants'
+import { RETRY_BATCH_LIMIT, RETRY_MAX_ATTEMPTS } from '../../shared/constants'
 import { keepAliveWs } from '../backends/aria2/ws'
 import { retryTask } from '../download/dispatch'
 import { getTasks } from '../storage/queue'
@@ -35,14 +35,23 @@ async function ensureAlarms(): Promise<void> {
 }
 
 async function retryFailedTasks(): Promise<void> {
-    // 快照扫描（避免遍历中变更）：failed 且未达上限的任务逐个复跑
-    for (const task of getTasks()) {
-        if (task.status !== 'failed') continue
-        const attempts = task.attempts ?? 0
-        if (attempts >= RETRY_MAX_ATTEMPTS) continue
-        task.attempts = attempts + 1
+    // 快照扫描（避免遍历中变更）：failed 且未达上限的任务逐个复跑。
+    //
+    // 两个限制都是必需的：
+    // ① `attempts` 上限 —— 同一条任务不会无限重试（收编来的历史失败初始就是满上限，
+    //    要重试请用户自己点）；
+    // ② **每轮条数上限** —— 一次「共同失败」（守护进程停了 / 掉登录 / 直链端点抽风）
+    //    会让几十上百条任务同时变 failed，无限制就会在下一轮把它们一起打出去。
+    // 按「最近更新」优先：刚失败的往往是用户此刻真正想要的。
+    const candidates = getTasks()
+        .filter((task) => task.status === 'failed' && (task.attempts ?? 0) < RETRY_MAX_ATTEMPTS)
+        .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
+        .slice(0, RETRY_BATCH_LIMIT)
+    for (const task of candidates) {
+        task.attempts = (task.attempts ?? 0) + 1
         await retryTask(task)
     }
+    if (candidates.length > 0) console.info(`[iwara-assistant] 自动重试 ${candidates.length} 条失败任务（每轮上限 ${RETRY_BATCH_LIMIT}）`)
 }
 
 export function setupAlarms(): void {

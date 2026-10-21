@@ -9,8 +9,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, SLOW_SPEED_THRESHOLD, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isLiveAria2Status, isAria2GidMissingError, parseScanMemory, planAria2Group, recoverExhausted, shouldRestartForSlowSpeed, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, SLOW_SPEED_THRESHOLD, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isLiveAria2Status, isAria2GidMissingError, parseScanMemory, planAria2Group, planResidualAdoption, recoverExhausted, shouldRestartForSlowSpeed, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
+import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
 
 function active(completed: number, total: number, speed: number) {
     return { status: 'active' as const, totalLength: String(total), completedLength: String(completed), downloadSpeed: String(speed) }
@@ -235,6 +236,41 @@ test('同视频收敛：只有一条任务时它自己就是 winner，没有任�
     assert.deepEqual([plan.liveLosers, plan.garbageLosers, plan.historyLosers], [[], [], []])
 })
 
+// ── 残留收编（`planResidualAdoption`）──────────────────────────────
+// 这组判据决定「用户能不能看见 / 能不能重试」aria2 里的历史失败。
+// 旧实现把 error 也一起吃「30 天内已完成」的跳过分支，实测让 309 条 403 死任务
+// 永远留在 aria2 里且不出现在任务面板。
+
+test('残留收编：完成态 + 完成表命中 → 跳过入队（已完成，不需要用户操作）', () => {
+    assert.deepEqual(planResidualAdoption('complete', true), { adopt: false })
+})
+
+test('残留收编：完成态 + 完成表未命中 → 收编（保持 complete 并补记完成表）', () => {
+    assert.deepEqual(planResidualAdoption('complete', false), { adopt: true })
+})
+
+test('残留收编：error 即使完成表命中也要收编成待办（这是 309 条 403 死任务的根因）', () => {
+    const known = planResidualAdoption('error', true)
+    assert.equal(known.adopt, true, '「30 天内完成过」说的是更早那次下载，不能替用户忽略这一次失败')
+    assert.equal(known.attempts, RETRY_MAX_ATTEMPTS, '必须给满上限，否则 30 分钟后闹钟会把 309 条过期直链一起重投')
+})
+
+test('残留收编：error / removed 在完成表未命中时同样收编，且都带满上限 attempts', () => {
+    for (const status of ['error', 'removed']) {
+        assert.deepEqual(planResidualAdoption(status, false), { adopt: true, attempts: RETRY_MAX_ATTEMPTS }, status)
+    }
+})
+
+test('残留收编：活任务收编时不限制 attempts（它们本来就没失败过）', () => {
+    for (const status of ['active', 'waiting', 'paused']) {
+        assert.deepEqual(planResidualAdoption(status, true), { adopt: true }, status)
+    }
+})
+
+test('残留收编：上限可注入（与 RETRY_MAX_ATTEMPTS 解耦，便于调用方换策略）', () => {
+    assert.equal(planResidualAdoption('error', true, 7).attempts, 7)
+})
+
 // ── 源码级接线守卫：三类 loser 必须走三条不同的处置路径 ──────────────
 // 纯函数只负责「分类」；「分类之后发什么 RPC」在 tracker 里。
 // 上一版正是在这里出的事：三类 loser 共用 `stopRedundantTask`，而它无条件
@@ -280,4 +316,16 @@ test('接线：扫描必须用 planAria2Group 分类，而不是自己再判一�
     // 只认「定义/调用」，注释里提到旧名字是正常的（那里正是在记载这个坑）
     assert.doesNotMatch(source, /async function stopRedundantTask/, '旧的「三类一起清」入口不该回来')
     assert.doesNotMatch(source, /await stopRedundantTask\(/, '旧的「三类一起清」入口不该回来')
+})
+
+test('接线：扫描必须用 planResidualAdoption 决定收编，而不是自己写状态判断', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    assert.match(source, /const adoption = planResidualAdoption\(winner\.status, doneMap\[videoId\] !== undefined\)/)
+    // 回归守卫：旧的「非 active/waiting 就跳过」写法不得回来
+    assert.doesNotMatch(source, /doneMap\[videoId\] !== undefined && winner\.status !== 'active'/, '把 error 一起跳过会让失败残留永远烂在 aria2 里（实测 309 条）')
+})
+
+test('接线：收编必须批量落盘（逐条 addTask 会写盘 N 次并让界面刷新 N 次）', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    assert.match(source, /await addTasks\(pendingAdoptions\)/, '309 条逐条 addTask 会让选项页卡住')
 })

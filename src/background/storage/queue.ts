@@ -103,6 +103,29 @@ export async function addTask(task: QueueTask): Promise<QueueTask> {
 }
 
 /**
+ * 批量入队 —— **只落盘一次**。
+ *
+ * 存在的理由是 aria2 扫描收编：`storage.local` 存的是整份队列数组，`addTask` 每次
+ * 都全量序列化 + 写盘 + `updateBadge` + 触发一次 `storage.onChanged`。
+ * 实测用户 aria2 里有 **309 条** error 残留，逐条 `addTask` 会写 309 次（每次几十 KB）
+ * 并让选项页重渲染 309 次——界面会明显卡住，而数据完全一样。
+ *
+ * 语义与 `addTask` 一致（同样的 `createdAt`/`updatedAt` 填充），只是把提交推迟到最后。
+ */
+export async function addTasks(tasks: QueueTask[]): Promise<QueueTask[]> {
+    if (tasks.length === 0) return []
+    const now = Date.now()
+    for (const task of tasks) {
+        task.createdAt ??= now
+        task.updatedAt = now
+        memQueue.push(task)
+    }
+    await persist()
+    updateBadge()
+    return tasks
+}
+
+/**
  * 从队列移除一条任务（options 任务面板手动清理用）。
  *
  * **`running` 默认拒绝**：下载器可能还在写文件，抹掉记录会让追踪器失去对账目标。
@@ -274,11 +297,11 @@ export async function notifyTask(task: QueueTask): Promise<void> {
     const followUp = (state === 'skipped' || state === 'failed') && task.followUpUrl !== undefined
     const target: NotificationTarget = followUp
         ? {
-            kind: 'url',
-            url: task.followUpUrl as string,
-            // 源项目点「打开视频链接」会顺手把保存文件名写进剪贴板；只有跳过场景才复制
-            ...(state === 'skipped' && getConfig().autoCopySaveFileName && task.filename ? { copyText: task.filename } : {})
-        }
+              kind: 'url',
+              url: task.followUpUrl as string,
+              // 源项目点「打开视频链接」会顺手把保存文件名写进剪贴板；只有跳过场景才复制
+              ...(state === 'skipped' && getConfig().autoCopySaveFileName && task.filename ? { copyText: task.filename } : {})
+          }
         : { kind: 'options', tab: 'tasks' }
 
     const message = state === 'skipped' ? i18n.t('notify.linkFound', { id: task.videoId }) : state === 'failed' ? i18n.t('notify.taskFailed', { id: task.videoId, kind: task.kind, detail: task.detail ?? task.filename ?? i18n.t('notify.unknownReason') }) : i18n.t('notify.taskComplete', { id: task.videoId })
