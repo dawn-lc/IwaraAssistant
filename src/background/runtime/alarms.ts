@@ -4,6 +4,7 @@
  * | alarm          | 周期   | 动作                                            |
  * |----------------|-------|-------------------------------------------------|
  * | ws-keepalive   | 2 min | aria2 WS 探活重连（指数退避打满后由这里兜底重拉）     |
+ * | probe-aria2    | 1 min | **按需创建**：只拉 tellActive，做慢速判定与进度回写   |
  * | scan-aria2     | 5 min | tellActive/tellStopped 对账（WS 通知丢失/外部任务）  |
  * | scan-iwaradl   | 1 min | **按需创建**：有活跃 iwaradl 任务时才存在（它没有推送，只能拉） |
  * | retry-failed   | 30 min| 队列 failed 任务按 attempts 上限自动重试             |
@@ -15,7 +16,7 @@ import { RETRY_MAX_ATTEMPTS } from '../../shared/constants'
 import { keepAliveWs } from '../backends/aria2/ws'
 import { retryTask } from '../download/dispatch'
 import { getTasks } from '../storage/queue'
-import { scanAria2TasksAndEnqueue } from '../backends/aria2/tracker'
+import { ARIA2_PROBE_ALARM, probeAria2SlowTasks, scanAria2TasksAndEnqueue } from '../backends/aria2/tracker'
 import { syncIwaradlTasks } from '../backends/iwaradl/tracker'
 import { IWARADL_SCAN_ALARM } from '../backends/iwaradl/client'
 
@@ -52,6 +53,9 @@ export function setupAlarms(): void {
                 break
             case ALARM_SCAN:
                 void scanAria2TasksAndEnqueue()
+                break
+            case ARIA2_PROBE_ALARM:
+                void probeAria2SlowTasks()
                 break
             case IWARADL_SCAN_ALARM:
                 void syncIwaradlTasks()

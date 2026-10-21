@@ -56,3 +56,23 @@ export const NOTIFICATION_TARGETS_KEY = 'notificationTargets'
  * 它不是用户手填的配置项，不应该出现在选项页被当成设置项编辑。
  */
 export const RATING_KEY = 'siteRating'
+
+/**
+ * aria2 扫描的跨轮记忆（`Aria2ScanMemory`：慢速采样计数 + 恢复失败次数）。
+ *
+ * **存 `storage.session` 而不是内存 / 不是 local**：
+ * - 只存内存 → Chrome MV3 的 SW 空闲约 30 秒就被回收，而扫描 5 分钟一次，
+ *   每次扫描都是新实例，「连续 N 次扫描都低速」永远数不到 N（功能从未生效过）；
+ * - 存 local → 上一次浏览器会话的陈旧计数会被带进新的会话，而那时任务早已不同。
+ * session 是内存态、跨 SW 实例存活、浏览器退出即清空，正好是「本次会话的观察」。
+ */
+export const ARIA2_SCAN_MEMORY_KEY = 'aria2ScanMemory'
+
+/**
+ * 「下载完成后推送 MediaCenter」的待重试表（`PendingPushTable`）。
+ *
+ * **存 `storage.local` 而不是 session**：源项目把它放在 GM 存储里（持久），语义是
+ * 「这件事还没做完」。推送是用户可见的结果（MediaCenter 里有没有这条记录），
+ * 不该因为浏览器重启就丢掉。成功或超过重试上限即删除，不会无限增长。
+ */
+export const MEDIA_CENTER_PUSH_KEY = 'mediaCenterPushPending'

@@ -28,6 +28,7 @@ import { checkIsHaveDownloadLink } from '../iwara/linkCheck'
 import { notifyWarn } from '../runtime/notify'
 import { db } from '../storage/db'
 import { syncIwaradlAlarm } from '../backends/iwaradl/client'
+import { syncAria2ProbeAlarm } from '../backends/aria2/tracker'
 import type { PageType } from '../../shared/pageType'
 
 /** 原 DownloadType 枚举 → 协议通道名 */
@@ -321,6 +322,8 @@ async function executeChannels(task: QueueTask, video: FullVideoInfo, ctx: Chann
             case 'aria2': {
                 const ref = await aria2Download(video, ctx)
                 task.kindRef = ref.gid
+                // 慢速判定需要分钟级采样（源项目每任务 4 秒轮询），只拉 tellActive 的轻探测
+                void syncAria2ProbeAlarm()
                 break
             }
             case 'iwaradl': {

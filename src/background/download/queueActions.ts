@@ -17,6 +17,7 @@
 import { i18n } from '../../shared/i18n'
 import { cancelStrategyOf } from '../../shared/task'
 import { syncIwaradlAlarm } from '../backends/iwaradl/client'
+import { syncAria2ProbeAlarm } from '../backends/aria2/tracker'
 import { syncIwaradlTasks } from '../backends/iwaradl/tracker'
 import { scanAria2TasksAndEnqueue } from '../backends/aria2/tracker'
 import { isAria2Configured } from '../backends/aria2/client'
@@ -106,7 +107,8 @@ export async function retryAllFailed(): Promise<{ retried: number }> {
 export async function syncDownloadTasks(): Promise<{ aria2: unknown; iwaradl: unknown }> {
     const aria2 = await scanAria2TasksAndEnqueue()
     const iwaradl = await syncIwaradlTasks()
-    // iwaradl 的 alarm 存在性跟着队列变化：对账后可能已经没有活跃任务了
+    // alarm 存在性跟着队列变化：对账后可能已经没有活跃任务了
     await syncIwaradlAlarm()
+    await syncAria2ProbeAlarm()
     return { aria2, iwaradl }
 }

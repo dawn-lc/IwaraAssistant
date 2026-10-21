@@ -11,37 +11,64 @@
  * - GMLock/WebLock/选举/pagehide 让位 → 后台即管理器，0 行锁代码
  * - GMSyncDictionary 队列 → 项目队列（storage 唯一写者）；按 kindRef=gid 关联
  * - 终态去重表（30 天）保留：防 tellStopped 旧完成任务被反复提示/反复入队
- * - **每任务 worker + 4 秒轮询 → WS 通知 + 5 分钟扫描**：没有 4 秒采样，所以慢速判定的
- *   时间窗口从「16 次 × 4s」改为「2 次扫描间隔」，判据本身在 `shared/aria2Recover.ts` 里单测
+ * - **每任务 worker + 4 秒轮询 → WS 通知 + 分钟级探针 + 5 分钟扫描**
+ *   - 源项目 active 时每 4 秒 `tellStatus`，慢速要连续 16 次（≈68 秒）
+ *   - 本扩展的实时通道是 WS 通知（终态）+ `probe-aria2` 探针（1 分钟，只拉 `tellActive`，
+ *     做慢速判定与进度回写）+ `scan-aria2` 对账（5 分钟，`tellStopped` 太重：实测 4.6 MB/次）
+ *   - 慢速判定的「观察窗口」从「16 次 × 4s」改成「连续 2 次采样」，判据在
+ *     `shared/aria2Recover.ts` 里单测；计数落 `storage.session`（否则 SW 每 30 秒回收一次，
+ *     永远数不到 2 —— 2026-10-21 实测：该能力自移植以来一次都没触发过）
  * - **恢复能力保留**：`error` / `removed` / `paused` / 慢速 → 重解析换地址（同目录 `recover.ts`）。
  *   这是原版最重要的能力，丢了就等于「链接过期后只能重新下载一遍」。
+ * - **完成态推送失败要重试**（源 `case 'complete'` 的 `pushFailedAt`）：本扩展交给
+ *   `iwara/mediaCenterPushQueue.ts`，5 分钟一轮，但加了次数上限（源项目没有）。
  */
 import { DONE_RECORD_TTL_DAYS } from '../../../shared/constants'
 import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
-import { CONFIG_KEY } from '../../../shared/storageKeys'
-import { compareForKeep, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, SLOW_SPEED_THRESHOLD } from '../../../shared/aria2Recover'
+import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
+import { emptyScanMemory, parseScanMemory, compareForKeep, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, findTask, getTasks, patchTask, notifyTask, syncTask } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { connect, onNotification, resetConnection } from './ws'
-import { pushVideoIdToMediaCenter } from '../../iwara/mediaCenter'
-import { isAria2QueueFull, rebuildAria2Task, restartAria2Task } from './recover'
+import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
+import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverResult } from './recover'
 import { notifyInfo } from '../../runtime/notify'
 
-/** 扫描间隔（与 alarms.ts 的 scan-aria2 保持一致）：慢速判定的观察窗口按它算 */
-const SCAN_INTERVAL_MS = 5 * 60 * 1000
-/** 慢速观察窗口：跨过两次扫描仍然低速才重启（源项目用 16×4s，见文件头说明） */
-const SLOW_SPEED_GRACE_MS = SCAN_INTERVAL_MS * 2
-
 /**
- * 首次观察到「低速」的时间戳（videoId → 时间）。仅内存：
- * SW 被回收后重新计数——这是可接受的，重启判定本来就是「持续低速」而不是「曾经低速」。
+ * 慢速观察的跨轮记忆（videoId → 累计连续低速采样次数）。
+ *
+ * ⚠️ **必须落存储，不能只用模块级 Map**：Chrome MV3 的 service worker 空闲约 30 秒
+ * 就被回收，而扫描是 5 分钟一次——每次扫描都是全新的 SW 实例。只存内存的话
+ * 「连续 2 次扫描都低速」永远数不到 2，整个慢速恢复能力形同不存在
+ * （2026-10-21 实测：自移植以来从未触发过一次）。
+ *
+ * 用 `storage.session`：跨 SW 实例存活，浏览器退出即清空（观察状态属于本次会话）。
  */
-const slowSince = new Map<string, number>()
-/** 连续恢复失败次数（videoId → 次数）；成功或被用户清理时归零 */
-const recoverAttempts = new Map<string, number>()
+let scanMemory: Aria2ScanMemory = emptyScanMemory()
+
+/** 读回上一轮扫描留下的计数（脏值由 `parseScanMemory` 丢弃） */
+async function loadScanMemory(): Promise<void> {
+    try {
+        const stored = await browser.storage.session.get(ARIA2_SCAN_MEMORY_KEY)
+        scanMemory = parseScanMemory(stored?.[ARIA2_SCAN_MEMORY_KEY])
+    } catch (error) {
+        // storage.session 不可用（老版本宿主）：退化为内存态，功能降级但不影响扫描本身
+        console.warn('[iwara-assistant] 读取 aria2 扫描记忆失败，本轮按空计数处理:', stringify(error))
+        scanMemory = emptyScanMemory()
+    }
+}
+
+/** 写回本轮计数，供 5 分钟后的下一次扫描（可能是新 SW 实例）继续累计 */
+async function saveScanMemory(): Promise<void> {
+    try {
+        await browser.storage.session.set({ [ARIA2_SCAN_MEMORY_KEY]: scanMemory })
+    } catch (error) {
+        console.warn('[iwara-assistant] 保存 aria2 扫描记忆失败:', stringify(error))
+    }
+}
 
 /**
  * aria2 任务 → 队列状态映射（扫描对账用）。
@@ -69,6 +96,14 @@ function statusOfAria2(status: Aria2Status['status']): QueueTask['status'] {
 
 /** 进度回写的阈值：变化小于 0.5% 不落盘。 */
 const PROGRESS_EPSILON = 0.005
+
+/**
+ * 扫描/探测统一取的字段集。
+ *
+ * `EXTRACT_VIDEO_ID_FIELDS` 是**反查视频 ID** 的最小集（恢复重建也用它）；
+ * 进度读数要额外带上三个字节数。合成一份，避免两条路径各写一遍还写歪。
+ */
+const PROGRESS_FIELDS = [...EXTRACT_VIDEO_ID_FIELDS, 'totalLength', 'completedLength', 'downloadSpeed']
 
 /**
  * 把「还在跑」的任务的实时状态同步回队列（状态 + 进度）。
@@ -137,8 +172,8 @@ async function handleDownloadComplete(gid: string): Promise<void> {
         await syncTask(task)
         await notifyTask(task)
         await markDone(task.videoId)
-        // MediaCenter 推送（实验特性关闭/未配置时内部直接返回）
-        void pushVideoIdToMediaCenter(task.videoId, task.filename)
+        // 推送失败会登记待重试（源 `aria2Track` 的 complete 分支：失败不放弃，5 分钟后重试）
+        await pushAfterDownload(task.videoId, task.filename)
         return
     }
     // 外部任务（用户直接往 aria2 投的）：提取视频 ID 只记去重表，不打扰
@@ -188,12 +223,10 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
     let stopped = 0
     let rejected = 0
     if (!isAria2Configured()) return { adopted, stopped, rejected }
+    // 计数必须跨轮累计（Chrome SW 空闲 30s 就回收，扫描 5min 一次 → 每次都是新实例）
+    await loadScanMemory()
     try {
-        const fields = EXTRACT_VIDEO_ID_FIELDS
-        // 进度读数要单独请求：`EXTRACT_VIDEO_ID_FIELDS` 是**反查视频 ID** 的最小字段集，
-        // 往里塞字节数会让另一处（恢复重建）多拿两个用不上的字段而无收益
-        const progressFields = [...fields, 'totalLength', 'completedLength', 'downloadSpeed']
-        const [actRes, stopRes] = await Promise.all([aria2API<Aria2Status[]>('aria2.tellActive', [progressFields]), aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, progressFields])])
+        const [actRes, stopRes] = await Promise.all([aria2API<Aria2Status[]>('aria2.tellActive', [PROGRESS_FIELDS]), aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, PROGRESS_FIELDS])])
         const allTasks = [...(actRes.result ?? []), ...(stopRes.result ?? [])].filter((task) => isNullOrUndefined(task.bittorrent))
 
         // 按 videoId 分组（同一视频可能存在多个 gid：重复下载/重建残留）
@@ -277,7 +310,14 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
         console.info(`[iwara-assistant] aria2 扫描完成: 共 ${allTasks.length} 任务（收编 ${adopted}，停止冗余 ${stopped}，无主 ${rejected}）`)
     } catch (error) {
         console.warn('[iwara-assistant] aria2 扫描失败:', stringify(error))
+    } finally {
+        // 无论中途怎么退出都要写回：漏写会让「连续 N 次低速」永远从 1 重新开始
+        await saveScanMemory()
+        // 终态收敛后可能已经没有活跃任务：让探测 alarm 自行退场
+        await syncAria2ProbeAlarm()
     }
+    // MediaCenter 推送重试：5 分钟一轮，与源项目的重试间隔一致
+    await flushMediaCenterPushes()
     return { adopted, stopped, rejected }
 }
 
@@ -289,6 +329,85 @@ function findTaskByGids(gids: string[]): QueueTask | undefined {
     return undefined
 }
 
+// ── 轻量探测：慢速判定 + 进度回写的实时通道 ──────────────────────────
+
+/**
+ * 活跃任务探测的 alarm 名（**按需创建**：队列里没有 aria2 活跃任务时它不存在）。
+ *
+ * 与 iwaradl 的 `scan-iwaradl` 同一套思路——常驻 1 分钟的 alarm 会让 SW 每分钟醒一次，
+ * 哪怕一条任务都没有。
+ */
+export const ARIA2_PROBE_ALARM = 'probe-aria2'
+
+/**
+ * 探测周期（分钟）。
+ *
+ * 源项目在页面里**每任务一个 worker、active 时 4 秒 poll 一次**，慢速要连续 16 次
+ * （≈68 秒）才动手；本扩展没有页内 worker，只能靠定时器采样。若沿用 5 分钟的
+ * `scan-aria2` 做唯一采样源，`MIN_SLOW_POLLS=2` 意味着**10 分钟**才判一次慢速——
+ * 用户会觉得「这功能没生效」。
+ *
+ * 为什么不是把 `scan-aria2` 直接提到 1 分钟：实测一次 `tellStopped(0, 4096)` 返回
+ * **4.6 MB**（442 条结果、每条 16 个 uri），1 分钟一次就是 6.6 GB/天；而
+ * `tellActive` 在没有活跃任务时只有 38 字节。慢速判定只需要「正在下载的任务」，
+ * 所以单独用一条只拉 `tellActive` 的轻通道，2 次采样 ≈ 2 分钟。
+ */
+export const ARIA2_PROBE_PERIOD_MIN = 1
+
+/** 队列里是否有需要盯的 aria2 任务（决定要不要开探测 alarm） */
+export function hasActiveAria2Tasks(): boolean {
+    return getTasks().some((task) => task.kind === 'aria2' && (task.status === 'running' || task.status === 'queued'))
+}
+
+/** 按当前队列对齐探测 alarm 的存在性（幂等：已存在则不动，避免不断重置计时） */
+export async function syncAria2ProbeAlarm(): Promise<void> {
+    const needed = isAria2Configured() && hasActiveAria2Tasks()
+    const existing = await browser.alarms.get(ARIA2_PROBE_ALARM).catch(() => undefined)
+    if (needed && !existing) {
+        await browser.alarms.create(ARIA2_PROBE_ALARM, { periodInMinutes: ARIA2_PROBE_PERIOD_MIN })
+        return
+    }
+    if (!needed && existing) await browser.alarms.clear(ARIA2_PROBE_ALARM)
+}
+
+/**
+ * 轻量探测：只拉 `tellActive`，做「进度回写 + 慢速恢复」。
+ *
+ * 与 `scanAria2TasksAndEnqueue` 的分工（同源项目 worker 与 scan 的分工）：
+ * - 这里 = worker 的高频轮询：只看正在跑的任务，判慢速、回写进度；
+ * - scan = 对账：择优/停冗余/收编外部任务/同步终态（5 分钟）。
+ *
+ * 不做择优与停冗余：`tellActive` 只有 active 任务，同 videoId 的 waiting/error 副本
+ * 不在这个视图里，判「冗余」会误杀。
+ */
+export async function probeAria2SlowTasks(): Promise<void> {
+    if (!isAria2Configured()) return
+    // 队列里没有活跃任务时直接返回：省掉一次 RPC，也让 alarm 能自行收敛（见 syncAria2ProbeAlarm）
+    if (!hasActiveAria2Tasks()) {
+        await syncAria2ProbeAlarm()
+        return
+    }
+    await loadScanMemory()
+    try {
+        const res = await aria2API<Aria2Status[]>('aria2.tellActive', [PROGRESS_FIELDS])
+        for (const status of res.result ?? []) {
+            if (status.status !== 'active') continue
+            const videoId = extractVideoIdFromTask(status)
+            if (!videoId) continue
+            const queuedTask = findTask({ kindRef: status.gid, kind: 'aria2' }) ?? getTasks().find((item) => item.videoId === videoId && item.kind === 'aria2')
+            // 只处理本扩展追踪中的任务：未入队的由 scan 收编后走正常流程
+            if (!queuedTask) continue
+            const recovered = await tryRecover(videoId, status, queuedTask)
+            if (recovered) continue
+            await syncLiveState(queuedTask, status, 'running')
+        }
+    } catch (error) {
+        console.warn('[iwara-assistant] aria2 活跃任务探测失败:', stringify(error))
+    } finally {
+        await saveScanMemory()
+    }
+}
+
 /**
  * 尝试恢复一个需要干预的任务（源 `processAria2TrackTask` 的 active/paused/error 分支）。
  *
@@ -296,9 +415,9 @@ function findTaskByGids(gids: string[]): QueueTask | undefined {
  *
  * | aria2 状态 | 触发 | 手段 |
  * |---|---|---|
- * | `error` / `removed` | 链接过期/被移除（403 是典型） | `rebuildAria2Task`：restart→changeUri，失败才 addUri |
+ * | `error` / `removed` | 链接过期/被移除（403 是典型） | `rebuildAria2Task`：原地换地址，失败才 addUri |
  * | `paused` | 用户手动暂停 / aria2 队列溢出 | `restartAria2Task`；队列满时**不动**（源同款守门） |
- * | `active` 且低速跨 2 次扫描 | 连接半死 | `restartAria2Task`；取不到新地址时不重启 |
+ * | `active` 且连续 2 次扫描低速 | 连接半死 | `restartAria2Task`；失败降级 `rebuildAria2Task`（源同款「绝不静默放弃」） |
  *
  * 为什么 error 一定要重解析而不是直接标 failed：iwara 直链带 `expires`，几小时后必然失效；
  * 不重解析就只剩「永远 failed + 用户重新勾选 → 又一条新任务」这条路，既丢进度又堆垃圾。
@@ -306,19 +425,38 @@ function findTaskByGids(gids: string[]): QueueTask | undefined {
  * 返回 `true` 表示「已处理」（调用方跳过本轮其余的终态同步/收编）。
  */
 async function tryRecover(videoId: string, winner: Aria2Status, queuedTask: QueueTask | undefined): Promise<boolean> {
-    // 低速观察窗口的记账：crossing 两次扫描仍低速才动手（见文件头「每任务 worker → WS 通知」）
-    trackSlowObservation(videoId, winner)
+    // 并发闸门：轻量探测（1 分钟）与对账扫描（5 分钟）是两条独立定时器，同一时刻
+    // 命中同一个任务时，会重复解析 + 重复 changeUri（第二次用已被替换的旧 URI 列表，
+    // aria2 只删得掉 0 条，反而把新地址又追加一遍）。已经在处理就当作「本轮已处理」。
+    if (recovering.has(videoId)) return true
+    recovering.add(videoId)
+    try {
+        return await recoverCore(videoId, winner, queuedTask)
+    } finally {
+        recovering.delete(videoId)
+    }
+}
+
+/**
+ * 正在恢复中的任务（进程内）。只用于拦住「两条定时器撞车」这种瞬时重叠，
+ * 不需要持久化：SW 被回收时在途的恢复进程本身也一起没了。
+ */
+const recovering = new Set<string>()
+
+async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: QueueTask | undefined): Promise<boolean> {
+    // 低速采样记账：本轮 +1（速度恢复/离开 active 时清零），返回值含本轮
+    const slowPolls = trackSlowObservation(videoId, winner)
 
     const needsRebuild = winner.status === 'error' || winner.status === 'removed'
-    const needsRestart = winner.status === 'paused' || (winner.status === 'active' && shouldRestartForSlowSpeed(winner, slowSince.get(videoId), Date.now(), SLOW_SPEED_GRACE_MS))
+    const needsRestart = winner.status === 'paused' || (winner.status === 'active' && shouldRestartForSlowSpeed(winner, slowPolls))
     if (!needsRebuild && !needsRestart) return false
 
     // 恢复失败上限：超了就放弃（源弹「继续重试/取消」询问；后台没有页内交互，
     // 改为写 failed + 通知，用户可在任务面板手动重试——重试会清零计数）
-    const attempts = recoverAttempts.get(videoId) ?? 0
+    const attempts = scanMemory.recoverAttempts[videoId] ?? 0
     if (recoverExhausted(attempts)) {
-        recoverAttempts.delete(videoId)
-        slowSince.delete(videoId)
+        delete scanMemory.recoverAttempts[videoId]
+        delete scanMemory.slowPolls[videoId]
         if (queuedTask) {
             await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2RecoverFailed', { id: videoId }) })
             const failed = findTask({ id: queuedTask.id })
@@ -334,17 +472,37 @@ async function tryRecover(videoId: string, winner: Aria2Status, queuedTask: Queu
         return true
     }
 
-    const result = needsRebuild ? await rebuildAria2Task(winner.gid, videoId, winner) : await restartAria2Task(winner.gid, videoId, winner)
+    // 原地换地址优先；**只有「拿到了新地址但换不上去」才降级重建**。
+    // 重新解析失败时绝不能降级：那会走「用旧地址 addUri」→ 给正在跑的任务再造一个副本，
+    // 抢写同一文件并丢掉已下字节（2026-10-21 实测：87 个真实任务被这样复制）。
+    let result: RecoverResult | undefined
+    if (needsRebuild) {
+        result = await rebuildAria2Task(winner.gid, videoId, winner)
+    } else {
+        const outcome = await restartAria2Task(winner.gid, videoId, winner)
+        if (outcome.kind === 'ok') result = outcome.result
+        else if (outcome.kind === 'uri-change-failed') {
+            console.warn(`[iwara-assistant] ${videoId} 原地恢复失败，降级为重建任务`)
+            result = await rebuildAria2Task(winner.gid, videoId, winner)
+        } else {
+            // 解析失败 ≠ 恢复失败：不该计入重试上限，否则未登录时 8 轮（约 40 分钟）后
+            // 所有慢速任务都会被标成 failed——而它们其实还在慢慢下。
+            // 清空采样计数 = 下一轮重新累计（相当于 10 分钟冷却），避免每轮都打一次解析请求。
+            delete scanMemory.slowPolls[videoId]
+            console.warn(`[iwara-assistant] ${videoId} 重新解析失败，本轮跳过恢复（旧地址换旧地址没有意义）`)
+            return true
+        }
+    }
     if (!result) {
-        recoverAttempts.set(videoId, attempts + 1)
+        scanMemory.recoverAttempts[videoId] = attempts + 1
         console.warn(`[iwara-assistant] ${videoId} 恢复失败（第 ${attempts + 1} 次），下轮再试`)
         // 返回 true：本轮不要再把它当终态上报（正在尝试修复）
         return true
     }
 
-    recoverAttempts.delete(videoId)
-    slowSince.delete(videoId)
-    // gid 可能变了（`aria2.restart` 会返回新 gid）：不同步到队列，后续通知就全对不上
+    delete scanMemory.recoverAttempts[videoId]
+    delete scanMemory.slowPolls[videoId]
+    // gid 可能变了（error/removed 走 addUri 重建）：不同步到队列，后续通知就全对不上
     if (queuedTask) await patchTask(queuedTask.id, { kindRef: result.gid, status: 'running' })
     else await addTask({ id: crypto.randomUUID(), videoId, kind: 'aria2', status: 'running', kindRef: result.gid })
     notifyInfo('aria2-recovered', i18n.t('notify.aria2Recovered', { id: videoId }), { kind: 'options', tab: 'tasks' })
@@ -353,19 +511,22 @@ async function tryRecover(videoId: string, winner: Aria2Status, queuedTask: Queu
 }
 
 /**
- * 低速观察记账：把「第一次看到低速」的时间写进 `slowSince`，速度恢复或任务不在 active 就清掉。
+ * 低速采样记账：把「连续第几次观察到低速」累加进 `scanMemory.slowPolls`，
+ * 速度恢复或任务不在 active 就清掉。返回**含本轮**的计数。
  *
- * 单独一个函数是因为它必须**先于判定**执行（否则第一轮永远拿不到起点），
- * 而判定本身要求 `slowSince` 已存在——两件事写在一起很容易把顺序搅错。
+ * 单独一个函数是因为它必须**先于判定**执行（否则第一轮永远拿不到计数），
+ * 而判定本身要求计数已累计——两件事写在一起很容易把顺序搅错。
  */
-function trackSlowObservation(videoId: string, status: Aria2Status): void {
-    if (status.status !== 'active') {
-        slowSince.delete(videoId)
-        return
-    }
+function trackSlowObservation(videoId: string, status: Aria2Status): number {
+    const table = scanMemory.slowPolls
     const speed = Number(status.downloadSpeed)
-    if (!Number.isFinite(speed) || speed > SLOW_SPEED_THRESHOLD) slowSince.delete(videoId)
-    else if (!slowSince.has(videoId)) slowSince.set(videoId, Date.now())
+    if (status.status !== 'active' || !Number.isFinite(speed) || speed > SLOW_SPEED_THRESHOLD) {
+        delete table[videoId]
+        return 0
+    }
+    const polls = (table[videoId] ?? 0) + 1
+    table[videoId] = polls
+    return polls
 }
 
 /** 启动追踪：注册 WS 通知（实时主路径）+ 首轮扫描对账。boot 幂等（重复调用安全） */

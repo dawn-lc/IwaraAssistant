@@ -34,6 +34,8 @@ import { runDownload } from './download/dispatch'
 import { adoptHandedOffDownload } from './download/adopt'
 import { syncIwaradlTasks } from './backends/iwaradl/tracker'
 import { syncIwaradlAlarm } from './backends/iwaradl/client'
+import { syncAria2ProbeAlarm } from './backends/aria2/tracker'
+import { flushMediaCenterPushes } from './iwara/mediaCenterPushQueue'
 import { downloadMetadata } from './download/downloaders'
 import { onContextMenuClicked, setupContextMenus } from './runtime/contextMenus'
 import { recordAuthToken, recordPageCookie } from './iwara/auth'
@@ -129,6 +131,10 @@ async function boot(): Promise<void> {
     // aria2：记住端点指纹（配置变更时由 tracker 自己比对并重连）+ 首轮对账
     watchAria2Endpoint(getConfig())
     await startAria2Tracking()
+    // 慢速判定需要分钟级采样（源项目每任务 4 秒轮询）：按队列对齐轻探测 alarm
+    await syncAria2ProbeAlarm()
+    // 上一代进程留下的「推送 MediaCenter 失败」待重试（源项目同样不丢）
+    void flushMediaCenterPushes()
     // iwaradl 只能拉：先按队列对齐 alarm 存在性（空闲时不该有这个 alarm），再跑首轮
     await syncIwaradlAlarm()
     void syncIwaradlTasks()

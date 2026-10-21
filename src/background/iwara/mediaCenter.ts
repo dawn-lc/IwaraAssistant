@@ -186,19 +186,28 @@ export async function pushToMediaCenter(video: FullVideoInfo, mediaCenterIdOverr
     }
 }
 
-/** 下载完成后的推送入口：优先用库内 full 记录，缺失则重新解析（失败静默） */
-export async function pushVideoIdToMediaCenter(videoId: string, filename?: string): Promise<void> {
-    if (!isMediaCenterConfigured()) return
+/**
+ * 下载完成后的推送入口：优先用库内 full 记录，缺失则重新解析。
+ *
+ * 返回**是否真的推送成功**——调用方（`mediaCenterPushQueue`）要靠它决定要不要登记重试。
+ * 未配置 MediaCenter 时返回 `true`（本就无事可做，不该产生待重试记录）。
+ */
+export async function pushVideoIdToMediaCenter(videoId: string, filename?: string): Promise<boolean> {
+    if (!isMediaCenterConfigured()) return true
     try {
         const [stored] = await db.getVideosByIds([videoId])
         if (stored && stored.Type === 'full') {
-            await pushToMediaCenter(stored, undefined, filename)
-            return
+            const outcome = await pushToMediaCenter(stored, undefined, filename)
+            if (!outcome.ok) console.warn(`[iwara-assistant] MediaCenter push failed: ${outcome.error}`)
+            return outcome.ok
         }
         const parsed = await parseVideoFull(videoId)
-        await pushToMediaCenter(parsed, undefined, filename)
+        const outcome = await pushToMediaCenter(parsed, undefined, filename)
+        if (!outcome.ok) console.warn(`[iwara-assistant] MediaCenter push failed: ${outcome.error}`)
+        return outcome.ok
     } catch (error) {
         console.warn('[iwara-assistant] MediaCenter push skipped:', stringify(error))
+        return false
     }
 }
 /** 单条推送的失败原因 → 用户可读文案（按「连不上」与「服务端拒绝」分流） */

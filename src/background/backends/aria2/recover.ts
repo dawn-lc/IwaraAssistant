@@ -11,9 +11,9 @@
  *
  * ## 三种恢复手段，按「破坏性从小到大」排序
  *
- * 1. `changeUri` + `unpause`（`restartAria2Task`）：任务本身还在，只把地址换掉。
- *    已下载的数据块保留，**不产生新 gid**。用于 paused / 慢速。
- * 2. `changeUri` + `unpause`（`rebuildAria2Task` 的非 error 分支）：同上，但不重解析也必须换地址。
+ * 1. `changeUri` +（仅 paused 时）`unpause`（`restartAria2Task`）：任务本身还在，只把地址换掉。
+ *    已下载的数据块保留，**不产生新 gid**。用于 paused / 慢速。调用契约见 `replaceUris`。
+ * 2. `changeUri`（`rebuildAria2Task` 的非 error 分支）：同上，但不重解析也必须换地址。
  * 3. `removeDownloadResult` + `addUri` 新建（`error` / `removed` 或换地址失败时）：
  *    会产生新 gid，所以要顺手清掉旧任务的 error/removed 结果，避免下轮扫描
  *    把旧任务当成「另一个同源任务」又拾回来（死循环）。
@@ -37,6 +37,7 @@
  */
 import { analyzePath } from '../../../shared/analyzePath'
 import type { AnalyzedPath } from '../../../shared/analyzePath'
+import { buildChangeUriParams, canRebuildFromOldUris } from '../../../shared/aria2Recover'
 import type { FullVideoInfo } from '../../../shared/videoInfo'
 import { i18n } from '../../../shared/i18n'
 import { stringify } from '../../../shared/strings'
@@ -55,9 +56,27 @@ export interface RecoverResult {
     uriUpdated: boolean
 }
 
-/** 任务现有 URI 列表（多源下载可能不止一个） */
+/**
+ * 任务现有 URI 列表（多源下载可能不止一个）。
+ *
+ * 去重：aria2 对同一个 URI 的重试会在 `uris` 里留下多条记录（实测一次挂起的任务
+ * 有 16 条），`changeUri` 的 `delUris` 对重复项**每次只删一条**，传去重后的列表
+ * 语义更清楚（也不必给 RPC 塞 16 份同样的字符串）。
+ */
 function uriListOf(status: Aria2Status): string[] {
-    return (status.files?.[0]?.uris ?? []).map((entry) => entry.uri)
+    return [...new Set((status.files?.[0]?.uris ?? []).map((entry) => entry.uri))]
+}
+
+/**
+ * 换掉任务的全部下载地址（参数形状见 `buildChangeUriParams`）。
+ *
+ * `unpause` **只能对 `paused` 调**：实测对 `active` 任务返回
+ * `GID#xxx cannot be unpaused now`（整个调用抛错，把前面的 changeUri 也一起判成失败）。
+ * `waiting` 不需要 unpause——它在 aria2 的内部队列里，换完地址自然会被调度。
+ */
+async function replaceUris(gid: string, status: Aria2Status, oldUris: string[], urls: string[]): Promise<void> {
+    await aria2API('aria2.changeUri', buildChangeUriParams(gid, oldUris, urls))
+    if (status.status === 'paused') await aria2API('aria2.unpause', [gid])
 }
 
 /** 旧任务的结果记录清理（失败不抛出：可能已被别的方式清掉） */
@@ -85,24 +104,29 @@ async function reparse(videoId: string): Promise<{ videoInfo: FullVideoInfo; url
 }
 
 /**
- * 手段 1：原地换地址 + 恢复（`paused` / `active` / `waiting` 适用）。
+ * 手段 1：原地换地址（`paused` / `active` / `waiting` 适用）。
  *
  * **不保留旧地址**：旧链接通常已过期，留着让 aria2 反复重试无效源只会更慢
- * （源实现同一决策）。返回 `undefined` 表示需要降级到 `rebuildAria2Task`。
+ * （源实现同一决策）。
+ *
+ * 返回判别联合而不是 `undefined`：调用方需要区分「拿不到新地址」和「拿到了但换不上去」——
+ * 前者重试原地换地址才有意义（降级重建只会制造重复任务，见 `canRebuildFromOldUris`），
+ * 后者才值得降级重建。
  */
-export async function restartAria2Task(gid: string, videoId: string, status?: Aria2Status): Promise<RecoverResult | undefined> {
+export type RestartOutcome = { kind: 'ok'; result: RecoverResult } | { kind: 'reparse-failed' } | { kind: 'uri-change-failed' }
+
+export async function restartAria2Task(gid: string, videoId: string, status?: Aria2Status): Promise<RestartOutcome> {
     const fresh = await reparse(videoId)
-    if (!fresh) return undefined
+    if (!fresh) return { kind: 'reparse-failed' }
     const current = status ?? (await aria2TellStatus(gid))
-    if (!current) return undefined
+    if (!current) return { kind: 'uri-change-failed' }
     const oldUris = uriListOf(current)
     try {
-        await aria2API('aria2.changeUri', [gid, 0, oldUris, [fresh.url]])
-        await aria2API('aria2.unpause', [gid])
-        return { gid, videoInfo: fresh.videoInfo, uriUpdated: true }
+        await replaceUris(gid, current, oldUris, [fresh.url])
+        return { kind: 'ok', result: { gid, videoInfo: fresh.videoInfo, uriUpdated: true } }
     } catch (error) {
-        console.warn(`[iwara-assistant] ${videoId} 原地换地址失败，降级重建:`, stringify(error))
-        return undefined
+        console.warn(`[iwara-assistant] ${videoId} 原地换地址失败:`, stringify(error))
+        return { kind: 'uri-change-failed' }
     }
 }
 
@@ -115,21 +139,27 @@ export async function restartAria2Task(gid: string, videoId: string, status?: Ar
 export async function rebuildAria2Task(gid: string, videoId: string, status: Aria2Status): Promise<RecoverResult | undefined> {
     const oldUris = uriListOf(status)
     const fresh = await reparse(videoId)
-    // 解析失败：回退用任务现有地址（源实现同款），不放弃恢复
+    // ⚠️ 没有新地址时**不能**无条件回退用旧地址：只有已死的任务才能这么兜底，
+    // 还活着的任务用同一批旧地址重建 = 制造第二个同源任务抢写同一文件 + 丢掉已下字节。
+    // 这条门是 2026-10-21 事故的直接修复（87 个正在运行的任务被 addUri 复制）。
+    if (!canRebuildFromOldUris(status.status, fresh !== undefined)) {
+        console.warn(`[iwara-assistant] ${videoId} 重新解析失败且任务仍在 ${status.status}，放弃本轮重建（用旧地址新建只会产生重复任务）`)
+        return undefined
+    }
+    // 解析失败（此时必然是 error/removed）：回退用任务现有地址，不放弃恢复
     const urls = fresh ? [fresh.url] : oldUris
     if (urls.length === 0) {
         console.warn(`[iwara-assistant] ${videoId} 既无新地址也无旧地址，无法重建`)
         return undefined
     }
 
-    // ① 任务还在、且不是 error/removed：原地换地址 + unpause，不产生第二个 gid。
-    //    error 状态**不能**走这条路：`changeUri` 会接受、`unpause` 被静默忽略（不报错也不改状态），
-    //    任务会永远停在 error 形成假成功循环。而「restart 拿新 gid」在 aria2 上不存在（见文件头），
-    //    所以 error 直接落到下面的 addUri。
+    // ① 任务还在、且不是 error/removed：原地换地址（paused 才补 unpause），不产生第二个 gid。
+    //    error 状态**不能**走这条路：`changeUri` 会接受（换地址成功）、`unpause` 对 error 任务
+    //    不报错也不改状态，任务会永远停在 error 形成假成功循环。而「restart 拿新 gid」在
+    //    aria2 上不存在（见文件头），所以 error 直接落到下面的 addUri。
     if (status.status !== 'removed' && status.status !== 'error') {
         try {
-            await aria2API('aria2.changeUri', [gid, 0, oldUris, urls])
-            await aria2API('aria2.unpause', [gid])
+            await replaceUris(gid, status, oldUris, urls)
             return { gid, ...(fresh ? { videoInfo: fresh.videoInfo } : {}), uriUpdated: true }
         } catch (error) {
             console.warn(`[iwara-assistant] ${videoId} 原地恢复失败，降级 addUri:`, stringify(error))
