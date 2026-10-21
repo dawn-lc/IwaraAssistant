@@ -39,6 +39,24 @@ export function isWsOpen(): boolean {
     return ws !== null && ws.readyState === WebSocket.OPEN
 }
 
+/**
+ * aria2 的 **RPC 级错误**（方法不存在 / GID 不存在 / 参数非法…）。
+ *
+ * 必须与传输故障（连不上、超时、socket 关闭）分开：RPC 级错误说明**服务端已经答了，只是拒绝**，
+ * 把同一个请求再发一次只会拿到一模一样的拒绝，白白多一发真实网络请求（实测：
+ * `aria2.restart` 在 aria2 上不存在，WS 收到 `No such method` → 被当成传输故障降级 HTTP 重发 →
+ * 又一发回同样的 `No such method`）。调用方据类型决定「返回错误」而不是「换个通道重试」。
+ */
+export class Aria2RpcError extends Error {
+    readonly rpc: unknown
+
+    constructor(rpc: unknown) {
+        super(`aria2 rpc error: ${JSON.stringify(rpc)}`)
+        this.name = 'Aria2RpcError'
+        this.rpc = rpc
+    }
+}
+
 /** 订阅 aria2 通知（如 aria2.onDownloadComplete）；返回解绑函数 */
 export function onNotification(method: string, handler: NotificationHandler): () => void {
     const list = notificationHandlers.get(method) ?? []
@@ -92,7 +110,7 @@ function handlePayload(raw: string): void {
         pending.delete(String(payload.id))
         clearTimeout(call.timer)
         if (payload.error !== undefined) {
-            call.reject(new Error(`aria2 rpc error: ${JSON.stringify(payload.error)}`))
+            call.reject(new Aria2RpcError(payload.error))
         } else {
             call.resolve({ result: payload.result } as unknown)
         }

@@ -113,9 +113,9 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
     )
 }
 
-export function TextField({ value, onChange, placeholder, mono }: { value: string; onChange: (next: string) => void; placeholder?: string; mono?: boolean }): ReactElement {
+export function TextField({ value, onChange, placeholder, mono, type = 'text' }: { value: string; onChange: (next: string) => void; placeholder?: string; mono?: boolean; type?: 'text' | 'password' }): ReactElement {
     const { draft, update, commit } = useDraft(value, onChange)
-    return <input className={mono ? 'mono' : undefined} type="text" value={draft} placeholder={placeholder} onChange={(event) => update(event.target.value)} onBlur={commit} />
+    return <input className={mono ? 'mono' : undefined} type={type} value={draft} placeholder={placeholder} onChange={(event) => update(event.target.value)} onBlur={commit} />
 }
 
 export function NumberField({ value, min, max, onChange }: { value: number; min?: number; max?: number; onChange: (next: number) => void }): ReactElement {

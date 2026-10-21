@@ -5,7 +5,7 @@
 import { among, isEmpty, isNullOrUndefined } from '../../../shared/strings'
 import { analyzePath } from '../../../shared/analyzePath'
 import { getConfig } from '../../storage/configStore'
-import { isWsOpen, serializeRpc, wsCall } from './ws'
+import { isWsOpen, serializeRpc, wsCall, Aria2RpcError } from './ws'
 
 export interface Aria2Uri {
     uri: string
@@ -51,7 +51,10 @@ export const EXTRACT_VIDEO_ID_FIELDS = ['gid', 'status', 'files', 'bittorrent', 
 
 /**
  * aria2 RPC 统一入口：指令优先经 WebSocket 实时发送（发指令+收推送同一连接），
- * WS 未就绪/调用失败时降级 HTTP POST，行为不中断。
+ * WS 未就绪/传输故障时降级 HTTP POST，行为不中断。
+ *
+ * **RPC 级错误不降级**：那说明 aria2 已经作答（只是拒绝），换通道重发只会拿到同样的拒绝，
+ * 却多一次真实请求。直接按 HTTP 路径的同构形态（`{error}`）返回，让两条传输对业务错误表现一致。
  */
 export async function aria2API<T = unknown>(method: string, params: unknown[]): Promise<Aria2RpcResult<T>> {
     if (isWsOpen()) {
@@ -59,6 +62,7 @@ export async function aria2API<T = unknown>(method: string, params: unknown[]): 
             const { result } = await wsCall<{ result: T }>(method, params)
             return { id: 'ws', jsonrpc: '2.0', result }
         } catch (error) {
+            if (error instanceof Aria2RpcError) return { id: 'ws', jsonrpc: '2.0', error: error.rpc }
             console.warn(`[iwara-assistant] aria2 ws 调用降级 HTTP (${method}):`, error instanceof Error ? error.message : error)
         }
     }

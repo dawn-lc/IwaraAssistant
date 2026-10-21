@@ -63,6 +63,18 @@ export function DownloadTab({ config }: { config: Config }): ReactElement {
                 </Row>
             </Section>
 
+            <Section title={t('download.proxyTitle')} note={t('download.proxyNote')}>
+                <Row label={t('download.proxy')}>
+                    <TextField value={config.downloadProxy} onChange={(next) => save({ downloadProxy: next })} mono placeholder={t('download.proxyPlaceholder')} />
+                </Row>
+                <Row label={t('download.proxyUser')}>
+                    <TextField value={config.downloadProxyUsername} onChange={(next) => save({ downloadProxyUsername: next })} mono />
+                </Row>
+                <Row label={t('download.proxyPass')}>
+                    <TextField value={config.downloadProxyPassword} onChange={(next) => save({ downloadProxyPassword: next })} mono type="password" />
+                </Row>
+            </Section>
+
             <Section title={t('download.pathTitle')} note={t('download.pathNote')}>
                 <Row label={t('download.template')} stack hint={t('download.templateHint')}>
                     <TextField value={config.downloadPath} onChange={(next) => save({ downloadPath: next })} mono placeholder="/Iwara/%#AUTHOR#%/%#TITLE#%[%#ID#%].mp4" />

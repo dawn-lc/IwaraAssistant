@@ -43,6 +43,7 @@ export const configSchema = z.object({
      */
     browserConcurrentDownloads: z.number().int().min(BROWSER_CONCURRENCY_MIN).max(BROWSER_CONCURRENCY_MAX).default(BROWSER_CONCURRENCY_DEFAULT),
     downloadPath: z.string().default('/Iwara/%#AUTHOR#%/%#TITLE#%[%#ID#%].mp4'),
+    // ── 下载代理（仅 aria2 / iwaradl 使用；浏览器内建下载不经代理）──
     downloadProxy: z.string().default(''),
     downloadProxyUsername: z.string().default(''),
     downloadProxyPassword: z.string().default(''),

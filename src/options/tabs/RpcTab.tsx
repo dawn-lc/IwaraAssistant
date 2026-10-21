@@ -1,5 +1,5 @@
 /**
- * RPC 端点页签 —— aria2 / iwaradl 端点与令牌 + 代理。
+ * RPC 端点页签 —— aria2 / iwaradl 端点与令牌。
  *
  * 这里**不再有逐站点授权按钮**：host 权限已在 manifest 里一次性声明 `<all_urls>`
  * （docs/03「权限模型」）。逐端点申请只会给用户增加 N 次原生弹窗，而失败时的正确
@@ -115,7 +115,7 @@ export function RpcTab({ config }: { config: Config }): ReactElement {
                     <TextField value={config.aria2Path} onChange={(next) => save({ aria2Path: next })} mono placeholder="http://127.0.0.1:6800/jsonrpc" />
                 </Row>
                 <Row label={t('rpc.aria2Token')}>
-                    <TextField value={config.aria2Token} onChange={(next) => save({ aria2Token: next })} mono placeholder={t('rpc.aria2TokenPlaceholder')} />
+                    <TextField value={config.aria2Token} onChange={(next) => save({ aria2Token: next })} mono type="password" placeholder={t('rpc.aria2TokenPlaceholder')} />
                 </Row>
             </Section>
 
@@ -124,7 +124,7 @@ export function RpcTab({ config }: { config: Config }): ReactElement {
                     <TextField value={config.iwaradlPath} onChange={(next) => save({ iwaradlPath: next })} mono placeholder="http://127.0.0.1:23456/api/tasks" />
                 </Row>
                 <Row label={t('rpc.token')}>
-                    <TextField value={config.iwaradlToken} onChange={(next) => save({ iwaradlToken: next })} mono placeholder={t('rpc.tokenPlaceholder')} />
+                    <TextField value={config.iwaradlToken} onChange={(next) => save({ iwaradlToken: next })} mono type="password" placeholder={t('rpc.tokenPlaceholder')} />
                 </Row>
             </Section>
 
@@ -144,18 +144,6 @@ export function RpcTab({ config }: { config: Config }): ReactElement {
                 </Row>
                 <Row label={t('rpc.statsIwaradlLabel')}>
                     <BackendStatsLine backend={stats?.iwaradl} format={(s) => t('rpc.statsIwaradl', { running: s.running, pending: s.pending, completed: s.completed })} />
-                </Row>
-            </Section>
-
-            <Section title={t('rpc.proxyTitle')} note={t('rpc.proxyNote')}>
-                <Row label={t('rpc.proxy')}>
-                    <TextField value={config.downloadProxy} onChange={(next) => save({ downloadProxy: next })} mono placeholder={t('rpc.proxyPlaceholder')} />
-                </Row>
-                <Row label={t('rpc.proxyUser')}>
-                    <TextField value={config.downloadProxyUsername} onChange={(next) => save({ downloadProxyUsername: next })} mono />
-                </Row>
-                <Row label={t('rpc.proxyPass')}>
-                    <TextField value={config.downloadProxyPassword} onChange={(next) => save({ downloadProxyPassword: next })} mono />
                 </Row>
             </Section>
         </>

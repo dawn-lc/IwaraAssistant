@@ -6,7 +6,7 @@
 | -------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 单元测试       | `npm run test:unit`          | `node:test` + tsx，零框架依赖。纯函数与状态机：路径清洗、模板变量、配置 schema、页面路由、消息协议、旧库分批预算、任务对账/取消策略、i18n 键一致性等。 |
 | 类型检查       | `npm run type-check` 等三条  | 扩展源码、Playwright e2e、WDIO e2e 分别检查；CI 中三条都跑。                                                                                           |
-| Playwright e2e | `npm run test:e2e`           | Chromium 直载 `dist/chrome`，10 个 spec / 48 个用例；CI 门禁。                                                                                         |
+| Playwright e2e | `npm run test:e2e`           | Chromium 直载 `dist/chrome`，10 个 spec / 49 个用例；CI 门禁。                                                                                         |
 | WDIO 常规套件  | `npm run test:e2e:wdio`      | Chrome + Firefox 同一份用例，25 个用例共享同一 session；本机运行，不进 CI。                                                                            |
 | WDIO live      | `npm run test:e2e:wdio:live` | 真实站点与真实 aria2；`E2E_LIVE=1` 才收集，13 个站点用例 + 4 个下载用例，不进 CI。                                                                     |
 | 手动验收       | `npm run test:e2e:manual`    | `E2E_MANUAL=1`，无断言，加载真实 profile 供人工检查；Chrome / Firefox 各一条脚本。                                                                     |

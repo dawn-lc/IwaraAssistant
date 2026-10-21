@@ -219,7 +219,7 @@ export function AdvancedTab({ config }: { config: Config }): ReactElement {
                         <TextField value={config.mediaCenterApi} onChange={(next) => save({ mediaCenterApi: next })} mono placeholder="http://127.0.0.1:3000" />
                     </Row>
                     <Row label={t('advanced.mediaApiKey')}>
-                        <TextField value={config.mediaCenterApiKey} onChange={(next) => save({ mediaCenterApiKey: next })} mono />
+                        <TextField value={config.mediaCenterApiKey} onChange={(next) => save({ mediaCenterApiKey: next })} mono type="password" />
                     </Row>
                     <div className="action-row">
                         <button type="button" disabled={mediaBusy || config.mediaCenterApi.trim() === ''} onClick={() => void syncMedia()}>

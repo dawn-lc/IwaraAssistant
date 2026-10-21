@@ -13,12 +13,21 @@
  *
  * 1. `changeUri` + `unpause`（`restartAria2Task`）：任务本身还在，只把地址换掉。
  *    已下载的数据块保留，**不产生新 gid**。用于 paused / 慢速。
- * 2. `restart` → `changeUri`（`rebuildAria2Task` 的 error 分支）：`error` 状态下
- *    aria2 会**静默忽略** `unpause`（不报错也不改状态），只换地址会卡在 error 形成
- *    假成功循环。所以必须先用 `aria2.restart` 原地重启拿到新 gid，再换地址。
- * 3. `addUri` 新建（最后兜底）：只有在任务已被 `removed`、或上面两步都失败时才用。
+ * 2. `changeUri` + `unpause`（`rebuildAria2Task` 的非 error 分支）：同上，但不重解析也必须换地址。
+ * 3. `removeDownloadResult` + `addUri` 新建（`error` / `removed` 或换地址失败时）：
  *    会产生新 gid，所以要顺手清掉旧任务的 error/removed 结果，避免下轮扫描
  *    把旧任务当成「另一个同源任务」又拾回来（死循环）。
+ *
+ * ### ⚠️ `aria2.restart` 不是 aria2 的 RPC 方法（别再写回去）
+ *
+ * 源项目 `rebuildAria2Task` 的 error 分支写的是「先 `aria2.restart` 拿新 gid 再 `changeUri`」。
+ * 实测对端 aria2（`system.listMethods`，该方法**不校验 token**）只有 36 个方法，清单里没有
+ * `restart`；aria2 手册的方法表也没有（AddUri…SaveSession + system.*）。也就是说那次调用
+ * **必然返回 `No such method`**，源项目靠外层 catch 静默降级到 `addUri`——`restart` 分支
+ * 从来没有生效过，只是每次都多打一发必失败的请求。
+ *
+ * 所以 error 状态直接走「清结果 + addUri」：这是源项目实际执行的那条路径，行为等价、少一次
+ * 注定失败的 RPC。
  *
  * ## 绝不碰用户的历史记录
  *
@@ -100,8 +109,8 @@ export async function restartAria2Task(gid: string, videoId: string, status?: Ar
 /**
  * 手段 2/3：重建任务（`error` / `removed` / 换地址失败时）。
  *
- * `error` 走 `restart`（新 gid）→ `changeUri`；其余状态走 `changeUri`+`unpause`；
- * 两条都失败或被移除 → `addUri` 新建。
+ * `error` / `removed` 直接 `removeDownloadResult` + `addUri`（`aria2.restart` 不存在，见文件头）；
+ * 其余状态先试 `changeUri` + `unpause`，失败才新建。
  */
 export async function rebuildAria2Task(gid: string, videoId: string, status: Aria2Status): Promise<RecoverResult | undefined> {
     const oldUris = uriListOf(status)
@@ -113,24 +122,15 @@ export async function rebuildAria2Task(gid: string, videoId: string, status: Ari
         return undefined
     }
 
-    // ① 任务还在（非 removed）：优先原地恢复，避免产生第二个 gid
-    if (status.status !== 'removed') {
+    // ① 任务还在、且不是 error/removed：原地换地址 + unpause，不产生第二个 gid。
+    //    error 状态**不能**走这条路：`changeUri` 会接受、`unpause` 被静默忽略（不报错也不改状态），
+    //    任务会永远停在 error 形成假成功循环。而「restart 拿新 gid」在 aria2 上不存在（见文件头），
+    //    所以 error 直接落到下面的 addUri。
+    if (status.status !== 'removed' && status.status !== 'error') {
         try {
-            if (status.status === 'error') {
-                // error 状态下 unpause 会被 aria2 静默忽略 → 必须 restart 拿新 gid
-                const restarted = await aria2API<string>('aria2.restart', [gid])
-                const nextGid = restarted.result
-                if (typeof nextGid === 'string' && nextGid !== '') {
-                    await discardResult(gid)
-                    await aria2API('aria2.changeUri', [nextGid, 0, oldUris, urls])
-                    return { gid: nextGid, ...(fresh ? { videoInfo: fresh.videoInfo } : {}), uriUpdated: true }
-                }
-                console.warn(`[iwara-assistant] ${videoId} aria2.restart 返回空 gid，降级 addUri`)
-            } else {
-                await aria2API('aria2.changeUri', [gid, 0, oldUris, urls])
-                await aria2API('aria2.unpause', [gid])
-                return { gid, ...(fresh ? { videoInfo: fresh.videoInfo } : {}), uriUpdated: true }
-            }
+            await aria2API('aria2.changeUri', [gid, 0, oldUris, urls])
+            await aria2API('aria2.unpause', [gid])
+            return { gid, ...(fresh ? { videoInfo: fresh.videoInfo } : {}), uriUpdated: true }
         } catch (error) {
             console.warn(`[iwara-assistant] ${videoId} 原地恢复失败，降级 addUri:`, stringify(error))
         }

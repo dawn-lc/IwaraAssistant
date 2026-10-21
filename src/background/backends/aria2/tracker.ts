@@ -228,7 +228,14 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
             // ── 恢复：链接过期 / 暂停 / 慢速（源 `processAria2TrackTask` 的 active/paused/error 分支）──
             // 这三条必须在「同步终态」之前跑：error 任务此刻还不在队列里（或已在队列但标记 failed），
             // 先把它修好才能避免把一次可恢复的 403 当成终态失败。
-            const recovered = await tryRecover(videoId, winner, queuedTask)
+            //
+            // ⚠️ **只对本扩展追踪中的任务做恢复**。源项目的分工是：扫描只负责「择优 / 停冗余 / 入队」，
+            // 恢复跑在**每个任务自己的 worker** 里（`processAria2TrackTask`），只有已入队的任务才有 worker。
+            // 早先这里不判 `queuedTask`，于是 aria2 里每一条 error 任务每轮扫描都会被 `addUri` 重建一次 →
+            // aria2 里多出第二个同源任务 → 下轮扫描把它判成「冗余」`remove` + `removeDownloadResult` →
+            // 再重建……实测出现 1 分半内 150+ 条 RPC（大量 `removeDownloadResult` 回
+            // `GID xxx is not found`）。未入队的任务由下面的收编流程按真实状态落库，再走正常重试路径。
+            const recovered = queuedTask ? await tryRecover(videoId, winner, queuedTask) : false
             if (recovered) continue
 
             if (queuedTask) {
@@ -243,10 +250,11 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
                 continue
             }
             if (doneMap[videoId] !== undefined && winner.status !== 'active' && winner.status !== 'waiting') {
-                // 30 天内完成过的残留：停止并清结果，不入队。
-                // ⚠️ 这里只停「本扩展自己的冗余任务」；不碰用户的历史完成记录（源 Issue #405 的教训）
-                await stopRedundantTask(winner)
-                stopped++
+                // 30 天内完成过的残留：**只跳过入队，绝不清理 aria2 侧记录**。
+                // 去重表职责是「防重复处理」，不是「删除历史」——完成/失败记录由用户自己管理。
+                // 源项目曾把这里误改成 removeRedundantAria2Task 清结果，导致用户的 aria2 历史被脚本
+                // 静默删除（其 Issue #405），注释与实现都保留这条教训。
+                console.debug(`[iwara-assistant] aria2 ${videoId} 30 天内已完成，跳过残留任务 ${winner.gid}(${winner.status})`)
                 continue
             }
 

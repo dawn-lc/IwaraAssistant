@@ -79,11 +79,39 @@ test('下载页签路径模板实时预览（渲染管线共享）', async ({ sh
     await expect(preview).toContainText('someone') // 示例视频 AUTHOR
 
     // 改模板 → 预览即时更新（saveConfig → 预览同管线重渲）
-    const input = page.locator('.row-control input[type="text"]').first()
+    const input = page.locator('section.card').filter({ hasText: '保存路径模板' }).locator('input[type="text"]').first()
     await input.fill('/IwaraTest/%#ALIAS#%/%#ID#%.mp4')
     await expect(preview).toContainText('/IwaraTest/Sample Alias/', { timeout: 10_000 })
     // 还原默认模板
     await input.fill('/Iwara/%#AUTHOR#%/%#TITLE#%[%#ID#%].mp4')
+    await expect(page.locator('[data-testid="save-toast"]')).toContainText('已保存', { timeout: 5_000 })
+})
+
+/**
+ * 下载代理在「下载」页签可见，并且写入 storage。
+ *
+ * 代理只被 aria2 / iwaradl 使用；放在下载页签是为了和下载方式、路径模板一起被发现，
+ * 而不是藏到 RPC 端点页底部。配置键本身仍是 `downloadProxy*`，后台无需改动。
+ */
+test('下载页签提供代理配置并写盘', async ({ sharedSession }) => {
+    const { page, extensionId } = sharedSession
+    await openExtensionPage(page, extensionId, 'options/index.html#download')
+    await expect(page.locator('nav.tabs')).toBeVisible()
+
+    const section = page.locator('section.card').filter({ hasText: '下载代理' })
+    await expect(section).toBeVisible()
+    // 密码字段必须遮罩（与源项目 password 类型一致）
+    await expect(section.locator('input').nth(2)).toHaveAttribute('type', 'password')
+
+    const proxy = section.locator('input').first()
+    await proxy.fill('http://127.0.0.1:7890')
+    await expect(page.locator('[data-testid="save-toast"]')).toContainText('已保存', { timeout: 5_000 })
+
+    const readProxy = (): Promise<unknown> => page.evaluate(async () => ((await browser.storage.local.get('config'))['config'] as Record<string, unknown> | undefined)?.['downloadProxy'])
+    await expect.poll(readProxy, { timeout: 5_000 }).toBe('http://127.0.0.1:7890')
+
+    // 还原，避免污染后续用例
+    await proxy.fill('')
     await expect(page.locator('[data-testid="save-toast"]')).toContainText('已保存', { timeout: 5_000 })
 })
 
