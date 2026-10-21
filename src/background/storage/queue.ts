@@ -274,11 +274,11 @@ export async function notifyTask(task: QueueTask): Promise<void> {
     const followUp = (state === 'skipped' || state === 'failed') && task.followUpUrl !== undefined
     const target: NotificationTarget = followUp
         ? {
-              kind: 'url',
-              url: task.followUpUrl as string,
-              // 源项目点「打开视频链接」会顺手把保存文件名写进剪贴板；只有跳过场景才复制
-              ...(state === 'skipped' && getConfig().autoCopySaveFileName && task.filename ? { copyText: task.filename } : {})
-          }
+            kind: 'url',
+            url: task.followUpUrl as string,
+            // 源项目点「打开视频链接」会顺手把保存文件名写进剪贴板；只有跳过场景才复制
+            ...(state === 'skipped' && getConfig().autoCopySaveFileName && task.filename ? { copyText: task.filename } : {})
+        }
         : { kind: 'options', tab: 'tasks' }
 
     const message = state === 'skipped' ? i18n.t('notify.linkFound', { id: task.videoId }) : state === 'failed' ? i18n.t('notify.taskFailed', { id: task.videoId, kind: task.kind, detail: task.detail ?? task.filename ?? i18n.t('notify.unknownReason') }) : i18n.t('notify.taskComplete', { id: task.videoId })
