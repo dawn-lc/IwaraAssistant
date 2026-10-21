@@ -84,6 +84,22 @@ export function blockingTaskFor(videoId: string, tasks: readonly QueueTask[]): Q
 }
 
 /**
+ * 可以**复用**的失败记录：同一个视频失败过、用户现在又要下载。
+ *
+ * `failed` 不阻止重下（见 `dedupeAgainstQueue` 的说明），但「允许重下」不等于
+ * 「必须新建一条记录」。不复用就会每点一次批量/单条下载都多一行失败任务，
+ * 任务列表里同一个 videoId 越堆越多——这不是去重没生效，而是去重只放行了、
+ * 没有把这次投递落到原来那条记录上。
+ *
+ * 只认 `failed`：`complete` / `running` / `queued` 由 `blockingTaskFor` 拦住，
+ * `skipped` / `handed-off` 是另一种语义（没下 / 已交付），不能拿来当下载记录改。
+ */
+export function reusableFailedTaskFor(videoId: string, tasks: readonly QueueTask[]): QueueTask | undefined {
+    const task = latestTaskByVideo(tasks).get(videoId)
+    return task?.status === 'failed' ? task : undefined
+}
+
+/**
  * 该状态是否意味着「文件已经到手或正在拿」，因而不该再投递。
  *
  * 写成**正向穷尽 switch** 而不是黑名单（`!== 'failed' && !== 'skipped'`）：

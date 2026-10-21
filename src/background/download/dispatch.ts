@@ -14,7 +14,7 @@ import { getConfig } from '../storage/configStore'
 import { i18n } from '../../shared/i18n'
 import { siteUrl } from '../../shared/site'
 import { addTask, getTasks, notifyTask, removeSkippedFor, syncTask } from '../storage/queue'
-import { blockingTaskFor } from '../../shared/downloadDedupe'
+import { blockingTaskFor, reusableFailedTaskFor } from '../../shared/downloadDedupe'
 import type { QueueTask } from '../../shared/task'
 import { channelTracksResult } from '../../shared/task'
 import type { FullVideoInfo } from '../../shared/videoInfo'
@@ -29,7 +29,9 @@ import { checkIsHaveDownloadLink } from '../iwara/linkCheck'
 import { notifyWarn } from '../runtime/notify'
 import { db } from '../storage/db'
 import { syncIwaradlAlarm } from '../backends/iwaradl/client'
+import { aria2API, aria2TellStatus } from '../backends/aria2/client'
 import { syncAria2ProbeAlarm } from '../backends/aria2/tracker'
+import { isLiveAria2Status } from '../../shared/aria2Recover'
 import type { PageType } from '../../shared/pageType'
 
 /** 原 DownloadType 枚举 → 协议通道名 */
@@ -290,6 +292,26 @@ async function runDownloadInner(payload: DispatchPayload): Promise<DispatchOutco
     // 后者是历史记录。
     await removeSkippedFor(video.ID)
 
+    // 失败过的同一视频：把这次投递落到原来那条记录上（等价于「重试」），
+    // 而不是再加一行。`failed` 允许重下是产品决策，但每次重下都新建记录会让
+    // 任务列表里同一个视频堆出多条失败行——用户看到的就是「去重没生效」。
+    // `skipDedupe`（FORCE_DOWNLOAD）是显式的「再下一份」，仍然新建记录。
+    const reusable = payload.skipDedupe === true ? undefined : reusableFailedTaskFor(video.ID, getTasks())
+    if (reusable) {
+        // 先把上一轮失败的 aria2 结果清掉，避免扫描把它当独立任务再恢复一遍
+        if ((await discardPreviousAria2Task(reusable)) === 'completed') return reusable
+        reusable.kind = kind
+        reusable.status = 'running'
+        reusable.kindRef = undefined
+        reusable.detail = undefined
+        reusable.progress = undefined
+        reusable.followUpUrl = undefined
+        reusable.attempts = 0
+        reusable.filename = filename
+        await syncTask(reusable)
+        return executeChannels(reusable, video, ctx)
+    }
+
     const task = await addTask({
         id: crypto.randomUUID(),
         videoId: video.ID,
@@ -300,26 +322,87 @@ async function runDownloadInner(payload: DispatchPayload): Promise<DispatchOutco
     return executeChannels(task, video, ctx)
 }
 
+/**
+ * 正在重试的任务（进程内）。用户点「重试全部失败」与 `retry-failed` alarm
+ * 可能同时扫到同一条记录：两边都调 `retryTask` 就会对同一个视频发两次
+ * `aria2.addUri`（同一输出路径两个 gid），随后扫描把其中一个当冗余 `remove`，
+ * 任务面板上就出现莫名其妙的 “Download aborted.”。
+ *
+ * 后台是单实例，进程内集合就够；SW 被回收时在途的重试也一起没了。
+ */
+const retryingTaskIds = new Set<string>()
+
+/**
+ * 重试/重下前清掉上一轮的 aria2 任务。
+ *
+ * 失败记录会保留 `kindRef`（上一轮失败的 gid）。不清掉就直接 addUri，会出现：
+ * - 5 分钟扫描看到那条 error 任务，`tryRecover` 又重建一条（它不知道我们刚重试）；
+ * - 用户点「重试全部失败」与 alarm 同时触发时，同一文件两个 gid 并行；
+ * 两个同源任务随后被扫描判成冗余 `remove` —— 界面上就是 “Download aborted.”。
+ *
+ * `complete` 是特例：说明上一轮其实已经下完了（只是终态没同步回来），
+ * 这时**不能**清结果、也不该再下一遍，直接把记录收敛成 complete。
+ */
+async function discardPreviousAria2Task(task: QueueTask): Promise<'proceed' | 'completed'> {
+    if (task.kind !== 'aria2' || task.kindRef === undefined || task.kindRef === '') return 'proceed'
+    const gid = task.kindRef
+    task.kindRef = undefined
+    try {
+        const status = await aria2TellStatus(gid)
+        if (!status) return 'proceed'
+        if (status.status === 'complete') {
+            task.status = 'complete'
+            task.kindRef = gid
+            task.progress = 1
+            task.detail = undefined
+            await syncTask(task)
+            return 'completed'
+        }
+        if (isLiveAria2Status(status.status)) await aria2API('aria2.remove', [gid]).catch(() => undefined)
+        await aria2API('aria2.removeDownloadResult', [gid]).catch(() => undefined)
+    } catch (error) {
+        // 清理失败不该阻止重试：最坏情况只是回到旧行为（扫描会兜底处理残留）
+        console.warn(`[iwara-assistant] 清理 ${task.videoId} 的上一轮 aria2 任务失败:`, stringify(error))
+    }
+    return 'proceed'
+}
+
 /** 对既有队列任务重新执行（retry-failed alarm 用）：重解析（URL expires 短）后原记录复跑 */
 export async function retryTask(task: QueueTask): Promise<QueueTask> {
-    const ctx: ChannelContext = { overwrite: true }
-    let video: FullVideoInfo
+    // 已有同一 task 的重试在跑：直接返回它，避免重复 addUri（见 `retryingTaskIds`）
+    if (retryingTaskIds.has(task.id)) return task
+    // 同一视频的新投递/另一次重试正在进行：让那一次负责，重复 addUri 只会制造冗余副本
+    if (pushingVideoIds.has(task.videoId)) return task
+    // 队列里已经有一条同视频的活跃记录（历史遗留的重复行常见于旧版本）：
+    // 再按这条失败行投递就会在 aria2 里造第二个同源任务，随后被扫描 abort。
+    const live = getTasks().find((item) => item.id !== task.id && item.videoId === task.videoId && (item.status === 'running' || item.status === 'queued'))
+    if (live) return live
+    retryingTaskIds.add(task.id)
+    pushingVideoIds.add(task.videoId)
     try {
-        video = await parseVideoFull(task.videoId)
-    } catch (error) {
-        task.attempts = (task.attempts ?? 0) + 1
-        task.detail = i18n.t('error.retryParseFailed', { message: error instanceof VideoParseError ? (error.videoInfo.Msg ?? error.message) : stringify(error) })
+        if ((await discardPreviousAria2Task(task)) === 'completed') return task
+        const ctx: ChannelContext = { overwrite: true }
+        let video: FullVideoInfo
+        try {
+            video = await parseVideoFull(task.videoId)
+        } catch (error) {
+            task.attempts = (task.attempts ?? 0) + 1
+            task.detail = i18n.t('error.retryParseFailed', { message: error instanceof VideoParseError ? (error.videoInfo.Msg ?? error.message) : stringify(error) })
+            await syncTask(task)
+            return task
+        }
+        task.status = 'running'
+        task.kindRef = undefined
+        task.detail = undefined
+        // 进度属于「上一次尝试」：不清掉的话，重试后界面会从上一轮的 80% 开始显示
+        task.progress = undefined
+        task.filename = getDownloadPath(video).fullName
         await syncTask(task)
-        return task
+        return await executeChannels(task, video, ctx)
+    } finally {
+        pushingVideoIds.delete(task.videoId)
+        retryingTaskIds.delete(task.id)
     }
-    task.status = 'running'
-    task.kindRef = undefined
-    task.detail = undefined
-    // 进度属于「上一次尝试」：不清掉的话，重试后界面会从上一轮的 80% 开始显示
-    task.progress = undefined
-    task.filename = getDownloadPath(video).fullName
-    await syncTask(task)
-    return executeChannels(task, video, ctx)
 }
 
 /** 通道执行 + 元数据 + 状态推落盘/通知（runDownload 与 retryTask 共用的后半段） */

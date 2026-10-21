@@ -43,9 +43,18 @@ async function retryFailedTasks(): Promise<void> {
     // ② **每轮条数上限** —— 一次「共同失败」（守护进程停了 / 掉登录 / 直链端点抽风）
     //    会让几十上百条任务同时变 failed，无限制就会在下一轮把它们一起打出去。
     // 按「最近更新」优先：刚失败的往往是用户此刻真正想要的。
+    // 同一视频只重试**最新**那条失败记录：旧版本会在每次失败后新建一行，
+    // 逐条重试等于对同一个文件发多次 addUri，扫描再把多余副本 abort
+    // （任务面板上的 “Download aborted.” 有一部分就是这么来的）。
+    const seenVideos = new Set<string>()
     const candidates = getTasks()
         .filter((task) => task.status === 'failed' && (task.attempts ?? 0) < RETRY_MAX_ATTEMPTS)
         .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
+        .filter((task) => {
+            if (seenVideos.has(task.videoId)) return false
+            seenVideos.add(task.videoId)
+            return true
+        })
         .slice(0, RETRY_BATCH_LIMIT)
     for (const task of candidates) {
         task.attempts = (task.attempts ?? 0) + 1

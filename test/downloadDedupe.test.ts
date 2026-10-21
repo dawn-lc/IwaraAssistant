@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { blockingTaskFor, dedupeAgainstAria2, dedupeAgainstQueue, planQueueLiveDuplicates } from '../src/shared/downloadDedupe'
+import { blockingTaskFor, dedupeAgainstAria2, dedupeAgainstQueue, planQueueLiveDuplicates, reusableFailedTaskFor } from '../src/shared/downloadDedupe'
 import type { QueueTask } from '../src/shared/task'
 
 function task(videoId: string, status: QueueTask['status'], updatedAt?: number): QueueTask {
@@ -126,6 +126,38 @@ test('单条下载：以最新一条记录为准（成功过、后来重试失�
 test('单条下载：队列里没有该视频时不拦', () => {
     assert.equal(blockingTaskFor('a', [task('b', 'complete')]), undefined)
     assert.equal(blockingTaskFor('a', []), undefined)
+})
+
+// ── 失败记录复用（`reusableFailedTaskFor`）─────────────────────────────
+// 「允许重下」不等于「每次重下都新建一行」。不复用会让同一个 videoId 在任务列表里
+// 堆出多条失败记录——用户看到的就是「去重没生效」。
+
+test('失败记录复用：同一视频失败过 → 返回那条记录', () => {
+    const failed = task('a', 'failed')
+    assert.equal(reusableFailedTaskFor('a', [failed])?.id, failed.id)
+})
+
+test('失败记录复用：最新一条是 complete / running / queued 时不复用（那不是重试）', () => {
+    for (const status of ['complete', 'running', 'queued'] as const) {
+        assert.equal(reusableFailedTaskFor('a', [task('a', status)]), undefined, status)
+    }
+})
+
+test('失败记录复用：skipped / handed-off 不能当成失败下载记录改写', () => {
+    for (const status of ['skipped', 'handed-off'] as const) {
+        assert.equal(reusableFailedTaskFor('a', [task('a', status)]), undefined, status)
+    }
+})
+
+test('失败记录复用：多条失败记录取最新一条（旧行保留，不在这里清理历史）', () => {
+    const older = task('a', 'failed', 1000)
+    const newer = task('a', 'failed', 2000)
+    assert.equal(reusableFailedTaskFor('a', [older, newer])?.id, newer.id)
+})
+
+test('失败记录复用：没有记录 / 别的视频 → undefined', () => {
+    assert.equal(reusableFailedTaskFor('a', []), undefined)
+    assert.equal(reusableFailedTaskFor('a', [task('b', 'failed')]), undefined)
 })
 
 // ── 源码级接线守卫（缺失不会有任何类型错误）──────────────────────────
@@ -242,4 +274,26 @@ test('接线：boot 必须收敛队列内重复活跃记录', () => {
 test('接线：aria2 扫描必须把 tellActive 的 gid 传给队列去重', () => {
     const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
     assert.match(source, /collapseDuplicateLiveTasks\(liveGids\)/, '不传 liveGids 就只能靠时间戳猜，可能丢掉真正在下的那条')
+})
+
+test('接线：失败记录必须复用（批量/单条重下不该每次新建一行）', () => {
+    const source = readFileSync('src/background/download/dispatch.ts', 'utf8')
+    assert.match(source, /reusableFailedTaskFor\(video\.ID, getTasks\(\)\)/, '去掉复用，失败过的视频每点一次下载就多一行')
+})
+
+test('接线：retryTask 必须防重入（用户「重试全部」与 30 分钟 alarm 会同时命中同一条）', () => {
+    const source = readFileSync('src/background/download/dispatch.ts', 'utf8')
+    assert.match(source, /retryingTaskIds\.has\(task\.id\)/, '两个重试同时跑会对同一文件发两次 addUri，随后扫描必然 abort 一条')
+})
+
+test('接线：停止冗余 aria2 副本前必须先把 kindRef 指向赢家', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    const start = source.indexOf('for (const loser of plan.liveLosers)')
+    const end = source.indexOf('for (const loser of plan.garbageLosers)')
+    assert.ok(start > 0 && end > start, '两段循环都应存在')
+    const loop = source.slice(start, end)
+    const patch = loop.indexOf('patchTask(')
+    const stop = loop.indexOf('stopLiveCopy(')
+    assert.ok(patch > 0 && stop > 0, '循环里应同时有 patchTask 与 stopLiveCopy')
+    assert.ok(patch < stop, '先 remove 再改 kindRef 会让 aria2 的 onDownloadError 把正常任务标成 failed（“Download aborted.”）')
 })

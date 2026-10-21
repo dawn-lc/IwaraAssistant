@@ -51,11 +51,32 @@ test('gid 优先级：active > waiting > paused/complete > 其他', () => {
     assert.ok(gidPriority('complete') > gidPriority('error'))
 })
 
-test('择优：过期时间晚的胜出，即便对方状态更活跃', () => {
+test('择优：完成度相同时，过期时间晚的胜出（即便对方状态更活跃）', () => {
     const alive = { gid: 'g1', status: 'waiting' as const, files: [{ uris: [{ uri: 'https://e.com/a?expires=200' }] }] }
     const expiring = { gid: 'g2', status: 'active' as const, files: [{ uris: [{ uri: 'https://e.com/b?expires=100' }] }] }
     assert.ok(compareForKeep(alive, expiring) < 0, '过期晚的应排在前')
     assert.ok(compareForKeep(expiring, alive) > 0)
+})
+
+test('择优：完成度最高的胜出，哪怕它的地址更早过期（已下字节是用户真正付出的成本）', () => {
+    const nearlyDone = { gid: 'g-almost', status: 'active' as const, totalLength: '100', completedLength: '90', files: [{ uris: [{ uri: 'https://e.com/a?expires=100' }] }] }
+    const fresh = { gid: 'g-fresh', status: 'active' as const, totalLength: '100', completedLength: '0', files: [{ uris: [{ uri: 'https://e.com/b?expires=999' }] }] }
+    // 按旧的「过期时间优先」会留下 0% 的 fresh、remove 掉 90% 的，用户白下 90%
+    assert.ok(compareForKeep(nearlyDone, fresh) < 0)
+    assert.ok(compareForKeep(fresh, nearlyDone) > 0)
+})
+
+test('择优：aria2 的 complete 记作 100%（totalLength 读不到时也不能算 0%）', () => {
+    const done = { gid: 'g-done', status: 'complete' as const, files: [] }
+    const active = { gid: 'g-active', status: 'active' as const, totalLength: '100', completedLength: '99', files: [] }
+    assert.ok(compareForKeep(done, active) < 0, '完成记录不能被一个 99% 的副本压过')
+})
+
+test('择优：进度相同（都是 0%）时已完成字节多的优先（同一下载被拆到两个 gid 的边界）', () => {
+    const more = { gid: 'g-more', status: 'active' as const, totalLength: '0', completedLength: '4096', files: [] }
+    const less = { gid: 'g-less', status: 'active' as const, totalLength: '0', completedLength: '1024', files: [] }
+    assert.ok(compareForKeep(more, less) < 0)
+    assert.ok(compareForKeep(less, more) > 0)
 })
 
 test('择优：过期时间相同才比活跃度', () => {
@@ -201,6 +222,44 @@ test('同视频收敛：完成历史永远不会被列为要删除的对象', ()
     assert.ok(!removable.includes('g2'), '删掉完成历史 = 用户重下同名文件时找不到已下过的记录')
 })
 
+test('同视频收敛：多条活任务里保留完成度最高的那条（不是最活跃的那条）', () => {
+    const fresh = { gid: 'g-fresh', status: 'active' as const, totalLength: '100', completedLength: '0' }
+    const paused90 = { gid: 'g-paused', status: 'paused' as const, totalLength: '100', completedLength: '90' }
+    const waiting50 = { gid: 'g-waiting', status: 'waiting' as const, totalLength: '100', completedLength: '50' }
+    const plan = planAria2Group([fresh, paused90, waiting50])!
+    assert.equal(plan.winner.gid, 'g-paused', '按活跃度会选 active 那条，用户于是丢掉 90%')
+    assert.deepEqual(plan.liveLosers.map((task) => task.gid).sort(), ['g-fresh', 'g-waiting'])
+})
+
+test('同视频收敛：同一路径的重复完成记录只清结果（一个视频一个任务）', () => {
+    const doneA = { gid: 'g-a', status: 'complete' as const, files: [{ path: '/media/a.mp4', uris: [] }] }
+    const doneB = { gid: 'g-b', status: 'complete' as const, files: [{ path: '/media/a.mp4', uris: [] }] }
+    const plan = planAria2Group([doneA, doneB])!
+    assert.equal(plan.duplicateHistory.length, 1)
+    assert.deepEqual(
+        plan.historyLosers.map((task) => task.gid),
+        []
+    )
+    // 保留者仍在，磁盘上的文件只有一份，删掉多余的结果条目不影响任何东西
+    assert.ok([doneA.gid, doneB.gid].includes(plan.winner.gid))
+})
+
+test('同视频收敛：不同路径的完成记录都保留（不同画质/不同模板是两份真实文件）', () => {
+    const sd = { gid: 'g-sd', status: 'complete' as const, files: [{ path: '/media/a_sd.mp4', uris: [] }] }
+    const hd = { gid: 'g-hd', status: 'complete' as const, files: [{ path: '/media/a_hd.mp4', uris: [] }] }
+    const plan = planAria2Group([sd, hd])!
+    assert.deepEqual(plan.duplicateHistory, [])
+    assert.equal(plan.historyLosers.length, 1)
+})
+
+test('同视频收敛：活任务优先于完成历史（重下时不能被历史记录判成重复）', () => {
+    const live = { gid: 'g-live', status: 'active' as const, totalLength: '100', completedLength: '1', files: [{ path: '/media/a.mp4', uris: [] }] }
+    const done = { gid: 'g-done', status: 'complete' as const, files: [{ path: '/media/a.mp4', uris: [] }] }
+    const plan = planAria2Group([live, done])!
+    assert.equal(plan.winner.gid, 'g-live', '用户删了文件重下时，历史记录不该把自己变成「赢家」并把新任务停掉')
+    assert.deepEqual(plan.duplicateHistory, [], '历史记录本身也不是重复项（它是唯一一条 complete）')
+})
+
 test('同视频收敛：多条活任务只留一条，其余归 liveLosers', () => {
     const a = { gid: 'g-a', status: 'active' as const }
     const b = { gid: 'g-b', status: 'waiting' as const }
@@ -340,6 +399,23 @@ test('接线：完成历史（historyLosers）不得触发任何 RPC', () => {
     const block = source.slice(start, source.indexOf('\n            }', start))
     assert.doesNotMatch(block, /aria2API\(/, '删掉完成历史 = 用户重下以前下过的视频时，aria2 里那条记录被静默抹掉（源 Issue #405）')
     assert.doesNotMatch(block, /stopLiveCopy|discardGarbageCopy/, '历史记录不该进任何清理路径')
+})
+
+test('接线：重复完成记录只清结果（不 remove、不动磁盘文件）', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    const start = source.indexOf('for (const duplicate of plan.duplicateHistory)')
+    assert.ok(start > 0, 'duplicateHistory 分支应存在，否则同一视频会留下多条完成记录')
+    const block = source.slice(start, source.indexOf('\n            }', start))
+    assert.match(block, /discardGarbageCopy\(duplicate\)/, '已完成的任务不在活动队列里，remove 只会换回一个错误')
+    assert.doesNotMatch(block, /aria2\.remove'/)
+})
+
+test('接线：保留者是被暂停的任务时必须 unpause（否则去重之后下载就停了）', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    const start = source.indexOf("if (!queuedTask && plan.liveLosers.length > 0 && winner.status === 'paused')")
+    assert.ok(start > 0, '完成度优先可能选出 paused 的赢家，必须有恢复动作')
+    const block = source.slice(start, source.indexOf('\n            }', start))
+    assert.match(block, /aria2\.unpause/)
 })
 
 test('接线：扫描必须用 planAria2Group 分类，而不是自己再判一遍状态', () => {

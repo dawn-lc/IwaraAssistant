@@ -86,7 +86,18 @@ export async function clearFinishedTasks(): Promise<{ removed: number }> {
 
 /** 重试全部失败任务（`RETRY_FAILED`） */
 export async function retryAllFailed(): Promise<{ retried: number }> {
-    const failed = getTasks().filter((task) => task.status === 'failed')
+    // 同一视频只重试最新一条：历史遗留的重复失败行逐条重试会在 aria2 里
+    // 对同一输出路径发多次 addUri，随后扫描把多余副本 abort ——
+    // 用户看到的就是“Download aborted.”，而且是去重自己制造的。
+    const seenVideos = new Set<string>()
+    const failed = getTasks()
+        .filter((task) => task.status === 'failed')
+        .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
+        .filter((task) => {
+            if (seenVideos.has(task.videoId)) return false
+            seenVideos.add(task.videoId)
+            return true
+        })
     let retried = 0
     for (const task of failed) {
         task.attempts = 0

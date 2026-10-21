@@ -136,18 +136,55 @@ export function gidPriority(status: string | undefined): number {
 }
 
 /**
- * 同一 videoId 有多个 gid 时该保留谁（源 scan 里的排序，逐项对齐）。
+ * 任务完成度（0~1）：aria2 的 `complete` 视为 100%，其余按字节比例。
  *
- * 顺序：**URL 过期时间最晚** → 状态最活跃 → 队列已在追踪的那个。
+ * 单独包一层而不是直接 `aria2Progress`：`complete` 任务的 `totalLength`
+ * 在某些场景下读不到（外部添加、控制文件丢失），直接算比例会得到 0，
+ * 于是「已完成」在择优里输给一个刚起步的副本。
+ */
+export function aria2Completion(status: Pick<Aria2StatusLike, 'status' | 'totalLength' | 'completedLength'>): number {
+    if (status.status === 'complete') return 1
+    return aria2Progress(status)
+}
+
+/** 已完成字节数（脏值按 0 处理） */
+function completedBytes(status: Pick<Aria2StatusLike, 'completedLength'>): number {
+    const value = Number(status.completedLength)
+    return Number.isFinite(value) && value > 0 ? value : 0
+}
+
+/** 任务的文件落盘路径（判断两条 complete 记录是不是同一个文件） */
+export function aria2FilePath(status: Pick<Aria2StatusLike, 'files'>): string {
+    return status.files?.[0]?.path ?? ''
+}
+
+/**
+ * 同一 videoId 有多个 gid 时该保留谁。
  *
- * 为什么过期时间排第一：重复/重建留下的多个同源任务里，地址快过期那个
- * 随时会 403 失败，留着它当赢家等于主动选一个快要坏掉的连接。
+ * 顺序：**完成度最高 → 已完成字节更多** → URL 过期时间最晚 → 状态最活跃 →
+ * 队列已在追踪的那个。
+ *
+ * ## 为什么完成度排第一（2026-10-22 调整）
+ *
+ * 之前按「URL 过期时间」排第一。但重复任务的成因几乎都是同一视频被投递了两次，
+ * 两个 gid 各下一部分：按过期时间选，很可能留下一个 0% 的新任务，把已经下了
+ * 80% 的那个 `remove` 掉——用户丢掉全部已下字节，还看到一条 “Download aborted.”。
+ * 源实现没有这个问题（它的追踪队列按 videoId 做键，结构上不可能出现两个同源任务）。
+ *
+ * 过期时间的旧理由（别选一个马上 403 的地址）由恢复机制兜底：真 403 时
+ * `tryRecover` 会重新解析并 `changeUri`，因为 `continue=true`，已下字节仍然保留。
  *
  * ⚠️ 这个排序**只在同一「活/终态」层内**使用——见 `planAria2Group`：
- * 跨层用过期时间排会让一条历史 complete（地址恰好还没过期）击败真正在下载的
- * active，把用户的下载停掉。
+ * 跨层排序会让一条历史 complete（完成度 100%）击败真正在下载的 active，
+ * 把用户的重下任务停掉。
  */
 export function compareForKeep(a: Aria2StatusLike, b: Aria2StatusLike, queuedGid?: string): number {
+    const completionA = aria2Completion(a)
+    const completionB = aria2Completion(b)
+    if (completionA !== completionB) return completionA > completionB ? -1 : 1
+    const bytesA = completedBytes(a)
+    const bytesB = completedBytes(b)
+    if (bytesA !== bytesB) return bytesA > bytesB ? -1 : 1
     const expiryA = taskLatestExpiry(a)
     const expiryB = taskLatestExpiry(b)
     if (expiryA !== expiryB) return expiryA > expiryB ? -1 : 1
@@ -167,13 +204,14 @@ export function isLiveAria2Status(status: string): boolean {
 /**
  * 同一个 videoId 的一组 aria2 任务的处置方案。
  *
- * 分三类，**处置方式完全不同**：
+ * 分四类，**处置方式完全不同**：
  *
  * | 类别 | 状态 | 处置 |
  * |---|---|---|
  * | 活跃副本 | active / waiting / paused | `remove` + `removeDownloadResult`（它们真的在抢带宽与文件） |
  * | 僵尸副本 | error / removed | 只 `removeDownloadResult`（清掉我们重建留下的垃圾结果记录） |
- * | 历史记录 | complete | **绝不触碰**（源 Issue #405） |
+ * | 重复完成记录 | complete（同一落盘路径已有一条） | 只 `removeDownloadResult`（同一文件不可能存在两份，纯噪声） |
+ * | 历史记录 | complete（路径各不相同） | **绝不触碰**（源 Issue #405） |
  *
  * ## 为什么历史记录必须单独一类
  *
@@ -200,7 +238,15 @@ export interface Aria2GroupPlan<T extends Aria2StatusLike> {
     liveLosers: T[]
     /** 僵尸副本（error / removed）：只清结果记录 */
     garbageLosers: T[]
-    /** 历史记录（complete）：**绝不清理**，仅列出便于日志 */
+    /**
+     * 重复的完成记录（与保留者指向**同一个落盘路径**）：只清结果。
+     *
+     * 用户要的是「一个视频一个任务」：同一个文件下完两次只会在 aria2 里留下
+     * 两条一模一样的 complete，删掉多余那条不影响磁盘上的文件，也不影响
+     * 「这条视频下过」的事实（保留者还在）。
+     */
+    duplicateHistory: T[]
+    /** 历史记录（complete，路径各不相同）：**绝不清理**，仅列出便于日志 */
     historyLosers: T[]
 }
 
@@ -210,12 +256,28 @@ export function planAria2Group<T extends Aria2StatusLike>(group: readonly T[], q
     const live = group.filter((task) => isLiveAria2Status(task.status))
     const pool = live.length > 0 ? live : [...group]
     const winner = [...pool].sort((a, b) => compareForKeep(a, b, queuedGid))[0]!
-    const plan: Aria2GroupPlan<T> = { winner, liveLosers: [], garbageLosers: [], historyLosers: [] }
+    const plan: Aria2GroupPlan<T> = { winner, liveLosers: [], garbageLosers: [], duplicateHistory: [], historyLosers: [] }
+    // 同一路径只允许保留一条完成记录：多余的那些对应的是同一个磁盘文件
+    const keptCompletePaths = new Set<string>()
+    const winnerPath = winner.status === 'complete' ? aria2FilePath(winner) : ''
+    if (winnerPath !== '') keptCompletePaths.add(winnerPath)
     for (const task of group) {
         if (task.gid === winner.gid) continue
-        if (isLiveAria2Status(task.status)) plan.liveLosers.push(task)
-        else if (task.status === 'complete') plan.historyLosers.push(task)
-        else plan.garbageLosers.push(task)
+        if (isLiveAria2Status(task.status)) {
+            plan.liveLosers.push(task)
+            continue
+        }
+        if (task.status === 'complete') {
+            const path = aria2FilePath(task)
+            if (path !== '' && keptCompletePaths.has(path)) {
+                plan.duplicateHistory.push(task)
+            } else {
+                if (path !== '') keptCompletePaths.add(path)
+                plan.historyLosers.push(task)
+            }
+            continue
+        }
+        plan.garbageLosers.push(task)
     }
     return plan
 }

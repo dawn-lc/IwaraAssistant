@@ -277,22 +277,44 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
 
         for (const [videoId, group] of groups) {
             // 同一 videoId 的多个 gid 怎么处置（判据在 `planAria2Group`，已单测）：
-            // 活副本停止 + 清结果 / 僵尸副本只清结果 / **complete 历史记录绝不触碰**。
-            // 旧实现把三类一律当冗余，`stopRedundantTask` 无条件 `removeDownloadResult`——
-            // 用户每重下一次以前下过的视频，就把自己 aria2 里那条完成历史删掉（源 Issue #405）。
+            // 活副本停止 + 清结果 / 僵尸副本只清结果 / 重复完成记录只清结果 /
+            // **路径不同的 complete 历史绝不触碰**（源 Issue #405：旧实现把三类一律当冗余，
+            // `stopRedundantTask` 无条件 `removeDownloadResult`，用户每重下一次以前下过的
+            // 视频就丢掉一条历史）。保留者按**完成度最高**选，见 `compareForKeep`。
             const queuedTask = findTaskByGids(group.map((task) => task.gid)) ?? getTasks().find((item) => item.videoId === videoId && item.kind === 'aria2')
             const plan = planAria2Group(group, queuedTask?.kindRef)
             if (!plan) continue
             const winner = plan.winner
             for (const loser of plan.liveLosers) {
+                // ⚠️ 先把队列指向赢家，再 remove：`aria2.remove` 会触发 WS
+                // `onDownloadError`（errorCode 1 “Download aborted.”）。如果这时
+                // 任务还指着 loser 的 gid，`handleDownloadError` 会把这条**本来
+                // 正在正常下载**的记录标成 failed——用户看到的就是我们自己的去重
+                // 把下载「弄失败」了。先改 kindRef，事件到达时就找不到 loser 了。
+                if (queuedTask?.kindRef === loser.gid) await patchTask(queuedTask.id, { kindRef: winner.gid })
                 await stopLiveCopy(loser)
                 stopped++
-                if (queuedTask?.kindRef === loser.gid) await patchTask(queuedTask.id, { kindRef: winner.gid })
             }
             for (const loser of plan.garbageLosers) {
+                if (queuedTask?.kindRef === loser.gid) await patchTask(queuedTask.id, { kindRef: winner.gid })
                 await discardGarbageCopy(loser)
                 stopped++
-                if (queuedTask?.kindRef === loser.gid) await patchTask(queuedTask.id, { kindRef: winner.gid })
+            }
+            for (const duplicate of plan.duplicateHistory) {
+                // 同一个落盘路径的重复完成记录：文件只有一份，多余的结果条目是噪声
+                await discardGarbageCopy(duplicate)
+                stopped++
+            }
+            if (!queuedTask && plan.liveLosers.length > 0 && winner.status === 'paused') {
+                // 保留者可能是「下了 90% 但被暂停」的那条（完成度优先），而刚被停掉的
+                // 是 0% 的 active 副本。收编来的任务没人替它 unpause，用户看到的就是
+                // 「去重之后下载停了」。
+                //
+                // ⚠️ 只在 `!queuedTask` 时做：本扩展追踪中的任务由下面的
+                // `tryRecover` 负责（它对 paused 走 changeUri + unpause）。在这里先
+                // unpause 会让那边的 `unpause` 换回 `cannot be unpaused now`，
+                // 被当成换地址失败而降级 rebuild —— 好端端再复制一个任务出来。
+                await aria2API('aria2.unpause', [winner.gid]).catch(() => undefined)
             }
             if (plan.historyLosers.length > 0) {
                 // 历史记录：只记日志，不发任何 RPC

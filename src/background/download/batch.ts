@@ -140,7 +140,12 @@ async function runBatchDownload(rawIds: unknown[], tabId: number | undefined, pa
             const task = await runDownload({ videoId, pageType })
             // 命中去重（另一条路径刚把它下了）→ 不改写统计口径：
             // 否则界面会声称「新建了 N 个任务」，而 aria2 里其实一个都没多。
-            if (task.createdAt !== undefined && task.createdAt < batchStartedAt) {
+            //
+            // 但「失败记录复用」（`reusableFailedTaskFor`）是**本轮真的重试了**：
+            // 它保留旧的 `createdAt`，只看创建时间会被误记成跳过。用 `updatedAt`
+            // 一起判定——命中复用的记录刚被 `syncTask` 刷新过。
+            const touchedThisBatch = (task.updatedAt ?? 0) >= batchStartedAt
+            if (!touchedThisBatch && task.createdAt !== undefined && task.createdAt < batchStartedAt) {
                 skippedLate++
             } else if (task.status === 'skipped') {
                 // 命中第三方网盘链接时返回的是一条 `skipped` **任务**（而不是「没投递」）：
