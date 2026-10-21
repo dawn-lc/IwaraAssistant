@@ -316,9 +316,13 @@ body {
  * 第二列改成 auto 之后不能再写 `width: 100%`：列宽由内容算，而百分比在 intrinsic
  * sizing 里按 auto 处理 → 文本框会退化成默认的 ~180px（RPC 端点 URL 显示不全）。
  * 420 / 120 就是改版前整列 / 数字框的实测宽度，视觉保持一致。
+ *
+ * ⚠️ `password` 必须与 `text` 并列：它不是 `text` 的子集，漏写就退化成浏览器默认的
+ * 169px——RPC 密钥 / Bearer Token / 代理密码会明显比旁边同类的输入框短一截。
  */
 .row-control > select,
-.row-control > input[type='text'] {
+.row-control > input[type='text'],
+.row-control > input[type='password'] {
     width: 420px;
     max-width: 100%;
     min-width: 0;
@@ -348,6 +352,7 @@ body {
 
 .row--stack .row-control > select,
 .row--stack .row-control > input[type='text'],
+.row--stack .row-control > input[type='password'],
 .row--stack .row-control > input[type='number'] {
     width: 100%;
 }
@@ -1247,6 +1252,7 @@ table.tasks tbody tr.status-skipped td:first-child {
     }
 
     .row-control > input[type='text'],
+    .row-control > input[type='password'],
     .row-control > input[type='number'],
     .row-control > select {
         width: 100%;

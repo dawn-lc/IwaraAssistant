@@ -4,6 +4,7 @@
  */
 import { among, isEmpty, isNullOrUndefined } from '../../../shared/strings'
 import { analyzePath } from '../../../shared/analyzePath'
+import { aria2AuthParams } from '../../../shared/aria2Rpc'
 import { getConfig } from '../../storage/configStore'
 import { isWsOpen, serializeRpc, wsCall, Aria2RpcError } from './ws'
 
@@ -57,23 +58,24 @@ export const EXTRACT_VIDEO_ID_FIELDS = ['gid', 'status', 'files', 'bittorrent', 
  * 却多一次真实请求。直接按 HTTP 路径的同构形态（`{error}`）返回，让两条传输对业务错误表现一致。
  */
 export async function aria2API<T = unknown>(method: string, params: unknown[]): Promise<Aria2RpcResult<T>> {
+    const config = getConfig()
+    const authParams = aria2AuthParams(config.aria2Token, params)
     if (isWsOpen()) {
         try {
-            const { result } = await wsCall<{ result: T }>(method, params)
+            const { result } = await wsCall<{ result: T }>(method, authParams)
             return { id: 'ws', jsonrpc: '2.0', result }
         } catch (error) {
             if (error instanceof Aria2RpcError) return { id: 'ws', jsonrpc: '2.0', error: error.rpc }
             console.warn(`[iwara-assistant] aria2 ws 调用降级 HTTP (${method}):`, error instanceof Error ? error.message : error)
         }
     }
-    const config = getConfig()
     const response = await fetch(config.aria2Path, {
         headers: {
             accept: 'application/json',
             'content-type': 'application/json'
         },
         // 与 WS 路径共用 `serializeRpc`：aria2 的 bool 选项在两条路径上必须形态一致
-        body: serializeRpc({ jsonrpc: '2.0', method, id: crypto.randomUUID(), params: [`token:${config.aria2Token}`, ...params] }),
+        body: serializeRpc({ jsonrpc: '2.0', method, id: crypto.randomUUID(), params: authParams }),
         method: 'POST',
         // 指令失败时顺便踢一条重连，缩短下次 WS 可用窗口
         signal: AbortSignal.timeout(15_000)
