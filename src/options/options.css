@@ -195,12 +195,12 @@ body {
  * 用在这里会把按钮压到标题下方一行；卡片头里的按钮应当与标题顶部对齐，
  * 而且位置不随 note 变长而漂移。
  */
-.section-head > .action-row {
+.section-head>.action-row {
     flex: none;
     margin-top: 0;
 }
 
-.section-head > div {
+.section-head>div {
     min-width: 0;
 }
 
@@ -320,15 +320,15 @@ body {
  * ⚠️ `password` 必须与 `text` 并列：它不是 `text` 的子集，漏写就退化成浏览器默认的
  * 169px——RPC 密钥 / Bearer Token / 代理密码会明显比旁边同类的输入框短一截。
  */
-.row-control > select,
-.row-control > input[type='text'],
-.row-control > input[type='password'] {
+.row-control>select,
+.row-control>input[type='text'],
+.row-control>input[type='password'] {
     width: 420px;
     max-width: 100%;
     min-width: 0;
 }
 
-.row-control > input[type='number'] {
+.row-control>input[type='number'] {
     width: 120px;
     max-width: 100%;
     min-width: 0;
@@ -350,10 +350,10 @@ body {
     max-width: none;
 }
 
-.row--stack .row-control > select,
-.row--stack .row-control > input[type='text'],
-.row--stack .row-control > input[type='password'],
-.row--stack .row-control > input[type='number'] {
+.row--stack .row-control>select,
+.row--stack .row-control>input[type='text'],
+.row--stack .row-control>input[type='password'],
+.row--stack .row-control>input[type='number'] {
     width: 100%;
 }
 
@@ -417,7 +417,7 @@ select {
     user-select: none;
 }
 
-.toggle > input[type='checkbox'] {
+.toggle>input[type='checkbox'] {
     appearance: none;
     flex: none;
     width: 38px;
@@ -433,7 +433,7 @@ select {
         border-color 0.15s ease;
 }
 
-.toggle > input[type='checkbox']::after {
+.toggle>input[type='checkbox']::after {
     content: '';
     position: absolute;
     top: 2px;
@@ -447,27 +447,27 @@ select {
         background-color 0.15s ease;
 }
 
-.toggle > input[type='checkbox']:hover {
+.toggle>input[type='checkbox']:hover {
     border-color: var(--accent);
 }
 
-.toggle > input[type='checkbox']:checked {
+.toggle>input[type='checkbox']:checked {
     background: var(--accent);
     border-color: var(--accent);
 }
 
-.toggle > input[type='checkbox']:checked::after {
+.toggle>input[type='checkbox']:checked::after {
     transform: translateX(16px);
     background: #fff;
 }
 
-.toggle > input[type='checkbox']:focus-visible {
+.toggle>input[type='checkbox']:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
 
 /* 空 label 时不占位 */
-.toggle > span:empty {
+.toggle>span:empty {
     display: none;
 }
 
@@ -813,8 +813,8 @@ code.preview {
 }
 
 /* 单元格内控件与按钮同高（按钮已与 input 同高，这里只保证竖向居中在同一基线） */
-.data-table td > input,
-.data-table td > button {
+.data-table td>input,
+.data-table td>button {
     vertical-align: middle;
 }
 
@@ -1032,7 +1032,7 @@ table.tasks td:last-child {
     text-align: right;
 }
 
-table.tasks td:last-child button + button {
+table.tasks td:last-child button+button {
     margin-left: 6px;
 }
 
@@ -1251,10 +1251,10 @@ table.tasks tbody tr.status-skipped td:first-child {
         max-width: none;
     }
 
-    .row-control > input[type='text'],
-    .row-control > input[type='password'],
-    .row-control > input[type='number'],
-    .row-control > select {
+    .row-control>input[type='text'],
+    .row-control>input[type='password'],
+    .row-control>input[type='number'],
+    .row-control>select {
         width: 100%;
         max-width: none;
     }
