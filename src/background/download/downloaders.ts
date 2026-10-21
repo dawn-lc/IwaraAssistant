@@ -77,7 +77,6 @@ export function aria2AddUriParams(localPath: AnalyzedPath, cookie: string): Reco
     const config = getConfig()
     return prune({
         'force-save': true,
-        'allow-overwrite': true,
         'all-proxy': config.downloadProxy,
         'all-proxy-passwd': config.downloadProxy !== '' ? config.downloadProxyPassword : undefined,
         'all-proxy-user': config.downloadProxy !== '' ? config.downloadProxyUsername : undefined,
