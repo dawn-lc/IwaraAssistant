@@ -128,13 +128,27 @@ async function runBatchDownload(rawIds: unknown[], tabId: number | undefined, pa
     const results: BatchDownloadResult['results'] = []
     /** 命中第三方网盘链接而刻意不下载的个数（`checkDownloadLink` 的源设计） */
     let skippedByLink = 0
+    /** 投递时才发现已被别的路径下载过（`runDownload` 的第二道队列去重） */
+    let skippedLate = 0
+    /**
+     * 本轮开始时间：用来区分「新任务」与「`runDownload` 返回的既有任务」。
+     * 队列里的任务一定有更早的 `createdAt`，本轮新建的则不会早于这个时刻。
+     */
+    const batchStartedAt = Date.now()
     for (const [index, videoId] of ids.entries()) {
         try {
             const task = await runDownload({ videoId, pageType })
-            // 命中第三方网盘链接时返回的是一条 `skipped` **任务**（而不是「没投递」）：
-            // 它已经进队列了，用户在任务列表里能看到并处理，所以不计入「新建下载任务」。
-            if (task.status === 'skipped') skippedByLink++
-            else results.push({ videoId, taskId: task.id, status: task.status })
+            // 命中去重（另一条路径刚把它下了）→ 不改写统计口径：
+            // 否则界面会声称「新建了 N 个任务」，而 aria2 里其实一个都没多。
+            if (task.createdAt !== undefined && task.createdAt < batchStartedAt) {
+                skippedLate++
+            } else if (task.status === 'skipped') {
+                // 命中第三方网盘链接时返回的是一条 `skipped` **任务**（而不是「没投递」）：
+                // 它已经进队列了，用户在任务列表里能看到并处理，所以不计入「新建下载任务」。
+                skippedByLink++
+            } else {
+                results.push({ videoId, taskId: task.id, status: task.status })
+            }
         } catch (error) {
             // 单条投递抛错（DB 写入失败、路径模板非法…）不能中断整批：
             // 后面还在等的视频同样有下载权利，而源项目的循环也不会因单条异常停下。
@@ -155,15 +169,17 @@ async function runBatchDownload(rawIds: unknown[], tabId: number | undefined, pa
     const failed = results.filter((item) => item.status === 'failed').length
     // 汇总文案要如实区分三件事：真投递了几个、去重跳过了几个、因网盘链接刻意没下几个。
     // 把后两者混进「已投递」会让用户以为 aria2 里有他没见过的任务。
+    // 「投递时才发现已下载」与「提前去重跳过」对用户是同一件事，合并计数。
+    const skippedTotal = skipped + skippedLate
     let summary: string
-    if (results.length === 0 && skippedByLink === 0 && skipped > 0) {
+    if (results.length === 0 && skippedByLink === 0 && skippedTotal > 0) {
         // 全被跳过时说「共 0 个」等于什么都没说，用户会以为批量失败了
-        summary = i18n.t('notify.batchAllSkipped', { n: skipped })
-    } else if (results.length === 0 && skipped === 0 && skippedByLink > 0) {
+        summary = i18n.t('notify.batchAllSkipped', { n: skippedTotal })
+    } else if (results.length === 0 && skippedTotal === 0 && skippedByLink > 0) {
         summary = i18n.t('notify.batchAllSkippedLink', { n: skippedByLink })
     } else {
-        summary = i18n.t('notify.batchQueued', { total: results.length, failed }) + (skipped > 0 ? i18n.t('notify.batchQueuedSkipped', { n: skipped }) : '') + (skippedByLink > 0 ? i18n.t('notify.batchSkippedLink', { n: skippedByLink }) : '')
+        summary = i18n.t('notify.batchQueued', { total: results.length, failed }) + (skippedTotal > 0 ? i18n.t('notify.batchQueuedSkipped', { n: skippedTotal }) : '') + (skippedByLink > 0 ? i18n.t('notify.batchSkippedLink', { n: skippedByLink }) : '')
     }
     notifyInfo('batch-queued', summary, { kind: 'options', tab: 'tasks' })
-    return { total: results.length, failed, skipped, skippedByLink, results }
+    return { total: results.length, failed, skipped: skippedTotal, skippedByLink, results }
 }

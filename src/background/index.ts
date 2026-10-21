@@ -24,7 +24,7 @@ import { siteUrl } from '../shared/site'
 import { getLanguage, watchLanguage, i18n } from '../shared/i18n'
 import { db, countStores, readStorePage } from './storage/db'
 import { configReady, getConfig } from './storage/configStore'
-import { loadQueue, findTask, notifyTask, syncTask, updateBadge } from './storage/queue'
+import { loadQueue, findTask, notifyTask, syncTask, updateBadge, queueReady, collapseDuplicateLiveTasks } from './storage/queue'
 import { pageReadySnapshot } from './storage/pageReady'
 import { importLegacyDb, recordLegacyProgress, recordLegacyScan, storeLegacyBatch } from './storage/legacyImport'
 import { clearFinishedTasks, removeTaskById, retryAllFailed, retryTaskById, syncDownloadTasks } from './download/queueActions'
@@ -113,13 +113,19 @@ browser.notifications.onClicked.addListener((notificationId) => {
 // ── 启动恢复（挂起重入 / 浏览器重启 onStartup）────────────────────────
 
 async function boot(): Promise<void> {
-    // 先等配置落盘读完：getConfig() 在此之前返回的是 DEFAULT_CONFIG 副本，
+    // 队列最先读回：消息路由要等 `queueReady()`（见下方 onMessage），
+    // 排在越前面，SW 冷启动时「消息已到、队列还没读回」的窗口越小。
+    // 它不依赖配置，所以放在 configReady 之前是安全的。
+    await loadQueue()
+    // 再等配置落盘读完：getConfig() 在此之前返回的是 DEFAULT_CONFIG 副本，
     // 用户把「关注扩展作者」关掉后，这里若不等待就会按默认值（true）执行一次
     await configReady
     // 语言同理：右键菜单标题在 setupContextMenus() 里就固化了，必须先拿到用户选择
     await watchLanguage()
-    await loadQueue()
     updateBadge()
+    // 队列内去重：同一视频的多条活跃记录是真正的自相矛盾（两行「下载中」、
+    // 浏览器通道还会按记录数占并发槽位）。只动 running/queued，历史记录不碰。
+    await collapseDuplicateLiveTasks()
     // 上一代进程（SW 回收 / 浏览器崩溃）留下的 `running` 其实是僵尸：下载器早没了，
     // 但 `running` 不可移除、挡住重下。先把本地的账算清，再交给 aria2 扫描处理远端。
     await reconcileStaleRunningTasks()
@@ -190,6 +196,13 @@ void boot()
 // ── 消息路由（hub：sendResponse 兼容模式）────────────────────────────
 // 本 switch 只做派发：每个分支一行，实现体都在各领域目录里。
 onMessage<Req>(async (req, sender) => {
+    // ⚠️ 先等配置与队列就绪，再处理任何消息。
+    // 文件末尾的 `void boot()` 是异步的，而消息监听是同步注册的——SW 冷启动时
+    // 一条消息可能先于 `loadQueue()` 到达：那时 `getTasks()` 返回空数组，
+    // 队列去重会静默失效（已下过的视频照样重投），`addTask` 还会把磁盘上的
+    // 历史队列整个覆盖掉。`configReady` 同理：在此之前 `getConfig()` 是默认值。
+    await configReady
+    await queueReady()
     switch (req.type) {
         case 'INGEST_VIDEO_INFO':
             return ingestPageVideos(req.payload)
@@ -216,7 +229,8 @@ onMessage<Req>(async (req, sender) => {
             // 任务列表里 `skipped` 行的「强制下载」：显式绕开「简介/评论里有第三方网盘链接」那道门。
             // 源项目不需要这条（用户在视频详情页点下载时页型是 Video，门自己就不生效），
             // 扩展的任务列表不在页面上，只能显式声明意图。
-            return runDownload({ videoId: req.payload.videoId, pageType: req.payload.pageType, skipLinkCheck: true })
+            // 同时绕开队列去重：用户点的是「强制」，自动判据不该有否决权。
+            return runDownload({ videoId: req.payload.videoId, pageType: req.payload.pageType, skipLinkCheck: true, skipDedupe: true })
         case 'APPROVE_FRIEND_REQUESTS':
             return startFriendApproval()
         case 'GET_FRIEND_APPROVE_STATE':

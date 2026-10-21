@@ -14,6 +14,7 @@ import { getConfig } from '../storage/configStore'
 import { i18n } from '../../shared/i18n'
 import { siteUrl } from '../../shared/site'
 import { addTask, getTasks, notifyTask, removeSkippedFor, syncTask } from '../storage/queue'
+import { blockingTaskFor } from '../../shared/downloadDedupe'
 import type { QueueTask } from '../../shared/task'
 import { channelTracksResult } from '../../shared/task'
 import type { FullVideoInfo } from '../../shared/videoInfo'
@@ -69,6 +70,13 @@ interface DispatchPayload {
      * 所以需要一条显式标志，而不是去伪造 `pageType: 'video'`（那等于让调用方撒谎）。
      */
     skipLinkCheck?: boolean
+    /**
+     * 绕过队列去重（`FORCE_DOWNLOAD` 专用）。
+     *
+     * 任务列表里 `skipped` 行的「强制下载」是用户明确的「我就是要下」；
+     * 自动判据在这里不该有否决权（同一视频可能同时存在一条历史 `complete` 记录）。
+     */
+    skipDedupe?: boolean
 }
 
 /** 主动放弃下载的原因——全部是源项目「命中即不下」的刻意设计 */
@@ -212,6 +220,23 @@ function hasDownloadLink(video: FullVideoInfo, pageType: PageType | undefined): 
 async function runDownloadInner(payload: DispatchPayload): Promise<DispatchOutcome> {
     const kind = payload.kind ?? kindFromDownloadType()
     const ctx: ChannelContext = { cookie: payload.cookie, overwrite: payload.overwrite }
+
+    // 单条入口的队列去重（批量在 `batch.ts` 里已做过同一套判定，这里再判一次是无害的）。
+    //
+    // 放在**解析之前**：一次解析要打 1 次详情 + 1 次文件源 + N 次评论分页，
+    // 命中重复时一次都不该发。此前单条入口完全没有这一层，只有 `pushingVideoIds`
+    // 那个「同一时刻正在投递」的闸门——它拦不住「投递完成后再点一次」，
+    // 于是同一个视频点两次就在 aria2 里堆两份。
+    //
+    // `skipDedupe` 只给 `FORCE_DOWNLOAD` 用（任务列表里那行 `skipped` 的显式出口：
+    // 用户明确表示「我就是要下」，不能被任何自动判据挡住）。
+    if (payload.skipDedupe !== true) {
+        const blocking = blockingTaskFor(payload.videoId, getTasks())
+        if (blocking) {
+            console.info(`[iwara-assistant] ${payload.videoId} 已在队列中（${blocking.status}），跳过重复投递`)
+            return blocking
+        }
+    }
 
     // full 解析（payload 已带 full 信息则直用；原 downloadFlow 同构）
     let video: FullVideoInfo

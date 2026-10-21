@@ -443,6 +443,7 @@
         "aria2AdoptedFailure": "Failed task adopted by the aria2 scan",
         "aria2Recovered": "The download link for video [{id}] had expired; it was re-resolved and the download resumed",
         "aria2RecoverFailed": "Video [{id}] could not be recovered (no fresh link after repeated attempts); retry it manually from the tasks page",
+        "aria2TaskMissing": "Video [{id}] no longer exists in aria2 (it may have been cleared, or aria2 was restarted). Check the file, then retry or remove the task",
         "mediaNoMapping": "MediaCenter has no records matching the local video library (neither file hash nor title matched), so there was nothing to sync",
         "notLoggedIn": "Not signed in: sign in on iwara first",
         "noConditions": "No approval conditions selected",

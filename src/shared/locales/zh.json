@@ -443,6 +443,7 @@
         "aria2AdoptedFailure": "aria2 扫描收编的失败任务",
         "aria2Recovered": "视频 [{id}] 的下载链接已失效，已重新解析并恢复下载",
         "aria2RecoverFailed": "视频 [{id}] 恢复失败（多次重试后仍无法重新获取地址），可在任务页手动重试",
+        "aria2TaskMissing": "视频 [{id}] 在 aria2 中已找不到（可能已被清理或 aria2 重启过），请确认文件后重试或移除",
         "mediaNoMapping": "MediaCenter 里没有能对应本地视频库的记录（按文件哈希与标题都没匹配到），本次没有可同步的条目",
         "notLoggedIn": "未登录：请先在 iwara 完成登录",
         "noConditions": "未选择任何审批条件",

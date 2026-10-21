@@ -6,9 +6,10 @@
  * 所以每条规则都单钉用例，尤其是「98% 豁免」与「速度 0 不豁免」这两个反直觉分支。
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, SLOW_SPEED_THRESHOLD, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, parseScanMemory, recoverExhausted, shouldRestartForSlowSpeed, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, SLOW_SPEED_THRESHOLD, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isLiveAria2Status, isAria2GidMissingError, parseScanMemory, planAria2Group, recoverExhausted, shouldRestartForSlowSpeed, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 
 function active(completed: number, total: number, speed: number) {
@@ -150,4 +151,133 @@ test('changeUri 参数：position 必须显式给 0（否则新地址只追加�
     const params = buildChangeUriParams('gid1', ['old'], ['new'])
     assert.equal(params.length, 5, '缺 position 时 aria2 会把新 URI 追加到末尾')
     assert.equal(params[4], 0)
+})
+
+test('gid 缺失错误：识别 aria2 的真实报文', () => {
+    assert.equal(isAria2GidMissingError({ code: 1, message: 'GID 4cb40e84a20159b3 is not found' }), true)
+    assert.equal(isAria2GidMissingError({ code: 1, message: 'gid abc is not found' }), true)
+})
+
+test('gid 缺失错误：不把其它错误当成「任务没了」', () => {
+    assert.equal(isAria2GidMissingError(undefined), false)
+    assert.equal(isAria2GidMissingError(null), false)
+    assert.equal(isAria2GidMissingError('GID x is not found'), false, '裸字符串不是 RPC 错误对象')
+    assert.equal(isAria2GidMissingError({ code: 1, message: 'Unauthorized' }), false)
+    assert.equal(isAria2GidMissingError({ code: 1, message: 'GID#abc cannot be unpaused now' }), false)
+})
+
+// ── 同视频多条任务的收敛（`planAria2Group`）─────────────────────────
+// 这一组是「删谁的下载」的判据。判错的两个方向都很糟：
+// 删了活跃任务 → 用户正在下的大文件消失；该删没删 → 同一文件在 aria2 里堆 N 份。
+
+test('活状态判定：active / waiting / paused 算活，终态不算', () => {
+    for (const status of ['active', 'waiting', 'paused']) assert.equal(isLiveAria2Status(status), true, status)
+    for (const status of ['complete', 'error', 'removed']) assert.equal(isLiveAria2Status(status), false, status)
+})
+
+test('同视频收敛：正在下的活任务压过「恰好没过期」的完成历史（不能为了腾地方删掉用户的活下载）', () => {
+    // 历史记录的 URL 过期更晚 —— 这正是 `compareForKeep` 会选错的方向
+    const live = { gid: 'g-live', status: 'active' as const, files: [{ uris: [{ uri: 'https://e.com/a?expires=100' }] }] }
+    const history = { gid: 'g-done', status: 'complete' as const, files: [{ uris: [{ uri: 'https://e.com/b?expires=999' }] }] }
+    const plan = planAria2Group([history, live])
+    assert.equal(plan?.winner.gid, 'g-live')
+    assert.deepEqual(
+        plan?.liveLosers.map((task) => task.gid),
+        []
+    )
+    assert.deepEqual(
+        plan?.historyLosers.map((task) => task.gid),
+        ['g-done'],
+        '完成历史必须归入 historyLosers（只记日志、不发 RPC）'
+    )
+})
+
+test('同视频收敛：完成历史永远不会被列为要删除的对象', () => {
+    const live = { gid: 'g1', status: 'active' as const }
+    const done = { gid: 'g2', status: 'complete' as const }
+    const plan = planAria2Group([live, done])!
+    const removable = [...plan.liveLosers, ...plan.garbageLosers].map((task) => task.gid)
+    assert.ok(!removable.includes('g2'), '删掉完成历史 = 用户重下同名文件时找不到已下过的记录')
+})
+
+test('同视频收敛：多条活任务只留一条，其余归 liveLosers', () => {
+    const a = { gid: 'g-a', status: 'active' as const }
+    const b = { gid: 'g-b', status: 'waiting' as const }
+    const c = { gid: 'g-c', status: 'paused' as const }
+    const plan = planAria2Group([a, b, c])!
+    assert.equal(plan.winner.gid, 'g-a')
+    assert.deepEqual(plan.liveLosers.map((task) => task.gid).sort(), ['g-b', 'g-c'])
+})
+
+test('同视频收敛：error / removed 归 garbageLosers（只清记录，不发 remove）', () => {
+    const live = { gid: 'g1', status: 'active' as const }
+    const err = { gid: 'g2', status: 'error' as const }
+    const removed = { gid: 'g3', status: 'removed' as const }
+    const plan = planAria2Group([live, err, removed])!
+    assert.equal(plan.winner.gid, 'g1')
+    assert.deepEqual(plan.garbageLosers.map((task) => task.gid).sort(), ['g2', 'g3'])
+    assert.deepEqual(plan.liveLosers, [])
+})
+
+test('同视频收敛：全是活任务时优先保留队列正在跟踪的 gid', () => {
+    const a = { gid: 'g-a', status: 'active' as const }
+    const b = { gid: 'g-b', status: 'active' as const }
+    assert.equal(planAria2Group([a, b], 'g-b')?.winner.gid, 'g-b')
+})
+
+test('同视频收敛：空组返回 undefined（调用方据此跳过，不要崩）', () => {
+    assert.equal(planAria2Group([]), undefined)
+})
+
+test('同视频收敛：只有一条任务时它自己就是 winner，没有任何 loser', () => {
+    const plan = planAria2Group([{ gid: 'g1', status: 'complete' as const }])!
+    assert.equal(plan.winner.gid, 'g1')
+    assert.deepEqual([plan.liveLosers, plan.garbageLosers, plan.historyLosers], [[], [], []])
+})
+
+// ── 源码级接线守卫：三类 loser 必须走三条不同的处置路径 ──────────────
+// 纯函数只负责「分类」；「分类之后发什么 RPC」在 tracker 里。
+// 上一版正是在这里出的事：三类 loser 共用 `stopRedundantTask`，而它无条件
+// `removeDownloadResult` → 用户每重下一次以前下过的视频，就删掉一条完成历史
+// （源项目 Issue #405 的同一个坑，注释写着、实现没守住）。这种错不会有类型错误。
+
+function trackerBody(name: string): string {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    const start = source.indexOf(`async function ${name}(`)
+    assert.ok(start > 0, `找不到 ${name}`)
+    // 用下一个顶层 async function 作为边界（本文件的顶层函数都以此开头）
+    const nextFunction = source.indexOf('\nasync function ', start + 1)
+    const nextExport = source.indexOf('\nexport ', start + 1)
+    const candidates = [nextFunction, nextExport].filter((index) => index > start)
+    const end = candidates.length > 0 ? Math.min(...candidates) : source.length
+    return source.slice(start, end)
+}
+
+test('接线：liveLosers 的处置既 remove 也清结果（只 remove 会留下 stopped 记录，下轮又被收编）', () => {
+    const body = trackerBody('stopLiveCopy')
+    assert.match(body, /aria2\.remove'/, '必须真的停掉在跑的那份')
+    assert.match(body, /aria2\.removeDownloadResult/, '只 remove 会留下记录，下轮扫描把它当另一个同源任务再收编 → 死循环')
+})
+
+test('接线：garbageLosers 的处置只清结果，不 remove（error/removed 已经不在活动队列里）', () => {
+    const body = trackerBody('discardGarbageCopy')
+    assert.match(body, /aria2\.removeDownloadResult/)
+    assert.doesNotMatch(body, /aria2\.remove'/, '对已死任务发 remove 只会换回一个错误')
+})
+
+test('接线：完成历史（historyLosers）不得触发任何 RPC', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    const start = source.indexOf('plan.historyLosers.length > 0')
+    assert.ok(start > 0, 'historyLosers 分支应存在')
+    const block = source.slice(start, source.indexOf('\n            }', start))
+    assert.doesNotMatch(block, /aria2API\(/, '删掉完成历史 = 用户重下以前下过的视频时，aria2 里那条记录被静默抹掉（源 Issue #405）')
+    assert.doesNotMatch(block, /stopLiveCopy|discardGarbageCopy/, '历史记录不该进任何清理路径')
+})
+
+test('接线：扫描必须用 planAria2Group 分类，而不是自己再判一遍状态', () => {
+    const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    assert.match(source, /const plan = planAria2Group\(group, queuedTask\?\.kindRef\)/)
+    // 只认「定义/调用」，注释里提到旧名字是正常的（那里正是在记载这个坑）
+    assert.doesNotMatch(source, /async function stopRedundantTask/, '旧的「三类一起清」入口不该回来')
+    assert.doesNotMatch(source, /await stopRedundantTask\(/, '旧的「三类一起清」入口不该回来')
 })

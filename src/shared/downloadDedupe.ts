@@ -40,17 +40,7 @@ export interface QueueDedupeResult {
  * 结果只有对方知道；拦下来等于替外部下载器宣布成功。
  */
 export function dedupeAgainstQueue(requested: string[], tasks: readonly QueueTask[]): QueueDedupeResult {
-    const latest = new Map<string, QueueTask>()
-    for (const task of tasks) {
-        const previous = latest.get(task.videoId)
-        if (!previous) {
-            latest.set(task.videoId, task)
-            continue
-        }
-        // 没有时间戳的旧记录按「更早」处理，不会盖掉带时间戳的新记录
-        if ((task.updatedAt ?? task.createdAt ?? 0) >= (previous.updatedAt ?? previous.createdAt ?? 0)) latest.set(task.videoId, task)
-    }
-
+    const latest = latestTaskByVideo(tasks)
     const ids: string[] = []
     const skipped: string[] = []
     for (const id of requested) {
@@ -60,6 +50,37 @@ export function dedupeAgainstQueue(requested: string[], tasks: readonly QueueTas
         else ids.push(id)
     }
     return { ids, skipped }
+}
+
+/**
+ * 同一 videoId 的**最新**一条队列记录（按 `updatedAt ?? createdAt`）。
+ *
+ * 单条下载与批量下载必须共用这一份语义：两处各写一遍，迟早会在
+ * 「failed 之后重试成功」「没有任何时间戳的旧记录」这类边界上分叉。
+ */
+function latestTaskByVideo(tasks: readonly QueueTask[]): Map<string, QueueTask> {
+    const latest = new Map<string, QueueTask>()
+    for (const task of tasks) {
+        const previous = latest.get(task.videoId)
+        // 没有时间戳的旧记录按「更早」处理，不会盖掉带时间戳的新记录
+        if (!previous || (task.updatedAt ?? task.createdAt ?? 0) >= (previous.updatedAt ?? previous.createdAt ?? 0)) latest.set(task.videoId, task)
+    }
+    return latest
+}
+
+/**
+ * 单条下载用的去重判据：队列里是否已有「下过 / 正在下」的记录。
+ *
+ * 批量下载有 `dedupeAgainstQueue`，但**单条入口（页内「下载此视频」、右键菜单、
+ * `DOWNLOAD`）此前完全不去重**——只有一层进程内并发闸门（`pushingVideoIds`），
+ * 拦不住「投递完成后再点一次」。同一个视频点两次就在 aria2 里堆两份。
+ *
+ * 返回那条记录（而不是 boolean）是为了让调用方直接把它当作本次结果返回：
+ * 语义是「已经在队列里了，就是这一条」，用户不会看到一个新建的空任务。
+ */
+export function blockingTaskFor(videoId: string, tasks: readonly QueueTask[]): QueueTask | undefined {
+    const task = latestTaskByVideo(tasks).get(videoId)
+    return task && blocksRedownload(task.status) ? task : undefined
 }
 
 /**
@@ -99,4 +120,80 @@ export function dedupeAgainstAria2(requested: string[], existing: ReadonlySet<st
         else ids.push(id)
     }
     return { ids, skipped }
+}
+
+// ── 队列内去重：同一视频多条「活跃」记录 ────────────────────────────────
+//
+// 上面两条管的是「要不要投递」；这一条管的是「队列里已经有的重复记录」。
+//
+// 源项目的追踪队列是按 videoId 做键的字典（`aria2TrackQueue.set(videoId, …)`），
+// 所以它在结构上**不可能**出现同一视频两条活跃记录。本扩展用数组 + 每次投递新建
+// 一条记录，历史上（去重修好之前）就会攒下重复；`FORCE_DOWNLOAD` 也会刻意再建一条。
+//
+// 两条活跃记录是真正的自相矛盾：界面上同一个视频显示两行「下载中」，
+// 浏览器通道还会按记录数占并发槽位（同一文件被并行下载两次）。
+
+/** 队列内同视频活跃记录的收敛结果 */
+export interface QueueLiveDedupeResult {
+    /** 每个有重复的 videoId 保留谁 */
+    keep: QueueTask[]
+    /** 应当丢弃的重复记录 */
+    drop: QueueTask[]
+    /**
+     * 保留者缺失、但从被丢弃者那里继承来的 `kindRef`。
+     *
+     * 例：一条 `queued`（投递中、还没拿到 gid）与一条 `running`（已有 gid）撞车时，
+     * 若按时间戳留了 `queued` 那条，就必须把 gid 接过来——否则追踪器再也认不出它。
+     */
+    inheritKindRef: Array<{ taskId: string; kindRef: string }>
+}
+
+/** 这两条记录是否属于同一份「正在进行的活」——只有它们之间才需要收敛 */
+function isLiveStatus(status: QueueTask['status']): boolean {
+    return status === 'running' || status === 'queued'
+}
+
+/**
+ * 找出队列里同一 videoId 的多条活跃记录，决定保留哪条。
+ *
+ * 保留优先级：
+ * 1. `kindRef` 命中 `liveGids`（调用方从 aria2 `tellActive` 取）——那条才是真正在下的；
+ * 2. 有 `kindRef` 的（已绑定后端对象，追踪器认得出）；
+ * 3. 更新时间更新的；
+ * 4. 列表里靠前的（稳定，避免同一份数据每次算出不同结果）。
+ *
+ * **只动 `running` / `queued`**：`complete` 是历史、`failed` 要复用、`skipped` 是待办、
+ * `handed-off` 是已交付——它们之间并存是合法的（例如一条历史完成记录 + 一条新待办）。
+ */
+export function planQueueLiveDuplicates(tasks: readonly QueueTask[], liveGids?: ReadonlySet<string>): QueueLiveDedupeResult {
+    const groups = new Map<string, QueueTask[]>()
+    for (const task of tasks) {
+        if (!isLiveStatus(task.status)) continue
+        const group = groups.get(task.videoId) ?? []
+        group.push(task)
+        groups.set(task.videoId, group)
+    }
+
+    const result: QueueLiveDedupeResult = { keep: [], drop: [], inheritKindRef: [] }
+    for (const group of groups.values()) {
+        if (group.length <= 1) continue
+        const ranked = [...group].sort((a, b) => {
+            const aLive = a.kindRef !== undefined && liveGids?.has(a.kindRef) === true
+            const bLive = b.kindRef !== undefined && liveGids?.has(b.kindRef) === true
+            if (aLive !== bLive) return aLive ? -1 : 1
+            const aHas = a.kindRef !== undefined && a.kindRef !== ''
+            const bHas = b.kindRef !== undefined && b.kindRef !== ''
+            if (aHas !== bHas) return aHas ? -1 : 1
+            return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0)
+        })
+        const keeper = ranked[0]!
+        result.keep.push(keeper)
+        for (const extra of ranked.slice(1)) {
+            result.drop.push(extra)
+            if ((keeper.kindRef === undefined || keeper.kindRef === '') && extra.kindRef !== undefined && extra.kindRef !== '') {
+                result.inheritKindRef.push({ taskId: keeper.id, kindRef: extra.kindRef })
+            }
+        }
+    }
+    return result
 }

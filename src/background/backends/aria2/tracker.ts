@@ -28,9 +28,9 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { emptyScanMemory, parseScanMemory, compareForKeep, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
+import { emptyScanMemory, parseScanMemory, planAria2Group, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
-import { addTask, findTask, getTasks, patchTask, notifyTask, syncTask } from '../../storage/queue'
+import { addTask, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
@@ -201,15 +201,32 @@ function handleDownloadStart(gid: string): void {
 
 // ── 扫描对账（兜底）：tellActive + tellStopped → 补入队/清冗余 ─────────
 
-async function stopRedundantTask(task: Aria2Status): Promise<void> {
-    // 原 removeRedundantAria2Task：活跃任务先停止，再清结果记录
-    if (task.status === 'active' || task.status === 'waiting' || task.status === 'paused') {
-        try {
-            await aria2API('aria2.remove', [task.gid])
-        } catch {
-            // 可能已被移除
-        }
+/**
+ * 停止一个**活跃**副本（它真的在抢带宽、抢同一个输出文件）。
+ *
+ * 先 `remove` 再 `removeDownloadResult`：只 remove 会留下 stopped 记录，
+ * 下轮扫描会把它当「另一个同源任务」重新收编（死循环）。
+ */
+async function stopLiveCopy(task: Aria2Status): Promise<void> {
+    try {
+        await aria2API('aria2.remove', [task.gid])
+    } catch {
+        // 可能已被移除
     }
+    try {
+        await aria2API('aria2.removeDownloadResult', [task.gid])
+    } catch {
+        // 结果条目可能已被清
+    }
+}
+
+/**
+ * 清理一个**僵尸**副本（`error` / `removed`）的结果记录。
+ *
+ * 只清结果、不 remove：这两种状态已经不在活动队列里，没有东西可停。
+ * 清掉的目的是避免下轮扫描把我们自己重建留下的错误记录反复拾回来。
+ */
+async function discardGarbageCopy(task: Aria2Status): Promise<void> {
     try {
         await aria2API('aria2.removeDownloadResult', [task.gid])
     } catch {
@@ -218,16 +235,23 @@ async function stopRedundantTask(task: Aria2Status): Promise<void> {
 }
 
 /** 扫描 aria2 现有任务对账（原 scanAria2TasksAndEnqueue 精简移植） */
-export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; stopped: number; rejected: number }> {
+export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; stopped: number; rejected: number; lost: number }> {
     let adopted = 0
     let stopped = 0
     let rejected = 0
-    if (!isAria2Configured()) return { adopted, stopped, rejected }
+    let lost = 0
+    if (!isAria2Configured()) return { adopted, stopped, rejected, lost }
     // 计数必须跨轮累计（Chrome SW 空闲 30s 就回收，扫描 5min 一次 → 每次都是新实例）
     await loadScanMemory()
     try {
         const [actRes, stopRes] = await Promise.all([aria2API<Aria2Status[]>('aria2.tellActive', [PROGRESS_FIELDS]), aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, PROGRESS_FIELDS])])
         const allTasks = [...(actRes.result ?? []), ...(stopRes.result ?? [])].filter((task) => isNullOrUndefined(task.bittorrent))
+
+        // 队列内去重：同一视频的多条活跃记录只留一条。
+        // 用 `tellActive` 的 gid 作判据 —— 「真正在下的那条」应该被保留，
+        // 而不是靠 timeStamp 猜（一条 queued 可能比真正在下的 running 更新）。
+        const liveGids = new Set((actRes.result ?? []).map((task) => task.gid))
+        await collapseDuplicateLiveTasks(liveGids)
 
         // 按 videoId 分组（同一视频可能存在多个 gid：重复下载/重建残留）
         const groups = new Map<string, Aria2Status[]>()
@@ -246,16 +270,27 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
         const doneMap = await getDoneMap()
 
         for (const [videoId, group] of groups) {
-            // 择优（源 `scanAria2TasksAndEnqueue` 的排序，已抽成纯函数）：
-            // URL 过期时间最晚 → 状态最活联 → 队列已追踪。
-            // **过期时间排第一**：重复/重建留下的多个同源任务里，地址快过期那个随时会 403。
+            // 同一 videoId 的多个 gid 怎么处置（判据在 `planAria2Group`，已单测）：
+            // 活副本停止 + 清结果 / 僵尸副本只清结果 / **complete 历史记录绝不触碰**。
+            // 旧实现把三类一律当冗余，`stopRedundantTask` 无条件 `removeDownloadResult`——
+            // 用户每重下一次以前下过的视频，就把自己 aria2 里那条完成历史删掉（源 Issue #405）。
             const queuedTask = findTaskByGids(group.map((task) => task.gid)) ?? getTasks().find((item) => item.videoId === videoId && item.kind === 'aria2')
-            const winner = [...group].sort((a, b) => compareForKeep(a, b, queuedTask?.kindRef))[0]!
-            for (const loser of group) {
-                if (loser.gid === winner.gid) continue
-                await stopRedundantTask(loser)
+            const plan = planAria2Group(group, queuedTask?.kindRef)
+            if (!plan) continue
+            const winner = plan.winner
+            for (const loser of plan.liveLosers) {
+                await stopLiveCopy(loser)
                 stopped++
                 if (queuedTask?.kindRef === loser.gid) await patchTask(queuedTask.id, { kindRef: winner.gid })
+            }
+            for (const loser of plan.garbageLosers) {
+                await discardGarbageCopy(loser)
+                stopped++
+                if (queuedTask?.kindRef === loser.gid) await patchTask(queuedTask.id, { kindRef: winner.gid })
+            }
+            if (plan.historyLosers.length > 0) {
+                // 历史记录：只记日志，不发任何 RPC
+                console.debug(`[iwara-assistant] aria2 ${videoId} 保留 ${plan.historyLosers.length} 条完成历史（不清理）`)
             }
 
             // ── 恢复：链接过期 / 暂停 / 慢速（源 `processAria2TrackTask` 的 active/paused/error 分支）──
@@ -307,7 +342,41 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
             }
             console.info(`[iwara-assistant] aria2 现有任务已收编: ${videoId} (gid=${winner.gid}, ${winner.status})`)
         }
-        console.info(`[iwara-assistant] aria2 扫描完成: 共 ${allTasks.length} 任务（收编 ${adopted}，停止冗余 ${stopped}，无主 ${rejected}）`)
+
+        // ── 反向对账：队列里仍活跃、但 aria2 已查不到的任务 ──
+        // 上面的循环只遍历「aria2 里存在的任务」，所以 gid 被 aria2 滚出结果记录
+        // （`max-download-result` 上限）或 aria2 重启过之后，队列里那条 running 就再没人管：
+        // 实测留下一条 10 小时前仍显示「下载中（aria2 实时）」的僵尸任务。
+        //
+        // 判据用 tellStatus 的权威答复，且**只认** `GID ... is not found`：
+        // 传输失败（抛异常）什么都不说明，留到下一轮——把「连不上」当成「任务没了」
+        // 会让 aria2 重启一次就把所有在跑的任务误判成失败。
+        const seenGids = new Set(allTasks.map((item) => item.gid))
+        for (const zombie of getTasks()) {
+            if (zombie.kind !== 'aria2') continue
+            if (zombie.status !== 'running' && zombie.status !== 'queued') continue
+            const gid = zombie.kindRef
+            if (!gid || seenGids.has(gid)) continue
+            try {
+                const res = await aria2API<Aria2Status>('aria2.tellStatus', [gid, ['gid', 'status']])
+                if (!isAria2GidMissingError(res.error)) continue
+            } catch (error) {
+                console.warn(`[iwara-assistant] aria2 ${zombie.videoId} 的 gid 查询失败，本轮跳过:`, stringify(error))
+                continue
+            }
+            if (doneMap[zombie.videoId] !== undefined) {
+                // 30 天内完成过：gid 没了但文件确实下好了，收敛成 complete 而不是失败
+                await patchTask(zombie.id, { status: 'complete' })
+                console.info(`[iwara-assistant] aria2 ${zombie.videoId} 的 gid 已被清理，但 30 天内完成过，收敛为 complete`)
+            } else {
+                await patchTask(zombie.id, { status: 'failed', detail: i18n.t('notify.aria2TaskMissing', { id: zombie.videoId }) })
+                const failed = findTask({ id: zombie.id })
+                if (failed) await notifyTask(failed)
+                console.warn(`[iwara-assistant] aria2 ${zombie.videoId} 的 gid ${gid} 在 aria2 中已不存在，标为失败`)
+            }
+            lost++
+        }
+        console.info(`[iwara-assistant] aria2 扫描完成: 共 ${allTasks.length} 任务（收编 ${adopted}，停止冗余 ${stopped}，无主 ${rejected}，失效 ${lost}）`)
     } catch (error) {
         console.warn('[iwara-assistant] aria2 扫描失败:', stringify(error))
     } finally {
@@ -318,7 +387,7 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
     }
     // MediaCenter 推送重试：5 分钟一轮，与源项目的重试间隔一致
     await flushMediaCenterPushes()
-    return { adopted, stopped, rejected }
+    return { adopted, stopped, rejected, lost }
 }
 
 function findTaskByGids(gids: string[]): QueueTask | undefined {
@@ -500,13 +569,17 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         return true
     }
 
-    delete scanMemory.recoverAttempts[videoId]
+    // ⚠️ 恢复「成功」不等于任务活了：换地址只保证 aria2 接受了新 URI，连接本身可能仍然不通
+    // （实测：5 个任务 0/0、speed 0，换完地址依旧如此）。若成功后清零计数，就会退化成
+    // 「每 2 分钟解析一次 iwara + 换一次地址」的无限循环。
+    // 所以这里**累加**而不是清零；只有观测到速度真的恢复（`trackSlowObservation`）才清。
+    scanMemory.recoverAttempts[videoId] = attempts + 1
     delete scanMemory.slowPolls[videoId]
     // gid 可能变了（error/removed 走 addUri 重建）：不同步到队列，后续通知就全对不上
     if (queuedTask) await patchTask(queuedTask.id, { kindRef: result.gid, status: 'running' })
     else await addTask({ id: crypto.randomUUID(), videoId, kind: 'aria2', status: 'running', kindRef: result.gid })
     notifyInfo('aria2-recovered', i18n.t('notify.aria2Recovered', { id: videoId }), { kind: 'options', tab: 'tasks' })
-    console.info(`[iwara-assistant] ${videoId} 已恢复下载 (${winner.status} → gid=${result.gid})`)
+    console.info(`[iwara-assistant] ${videoId} 已恢复下载 (${winner.status} → gid=${result.gid}，第 ${attempts + 1} 次尝试)`)
     return true
 }
 
@@ -520,7 +593,14 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
 function trackSlowObservation(videoId: string, status: Aria2Status): number {
     const table = scanMemory.slowPolls
     const speed = Number(status.downloadSpeed)
-    if (status.status !== 'active' || !Number.isFinite(speed) || speed > SLOW_SPEED_THRESHOLD) {
+    if (status.status === 'active' && Number.isFinite(speed) && speed > SLOW_SPEED_THRESHOLD) {
+        // 速度真的恢复了：说明之前的恢复生效，才清掉尝试计数
+        delete table[videoId]
+        delete scanMemory.recoverAttempts[videoId]
+        return 0
+    }
+    if (status.status !== 'active') {
+        // 离开 active 不算「恢复生效」（error/removed 也不会自己变快），只清采样链
         delete table[videoId]
         return 0
     }

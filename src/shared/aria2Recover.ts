@@ -91,6 +91,10 @@ export function gidPriority(status: string | undefined): number {
  *
  * 为什么过期时间排第一：重复/重建留下的多个同源任务里，地址快过期那个
  * 随时会 403 失败，留着它当赢家等于主动选一个快要坏掉的连接。
+ *
+ * ⚠️ 这个排序**只在同一「活/终态」层内**使用——见 `planAria2Group`：
+ * 跨层用过期时间排会让一条历史 complete（地址恰好还没过期）击败真正在下载的
+ * active，把用户的下载停掉。
  */
 export function compareForKeep(a: Aria2StatusLike, b: Aria2StatusLike, queuedGid?: string): number {
     const expiryA = taskLatestExpiry(a)
@@ -102,6 +106,67 @@ export function compareForKeep(a: Aria2StatusLike, b: Aria2StatusLike, queuedGid
     if (a.gid === queuedGid) return -1
     if (b.gid === queuedGid) return 1
     return 0
+}
+
+/** 任务是否还在 aria2 的活动队列里（`active` / `waiting` / `paused`） */
+export function isLiveAria2Status(status: string): boolean {
+    return status === 'active' || status === 'waiting' || status === 'paused'
+}
+
+/**
+ * 同一个 videoId 的一组 aria2 任务的处置方案。
+ *
+ * 分三类，**处置方式完全不同**：
+ *
+ * | 类别 | 状态 | 处置 |
+ * |---|---|---|
+ * | 活跃副本 | active / waiting / paused | `remove` + `removeDownloadResult`（它们真的在抢带宽与文件） |
+ * | 僵尸副本 | error / removed | 只 `removeDownloadResult`（清掉我们重建留下的垃圾结果记录） |
+ * | 历史记录 | complete | **绝不触碰**（源 Issue #405） |
+ *
+ * ## 为什么历史记录必须单独一类
+ *
+ * 用户重新下载一个以前下过的视频时，aria2 里同时存在「旧的 complete」和「新的 active」。
+ * 旧实现把它们一律当冗余 `stopRedundantTask`，而那个函数**无条件**调
+ * `removeDownloadResult` —— 等于每次重下都把用户 aria2 里那条完成历史删掉。
+ * 那正是源项目 Issue #405 描述的事故（脚本静默删除用户的下载历史），
+ * 而本文件的注释里一直写着这条教训，实现却没守住。
+ *
+ * 留着历史记录不会让去重失效：下一轮扫描仍会看到它，但方案里它既不是活副本
+ * （不需要停止）也不是僵尸（不需要清理），**不产生任何 RPC**。
+ *
+ * ## 为什么「赢家」只在活任务里选
+ *
+ * `compareForKeep` 的第一判据是 URL 过期时间。跨「活/终态」用它会出事：
+ * 一条历史 `complete` 的地址完全可能比正在下载的 `active` 更晚过期
+ * （`dispatch` 会复用页面快照，快照的 `expires` 可能只剩几分钟），
+ * 于是历史记录当上赢家、`active` 被当成冗余 **remove 掉** —— 用户的下载被我们杀了。
+ * 所以有活任务时只在活任务里选；没有活任务时才在全集里选（用于同步终态/收编）。
+ */
+export interface Aria2GroupPlan<T extends Aria2StatusLike> {
+    winner: T
+    /** 活跃副本：先停止再清结果 */
+    liveLosers: T[]
+    /** 僵尸副本（error / removed）：只清结果记录 */
+    garbageLosers: T[]
+    /** 历史记录（complete）：**绝不清理**，仅列出便于日志 */
+    historyLosers: T[]
+}
+
+/** 一组同源任务的处置方案；空组返回 undefined */
+export function planAria2Group<T extends Aria2StatusLike>(group: readonly T[], queuedGid?: string): Aria2GroupPlan<T> | undefined {
+    if (group.length === 0) return undefined
+    const live = group.filter((task) => isLiveAria2Status(task.status))
+    const pool = live.length > 0 ? live : [...group]
+    const winner = [...pool].sort((a, b) => compareForKeep(a, b, queuedGid))[0]!
+    const plan: Aria2GroupPlan<T> = { winner, liveLosers: [], garbageLosers: [], historyLosers: [] }
+    for (const task of group) {
+        if (task.gid === winner.gid) continue
+        if (isLiveAria2Status(task.status)) plan.liveLosers.push(task)
+        else if (task.status === 'complete') plan.historyLosers.push(task)
+        else plan.garbageLosers.push(task)
+    }
+    return plan
 }
 
 /**
@@ -214,3 +279,18 @@ export function buildChangeUriParams(gid: string, delUris: string[], addUris: st
 export const FIRST_FILE_INDEX = 1
 /** changeUri 的 position：0 = 新地址插到最前，立刻成为正在使用的 URI */
 export const URI_POSITION_FRONT = 0
+
+/**
+ * aria2 的「查不到这个 gid」错误。
+ *
+ * 实际报文（对 1.36.0 实测）：`{"code":1,"message":"GID 4cb40e84a20159b3 is not found"}`
+ *
+ * 必须**只认这一种**：`aria2API` 在传输层失败时会抛异常，两种情况的处置完全相反——
+ * 查不到 = 任务真的没了（该收敛队列），连不上 = 什么都不知道（下一轮再说）。
+ * 把「连不上」当成「任务没了」会让 aria2 一次重启把所有在跑的任务误判成失败。
+ */
+export function isAria2GidMissingError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false
+    const message = (error as { message?: unknown }).message
+    return typeof message === 'string' && /GID .* is not found/i.test(message)
+}

@@ -7,6 +7,7 @@ import { i18n } from '../../shared/i18n'
 import { QUEUE_KEY } from '../../shared/storageKeys'
 import type { QueueTask } from '../../shared/task'
 import { taskMatchesRef } from '../../shared/task'
+import { planQueueLiveDuplicates } from '../../shared/downloadDedupe'
 import { isClearable } from '../../shared/taskView'
 import { getConfig } from './configStore'
 import { clearNotification, showNotification, type NotificationTarget } from '../runtime/notify'
@@ -25,11 +26,41 @@ function taskNotificationId(videoId: string): string {
 
 let memQueue: QueueTask[] = []
 
+/**
+ * 「队列已从磁盘读回」的就绪信号。
+ *
+ * ⚠️ 这不是锦上添花：`memQueue` 初值是 `[]`，而 `boot()` 是**异步**的
+ * （`void boot()` 之后紧接着就注册了消息监听）。Chrome 的 SW 被回收后，
+ * 一条 `BATCH_DOWNLOAD` / `INIT_DOWNLOAD` 完全可能**先于** `loadQueue()` 到达，
+ * 那时 `getTasks()` 返回空数组，两个后果：
+ *
+ * 1. 队列去重静默失效 → 已下载过的视频照样重新投递（用户看到的「重复任务」）；
+ * 2. `addTask` 往空数组里 push 再 `persist()` → **把磁盘上的历史队列整个覆盖掉**。
+ *
+ * 所以消息路由必须先等这个信号（见 `background/index.ts`）。
+ */
+let markQueueReady: (() => void) | undefined
+const queueReadyPromise = new Promise<void>((resolve) => {
+    markQueueReady = resolve
+})
+
+/** 等到队列已从磁盘读回（幂等；`loadQueue` 失败时也会放行，避免消息永久挂起） */
+export function queueReady(): Promise<void> {
+    return queueReadyPromise
+}
+
 /** 挂起重入恢复；浏览器重启后 SW 冷启动同样调用 */
 export async function loadQueue(): Promise<void> {
-    const stored = await browser.storage.local.get(QUEUE_KEY)
-    const value = stored[QUEUE_KEY]
-    memQueue = Array.isArray(value) ? (value as QueueTask[]) : []
+    try {
+        const stored = await browser.storage.local.get(QUEUE_KEY)
+        const value = stored[QUEUE_KEY]
+        memQueue = Array.isArray(value) ? (value as QueueTask[]) : []
+    } finally {
+        // 读盘失败也要放行：宁可让后续操作在空队列上跑（会如实报「任务不存在」），
+        // 也不能让所有消息永久卡在这里
+        markQueueReady?.()
+        markQueueReady = undefined
+    }
 }
 
 export async function persist(): Promise<void> {
@@ -140,6 +171,32 @@ export async function clearFinished(): Promise<number> {
         }
     }
     return removed
+}
+
+/**
+ * 收敛队列里同一 videoId 的多条**活跃**记录（只动 `running` / `queued`）。
+ *
+ * 判据在 `shared/downloadDedupe.ts` 的 `planQueueLiveDuplicates`（纯函数，已单测）。
+ * 这里只负责落库与日志。
+ *
+ * `liveGids` 由调用方（aria2 扫描）从 `tellActive` 提供：它能让「真正在下的那条」
+ * 优先被保留，而不是靠时间戳猜。
+ *
+ * @returns 丢弃的条数
+ */
+export async function collapseDuplicateLiveTasks(liveGids?: ReadonlySet<string>): Promise<number> {
+    const plan = planQueueLiveDuplicates(memQueue, liveGids)
+    if (plan.drop.length === 0) return 0
+    for (const inherit of plan.inheritKindRef) {
+        const keeper = memQueue.find((task) => task.id === inherit.taskId)
+        if (keeper) keeper.kindRef = inherit.kindRef
+    }
+    const droppedIds = new Set(plan.drop.map((task) => task.id))
+    memQueue = memQueue.filter((task) => !droppedIds.has(task.id))
+    await persist()
+    updateBadge()
+    console.info(`[iwara-assistant] 队列去重：同一视频的重复活跃记录已收敛，丢弃 ${plan.drop.length} 条（${plan.drop.map((task) => `${task.videoId}:${task.status}`).join(', ')}）`)
+    return plan.drop.length
 }
 
 /** 状态落盘 + 扩展页推送（popup/options 无监听时静默） */
