@@ -21,6 +21,9 @@ import fs from 'node:fs'
 
 const TARGET = '.githooks'
 
+/** 仓库里实际存在的钩子（新增钩子时记得加进这里，否则 Linux/macOS 上不可执行） */
+const HOOKS = ['pre-commit', 'commit-msg', 'pre-push']
+
 function git(args) {
     return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
 }
@@ -36,18 +39,20 @@ try {
     }
 
     if (current !== '' && current !== TARGET) {
-        console.log(`[hooks] core.hooksPath 已指向 "${current}"，保持不动（未安装提交前格式化）`)
+        console.log(`[hooks] core.hooksPath 已指向 "${current}"，保持不动（未安装提交前格式化与推送前检查）`)
     } else if (current === TARGET) {
         // 幂等：每次 npm install 都会跑到这里，不必重复打印
     } else {
         git(['config', 'core.hooksPath', TARGET])
-        console.log(`[hooks] 已启用提交前自动格式化（core.hooksPath = ${TARGET}）`)
+        console.log(`[hooks] 已启用提交前格式化 + 提交消息校验 + 推送前门禁（core.hooksPath = ${TARGET}）`)
     }
 
-    try {
-        fs.chmodSync(`${TARGET}/pre-commit`, 0o755)
-    } catch {
-        // Windows 无此概念；或文件不存在——都不影响钩子工作
+    for (const hook of HOOKS) {
+        try {
+            fs.chmodSync(`${TARGET}/${hook}`, 0o755)
+        } catch {
+            // Windows 无此概念；或文件不存在——都不影响钩子工作
+        }
     }
 } catch {
     // 非 git 仓库 / git 不可用：静默跳过，绝不让安装失败

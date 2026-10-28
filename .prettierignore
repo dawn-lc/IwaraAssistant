@@ -9,3 +9,5 @@ package-lock.json
 e2e/playwright/fixtures/iwara-list.html
 # git 钩子入口：无扩展名的 sh 脚本，prettier 推断不出 parser（显式传入会报 No parser could be inferred）
 .githooks/pre-commit
+.githooks/commit-msg
+.githooks/pre-push

@@ -162,9 +162,13 @@ npm run format            # prettier（提交时钩子也会自动格式化暂�
 npm run dev:chrome        # watch 模式
 ```
 
-> `npm install` 会自动把 git 钩子目录指向 `.githooks`：提交时**自动格式化暂存的文件**并重新暂存，
-> 所以格式问题进不了仓库，CI 也就不必查它。逃生阀：`git commit --no-verify`。
-> 详见 [06-testing-and-release.md](docs/06-testing-and-release.md#提交前自动格式化pre-commit-钩子)。
+> `npm install` 会自动把 git 钩子目录指向 `.githooks`，三道钩子按成本分层：
+>
+> - **提交时**：自动格式化暂存的文件并重新暂存（`pre-commit`）+ 校验提交消息格式 `type: 说明`（`commit-msg`）；
+> - **推送时**：本地跑一遍 CI 的 verify job（类型检查 ×3 → 单测 → 构建 → `web-ext lint`），失败即阻止推送。
+>
+> 逃生阀：`git commit --no-verify` / `git push --no-verify`，或 `SKIP_FORMAT_HOOK=1` / `SKIP_PUSH_CHECKS=1`。
+> 详见 [06-testing-and-release.md](docs/06-testing-and-release.md#git-钩子把能自动化的都自动化)。
 
 > 需要环境变量的脚本统一写成 `node --import tsx/esm ./build/env.ts KEY=VALUE … -- <命令>`（见 `build/env.ts`）。
 

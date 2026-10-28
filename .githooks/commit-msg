@@ -1,0 +1,7 @@
+#!/bin/sh
+# 校验提交消息格式（逻辑在 checkMessage.mjs）。
+#
+# git 把消息文件路径作为 $1 传入（COMMIT_EDITMSG）。
+#
+# 逃生阀：git commit --no-verify
+exec node .githooks/checkMessage.mjs "$1"

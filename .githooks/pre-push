@@ -1,0 +1,14 @@
+#!/bin/sh
+# 推送前跑一遍 CI 的 verify job（逻辑在 prePush.mjs）。
+#
+# git 会把远端名与地址作为 $1 $2 传入，ref 列表走 stdin —— 逻辑里读 stdin，这里原样透传。
+#
+# 逃生阀：
+#   git push --no-verify          连钩子都不执行
+#   SKIP_PUSH_CHECKS=1 git push   执行到这里但跳过检查
+if [ "$SKIP_PUSH_CHECKS" = "1" ]; then
+    echo "[pre-push] SKIP_PUSH_CHECKS=1，跳过推送前检查"
+    exit 0
+fi
+
+exec node .githooks/prePush.mjs "$1" "$2"

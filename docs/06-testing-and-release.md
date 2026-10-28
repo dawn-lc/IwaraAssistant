@@ -41,24 +41,31 @@
 - `permissions: contents: read`，job 超时 15 / 25 分钟。
 - **runner 钉 `ubuntu-24.04`，不用 `ubuntu-latest`**：后者从 2026-10-19 起分几周切到 Ubuntu 26.04（11-19 完成），期间同一标签在 24.04 / 26.04 之间**随机落点**（[actions/runner-images#14748](https://github.com/actions/runner-images/issues/14748)）——同一个 commit 重跑一次结果可能不同。钉住后 OS 变更是一次显式提交、带自己的绿跑；升级只需把 `runs-on` 改成 `ubuntu-26.04`。
 - **action 全部使用 Node 24 运行时**（`checkout@v7` / `setup-node@v7` / `cache@v6` / `upload-artifact@v7`）：v4 系列仍声明 Node 20，会被强制跑在 Node 24 上并每轮刷 deprecation 警告。这几个大版本的破坏性变更只有「迁移到 ESM」与新增可选参数，本项目未受影响。
-- **CI 不检查格式**（prettier）：格式由提交前钩子保证（见下一节），CI 不必再为它设门。它一旦变红会让单测/构建/`web-ext lint`/上传全部 `skipped`——用「没按空格」清零整条流水线的验证价值。
+- **CI 不检查格式**（prettier）：格式由 `pre-commit` 钩子保证（见下一节），CI 不必再为它设门。它一旦变红会让单测/构建/`web-ext lint`/上传全部 `skipped`——用「没按空格」清零整条流水线的验证价值。
 - CI 不跑 WDIO，因此设置 `CHROMEDRIVER_SKIP_DOWNLOAD=true` 跳过后安装下载；将来加 WDIO job 时在该 job 覆盖为 `false`。
 - Playwright 浏览器缓存键使用 `@playwright/test` 自身版本，依赖变动不会无谓失效。
 - CI 全程零外网依赖；真实站点冒烟与 WDIO 跨浏览器套件只在本地运行。
 
-## 提交前自动格式化（pre-commit 钩子）
+## Git 钩子：把能自动化的都自动化
 
-格式问题应该**在提交前消失**，而不是在 CI 里报警——所以它由 git 钩子解决，不占 CI 门禁。
+三道钩子按**成本分层**：提交时只做毫秒级的事，慢的检查放到推送前那次不可撤销的动作之前。
 
-| 文件                         | 职责                                                                                      |
-| ---------------------------- | ----------------------------------------------------------------------------------------- |
-| `.githooks/pre-commit`       | sh 入口（Git for Windows 自带 sh，不依赖可执行位）                                        |
-| `.githooks/formatStaged.mjs` | 实际逻辑：只处理**本次暂存**的文件                                                        |
-| `.githooks/install.mjs`      | 把 `core.hooksPath` 指向 `.githooks`，由 `prepare` 在 `npm install` / `npm ci` 后自动执行 |
+| 钩子         | 做什么                                                                    | 成本   | 为什么放这一层                                                            |
+| ------------ | ------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------- |
+| `pre-commit` | 格式化**本次暂存**的文件并重新暂存                                        | 毫秒级 | 每次提交都跑，慢一次就会被 `--no-verify` 永久绕过                         |
+| `commit-msg` | 校验提交消息符合 `<type>: <说明>`                                         | 微秒级 | 约定只存在于人的记忆里；混进无前缀消息后，按前缀检索/changelog 就不可靠了 |
+| `pre-push`   | 跑一遍 **CI 的 verify job**（类型检查 ×3 → 单测 → 构建 → `web-ext lint`） | 几十秒 | 推送前最后一次机会；等 CI 变红再回来至少多一轮往返                        |
+
+| 文件                                        | 职责                                                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `.githooks/pre-commit` + `formatStaged.mjs` | 只处理暂存文件                                                                              |
+| `.githooks/commit-msg` + `checkMessage.mjs` | 消息格式（允许 `npm version` 的纯版本号与 git 生成的 Merge/Revert/fixup）                   |
+| `.githooks/pre-push` + `prePush.mjs`        | 本地门禁，与 CI 逐步同序                                                                    |
+| `.githooks/install.mjs`                     | 把 `core.hooksPath` 指向 `.githooks`（由 `prepare` 在 `npm install` / `npm ci` 后自动执行） |
 
 **为什么不能把钩子直接放 `.git/hooks`**：那个目录不进版本控制，克隆后就是空的。官方唯一可分发机制是 `core.hooksPath`，因此需要一次配置——挂在 `prepare` 上就不需要用户记任何命令（它永不失败：非 git 环境、浅克隆、用户已自设 hooksPath 都静默跳过）。
 
-三条安全性质（写错会丢用户的工作）：
+### 格式化的三条安全性质（写错会丢用户的工作）
 
 1. **只碰暂存的文件**（`git diff --cached --diff-filter=ACMR`），不扫工作区。
 2. **暂存内容与工作区不一致时阻止提交**：部分暂存（改了 A 段 add、又改了 B 段没 add）时，格式化工作区再 `git add` 会把 B 段一起提交。提示里给出两种解决办法（全部暂存 / `git stash push --keep-index`）。
@@ -66,7 +73,13 @@
 
 格式化失败（文件有语法错误）时阻止提交并打印 prettier 原话——那种情况不可能「帮你改好」。
 
-逃生阀：`git commit --no-verify`，或 `SKIP_FORMAT_HOOK=1 git commit ...`。
+### 推送前门禁的取舍
+
+- **唯一的跳过规则**：本次推送的改动**全是 `.md`** 时跳过（文档不可能影响类型/构建）。判据取保守方向——算不出改动清单（新分支、远端 ref 不在本地、stdin 为空）一律跑全量。
+- **不做更细的增量判定**（例如「只改了测试就只跑单测」）：错误地跳过比多跑几十秒贵得多。
+- 任何一步失败即中断，**完整输出原样呈现**（不截断、不摘要），并给出跳过办法。
+
+逃生阀：`git commit --no-verify` / `git push --no-verify`，或 `SKIP_FORMAT_HOOK=1` / `SKIP_PUSH_CHECKS=1`。调试用 `HOOK_REFS="<ref> <localSha> <ref> <remoteSha>"` 复现某次推送的判定。
 
 ## 发布流程
 
@@ -81,7 +94,9 @@ npm run lint:firefox            # web-ext lint，应为 0 error / 0 notice
 - Firefox `browser_specific_settings.gecko.data_collection_permissions.required = ["none"]`，与 [PRIVACY.md](../PRIVACY.md) 一致。
 - 商店文案、权限理由与截图清单见 [store-listing.md](store-listing.md)。
 
-### 提交检查清单
+### 发布前检查清单
+
+前四项在 `git push` 时已由 `pre-push` 钩子自动执行（失败会直接阻止推送），这里列出来是为了手工复核时有据可查：
 
 1. `npm run type-check && npm run type-check:e2e && npm run type-check:wdio`
 2. `npm run test:unit`
@@ -90,7 +105,7 @@ npm run lint:firefox            # web-ext lint，应为 0 error / 0 notice
 5. 需要时本地 e2e：`npm run test:e2e:wdio`（Chrome + Firefox）
 6. 上传 `dist/chrome.zip` 与 `dist/firefox.zip`，按商店要求填写权限用途与隐私声明
 
-> 格式化不需要手动跑：提交时钩子会自动处理暂存的文件（见「提交前自动格式化」）。
+> 格式化不需要手动跑：提交时钩子会自动处理暂存的文件（见「Git 钩子」）。
 > 想整仓收拾一遍仍可用 `npm run format`。
 
 ## 未完成事项（代码之外）
