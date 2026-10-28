@@ -1,5 +1,16 @@
 # 01 架构设计
 
+## 设计原则
+
+六条原则决定了后文的每一个取舍。先读这一节，后面那些「为什么不这样做」才有依据。
+
+1. **能用平台能力就不自造**：后台单例替代跨页锁；`browser.alarms` 替代轮询；`downloads.onChanged` 驱动任务状态；配置与队列放在扩展自有页面。自造一层就多一份只能在开发机上验证的代码。
+2. **唯一的不可替代品是页面主世界的 `fetch` 劫持**（改写站点看到的 `/videos` 响应体）。Chrome / Firefox 均无等价的扩展 API，所以以 `content_scripts[].world: "MAIN"` 原生声明保留，其余功能一律不碰页面。
+3. **`browser.*` 一码两浏览器**：按 Chrome 官方 browser-namespace 指南统一写 `browser`，用 1 行运行时 shim 兼容 Chrome 111+ 与 Firefox，不引入 polyfill（见 [02](02-cross-browser.md)）。
+4. **消息层全兼容**：`onMessage` 统一 `return true + sendResponse`，避开 Chrome 148 之前不支持 promise 型监听器的差异（见 [04](04-messaging.md)）。
+5. **注入最小化**：iwara 页面上常驻的只有三段脚本（主世界劫持 + 隔离世界桥接 + 一个页面 UI），CSS 声明式注入、不自造样式表注入器；状态反馈走 `browser.notifications`，进度、队列与配置全在扩展页，页面里不建任何有状态视图。
+6. **分段注入**：MAIN 只放「不改不行」的部分；ISOLATED 拆成「先桥接、后 UI」两段，握手不被 UI 体积拖慢。
+
 ## 运行时上下文
 
 扩展按运行时边界拆分：页面两个世界（MAIN / ISOLATED）、后台、options、popup。
@@ -161,12 +172,16 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 
 当前注入顺序（均在 `document_start`，manifest `content_scripts` 顺序即执行顺序）：
 
-| 段  | 产物                    | 世界     | 为什么在这个位置                                                           |
-| --- | ----------------------- | -------- | -------------------------------------------------------------------------- |
-| 1   | `content/main-world.js` | MAIN     | 唯一不可替代品；MAIN 先跑，其 `postUp()` 有 backlog，ISOLATED 迟到也能补发 |
-| 2   | `content/isolated.js`   | ISOLATED | 只做桥接，体量小，握手最快                                                 |
-| 3   | `content/page-ui.js`    | ISOLATED | ~26KB，最重，排最后不阻塞握手脚本                                          |
-| —   | `content/page-ui.css`   | 页面样式 | 声明式注入（挂在第 3 条的 `css` 上）；CSS 先于同条目的 JS 应用             |
+| 段  | 产物                    | 世界     | 作用域       | 为什么在这个位置                                                                                                                                                                  |
+| --- | ----------------------- | -------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0   | `content/guard-main.js` | MAIN     | `<all_urls>` | 仿冒域名上把 `fetch` / `XHR.open` / `WebSocket` / `EventSource` / `sendBeacon` / 表单 `submit` / `RTCPeerConnection` 换成抛错桩；补网络层规则下发前的窗口期与 DNR 管不到的 WebRTC |
+| 0   | `content/guard.js`      | ISOLATED | `<all_urls>` | 请求后台裁决（网络层封锁在后台下发），在 closed shadow root 里渲染全屏警告；官方域名下零 DOM                                                                                      |
+| 1   | `content/main-world.js` | MAIN     | iwara.tv     | 唯一不可替代品；MAIN 先跑，其 `postUp()` 有 backlog，ISOLATED 迟到也能补发                                                                                                        |
+| 2   | `content/isolated.js`   | ISOLATED | iwara.tv     | 只做桥接，体量小，握手最快                                                                                                                                                        |
+| 3   | `content/page-ui.js`    | ISOLATED | iwara.tv     | ~26KB，最重，排最后不阻塞握手脚本                                                                                                                                                 |
+| —   | `content/page-ui.css`   | 页面样式 | iwara.tv     | 声明式注入（挂在第 3 条的 `css` 上）；CSS 先于同条目的 JS 应用                                                                                                                    |
+
+> 钓鱼防护的两条虽与 iwara 三条作用域不重叠（前者 `<all_urls>` 且在官方域名下零 DOM），仍固定排在最前：防护的语义就是「早于任何业务代码」，这条顺序不能因为“反正不冲突”而变。
 
 > **样式不走 JS**。样式由 `content_scripts[].css` 在**浏览器层面**注入（`document_start` 期间、DOM 构建前），`page-ui.js` 里没有任何样式注入代码。beautify / widescreen 使用「常驻规则 + `html.ia-*` 类作用域」，开关只切类，无运行时注入。
 
@@ -312,3 +327,16 @@ Chrome 平台约束（已核验）：
 **判定规则（`classifyHost`）**：主机名小写、去尾点后，按**完整标签后缀**匹配官方域（`iwara.tv` / `iwara.zip` / `iwara.shop` / `iwara.ai`）——所以 `iwara.tv.evil.com` 是仿冒而不是官方；之后看是否含品牌词（`iwara`），含则 `suspicious`，否则 `other`（no-op）。单测 `test/site.test.ts` 固定这三层。
 
 **防拆除**：警告宿主在 **closed shadow root** 里渲染（页面既改不了样式，也拿不到内部节点，避免「改个 CSS 就把警告藏了」）；`MutationObserver` 在宿主被移除时补种。官方域名下**零 DOM、零全局写入**（页面上不能出现任何可探测痕迹）。
+
+## 技术底座
+
+| 层         | 选型                                                              | 为什么是它                                                                                                                         |
+| ---------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 构建       | esbuild（IIFE 多入口 + React 19 `jsx: automatic`）+ tsx 脚本      | 无运行时依赖、构建即产物；`inject` 把 `browser` shim 注入所有入口，入口文件不写一行样板                                            |
+| 浏览器 API | `browser.*`（Chrome MV3 service worker / Firefox MV2 持久后台页） | 一套代码两宿主，差异全部收在 shim 与 manifest 派生里（见 [02](02-cross-browser.md) / [03](03-manifest.md)）                        |
+| 配置校验   | zod                                                               | 缺省字段自动补默认值、脏数据回落默认；配置结构是唯一真源，UI 与后台共用                                                            |
+| 本地存储   | `browser.storage`（配置/队列/会话态）+ IndexedDB（视频库，`idb`） | 视频库单条可达数 MB，不适合塞进 storage；队列要能被 `storage.onChanged` 驱动 UI 重渲染                                             |
+| 国际化     | i18next + react-i18next                                           | 扩展页用 `useTranslation()`，非组件模块直接用 `i18n.t()`；键名由 `i18next.d.ts` 编译期校验（见 [05](05-features.md#配置与多语言)） |
+| 扩展页 UI  | React 19 + sonner（toast）                                        | App 型表单与后台推送驱动的状态；页面注入侧仍为命令式，不引入 React（理由见上文「UI 技术栈分野」）                                  |
+| 测试       | `node:test`、Playwright、WebdriverIO、`web-ext`                   | 分层与命令见 [06](06-testing-and-release.md)                                                                                       |
+| 打包       | 手写 ZIP（node:zlib）                                             | 只需“把目录打成带正确路径分隔符的 zip”，不引入打包工具链                                                                           |

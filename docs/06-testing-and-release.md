@@ -1,12 +1,40 @@
 # 06 测试与发布
 
+## 开发命令
+
+全部入口都在 `package.json` 的 scripts 里；CI 与 git 钩子调用的也是这些命令，不另设一套。
+
+| 命令                                       | 作用                                                                 |
+| ------------------------------------------ | -------------------------------------------------------------------- |
+| `npm run build`                            | 双目标编译 + 打包 → `dist/chrome(.zip)`、`dist/firefox(.zip)`        |
+| `npm run build:chrome`                     | 仅 Chrome（MV3 service worker）                                      |
+| `npm run build:firefox`                    | 仅 Firefox（MV2 持久后台页）                                         |
+| `npm run dev:chrome` / `dev:firefox`       | watch 模式（只监听 JS；html/css/manifest 改动需重跑）                |
+| `npm run lint:firefox`                     | `web-ext lint`（应为 0 error / 0 notice）                            |
+| `npm run package`                          | 仅重打包已有 `dist`（`package:chrome` / `package:firefox` 可单目标） |
+| `npm run build:icons`                      | 导出图标 PNG 到 `assets/icons`（构建不依赖，构建期自渲染）           |
+| `npm run type-check`                       | 扩展源码 + 单测                                                      |
+| `npm run type-check:e2e`                   | Playwright specs                                                     |
+| `npm run type-check:wdio`                  | WDIO specs                                                           |
+| `npm run test:unit`                        | 单元测试（`node:test`）                                              |
+| `npm run test:e2e` / `test:e2e:headless`   | Playwright e2e（有头 / 无头）                                        |
+| `npm run test:e2e:wdio[:chrome\|:firefox]` | WebdriverIO 跨浏览器 e2e                                             |
+| `npm run test:firefox:smoke`               | `web-ext run` 装载冒烟                                               |
+| `npm run format` / `format:check`          | prettier（提交时钩子会自动格式化暂存文件）                           |
+| `npm run fixtures:capture`                 | 刷新站点结构快照与 API 录制响应（需过 Cloudflare）                   |
+
+> 需要环境变量的脚本统一写成 `node --import tsx/esm ./build/env.ts KEY=VALUE … -- <命令>`（实现在 `build/env.ts`）。
+> 不要在 scripts 里重写 `node -e "process.env.X=…"`：引号规则在 PowerShell / cmd / bash 各不相同。
+
+版本号只有一个真源（`package.json`），发版用 `npm version patch|minor|major`；规则与校验见 [03](03-manifest.md#版本号真源packagejson)。
+
 ## 测试分层
 
 | 层             | 命令                         | 覆盖范围与定位                                                                                                                                         |
 | -------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 单元测试       | `npm run test:unit`          | `node:test` + tsx，零框架依赖。纯函数与状态机：路径清洗、模板变量、配置 schema、页面路由、消息协议、旧库分批预算、任务对账/取消策略、i18n 键一致性等。 |
 | 类型检查       | `npm run type-check` 等三条  | 扩展源码、Playwright e2e、WDIO e2e 分别检查；CI 中三条都跑。                                                                                           |
-| Playwright e2e | `npm run test:e2e`           | Chromium 直载 `dist/chrome`，10 个 spec / 49 个用例；CI 门禁。                                                                                         |
+| Playwright e2e | `npm run test:e2e`           | Chromium 直载 `dist/chrome`，10 个 spec / 51 个用例；CI 门禁。                                                                                         |
 | WDIO 常规套件  | `npm run test:e2e:wdio`      | Chrome + Firefox 同一份用例，25 个用例共享同一 session；本机运行，不进 CI。                                                                            |
 | WDIO live      | `npm run test:e2e:wdio:live` | 真实站点与真实 aria2；`E2E_LIVE=1` 才收集，13 个站点用例 + 4 个下载用例，不进 CI。                                                                     |
 | 手动验收       | `npm run test:e2e:manual`    | `E2E_MANUAL=1`，无断言，加载真实 profile 供人工检查；Chrome / Firefox 各一条脚本。                                                                     |
