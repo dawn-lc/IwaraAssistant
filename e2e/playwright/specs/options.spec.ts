@@ -629,3 +629,55 @@ test('任务页签：待办优先排序 / 分组筛选 / 每行语义化主操�
         await browser.storage.local.set({ downloadQueue: [] })
     })
 })
+
+test('任务页签：私有视频给「打开作者主页」+「重试」，视频 ID 不换行', async ({ sharedSession }) => {
+    const { page, extensionId } = sharedSession
+    await openExtensionPage(page, extensionId, 'options/index.html#tasks')
+
+    // `errors.privateVideo` = 视频存在、但当前账号看不到：重试永远无效，
+    // 唯一能推进的动作是去作者主页关注。这里直接播种后台会写出的形态。
+    await page.evaluate(async (ts) => {
+        await browser.storage.local.set({
+            downloadQueue: [
+                {
+                    id: 'e2e-private',
+                    videoId: 'AcPEDq1Jjn6cUKS',
+                    kind: 'aria2',
+                    status: 'failed',
+                    detail: '解析失败: 私有视频（仅好友可见）：Alice 的内容，先去作者主页加好友，对方通过后再点「重试」',
+                    followUpUrl: 'https://www.iwara.tv/profile/alice',
+                    followUpKind: 'author',
+                    createdAt: ts,
+                    updatedAt: ts
+                }
+            ]
+        })
+    }, Date.now())
+
+    const row = page.locator('table.tasks tbody tr')
+    await expect(row).toHaveCount(1, { timeout: 10_000 })
+
+    const buttons = row.locator('button')
+    await expect(buttons).toHaveCount(3)
+    // 文案必须是「打开作者主页」：标成「打开原始地址」等于把用户送到错的地方
+    await expect(buttons.nth(0)).toHaveText('打开作者主页')
+    // 关注只是前置条件，重试必须留在旁边（只给跳转等于把重试入口藏起来）
+    await expect(buttons.nth(1)).toHaveText('重试')
+    await expect(buttons.nth(2)).toHaveText('移除')
+
+    // 详情是给人看的文案，不能是 API 原文（旧实现就是一句「重试解析失败: errors.privateVideo」）
+    await expect(row).toContainText('私有视频')
+    await expect(row).not.toContainText('errors.privateVideo')
+
+    // 视频 ID 是不可分割的标识：允许折行会把它拆成两行（AcPEDq1 / jn6cUKS），整列宽度也跟着抖
+    const videoIdBox = await row.locator('.task-video').evaluate((el) => {
+        const style = getComputedStyle(el)
+        return { whiteSpace: style.whiteSpace, height: el.getBoundingClientRect().height, lineHeight: Number.parseFloat(style.lineHeight) }
+    })
+    expect(videoIdBox.whiteSpace).toBe('nowrap')
+    expect(videoIdBox.height).toBeLessThan(videoIdBox.lineHeight * 1.5)
+
+    await page.evaluate(async () => {
+        await browser.storage.local.set({ downloadQueue: [] })
+    })
+})

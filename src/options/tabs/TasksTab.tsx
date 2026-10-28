@@ -229,6 +229,20 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
         }
     }
 
+    /** 行次操作分发：私有视频除了「去加好友」，旁边还得留一颗「重试」 */
+    const runSecondary = (task: QueueTask): void => {
+        const action = taskSecondaryActionOf(task)
+        if (action === null) return
+        switch (action.kind) {
+            case 'force-download':
+                forceOne(task)
+                return
+            case 'retry':
+                retryOne(task)
+                return
+        }
+    }
+
     const clearFinished = (): void => {
         if (clearableCount === 0) return
         if (confirming !== 'clear') {
@@ -364,7 +378,7 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
                                                     {tr(primary.labelKey)}
                                                 </button>
                                                 {secondary ? (
-                                                    <button type="button" className="ghost" disabled={busy !== null} onClick={() => forceOne(task)}>
+                                                    <button type="button" className="ghost" disabled={busy !== null} onClick={() => runSecondary(task)}>
                                                         {tr(secondary.labelKey)}
                                                     </button>
                                                 ) : null}

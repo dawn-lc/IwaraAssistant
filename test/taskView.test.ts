@@ -67,6 +67,11 @@ test('失败的外部视频：主操作是「打开原始地址」，重试一�
     assert.deepEqual(action, { kind: 'open', url: 'https://example.com/embed/1', labelKey: 'tasks.actionOpenSource' })
 })
 
+test('私有视频失败：主操作是「打开作者主页」，不能标成「打开原始地址」', () => {
+    const action = taskPrimaryActionOf(task({ status: 'failed', followUpUrl: 'https://www.iwara.tv/profile/alice', followUpKind: 'author' }))
+    assert.deepEqual(action, { kind: 'open', url: 'https://www.iwara.tv/profile/alice', labelKey: 'tasks.actionOpenAuthor' })
+})
+
 test('普通失败：主操作是重试', () => {
     assert.deepEqual(taskPrimaryActionOf(task({ status: 'failed' })), { kind: 'retry', labelKey: 'common.retry' })
 })
@@ -98,6 +103,14 @@ test('次操作：其它状态一律没有（避免同意义的两个入口）',
     }
     // 没有跳转目标的跳过行，主操作本身就是强制下载，再加一个就是重复
     assert.equal(taskSecondaryActionOf(task({ status: 'skipped' })), null)
+})
+
+test('次操作：私有视频失败必须同时给「重试」（加好友只是前置条件，还要对方通过）', () => {
+    assert.deepEqual(taskSecondaryActionOf(task({ status: 'failed', followUpUrl: 'https://www.iwara.tv/profile/alice', followUpKind: 'author' })), { kind: 'retry', labelKey: 'common.retry' })
+})
+
+test('次操作：外部视频失败仍然不给重试（永远失败在 external Video 分支）', () => {
+    assert.equal(taskSecondaryActionOf(task({ status: 'failed', followUpUrl: 'https://example.com/embed/1', followUpKind: 'external' })), null)
 })
 
 // ── 打开后续地址 = 手动处理完 ───────────────────────────────────────────

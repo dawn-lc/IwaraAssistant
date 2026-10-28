@@ -55,15 +55,20 @@ export function taskGroupOf(task: Pick<QueueTask, 'status'>): TaskGroup {
  * 测试与 UI 同时理解，闭包一旦塞进来就只剩 UI 自己能懂，也就没法给它写断言了。
  */
 export type TaskPrimaryAction =
-    /** 打开一个外部地址（视频页 / 外部嵌入源） */
-    | { kind: 'open'; url: string; labelKey: 'tasks.actionOpenVideo' | 'tasks.actionOpenSource' }
+    /** 打开一个外部地址（视频页 / 外部嵌入源 / 作者主页） */
+    | { kind: 'open'; url: string; labelKey: 'tasks.actionOpenVideo' | 'tasks.actionOpenSource' | 'tasks.actionOpenAuthor' }
     /** 重新提交（完成过的想再下一次、失败过的想再试） */
     | { kind: 'retry'; labelKey: 'common.retry' }
     /** 绕过第三方链接检查直接下载（`skipped` 唯一可行的前进方式） */
     | { kind: 'force-download'; labelKey: 'tasks.actionForceDownload' }
 
-/** 与主操作并列的次操作（目前只有 `skipped` 用得上） */
-export type TaskSecondaryAction = { kind: 'force-download'; labelKey: 'tasks.actionForceDownload' }
+/**
+ * 与主操作并列的次操作。
+ *
+ * - `skipped` + 有视频页地址 → 强制下载（主操作是「打开视频页」，但用户也可能直接想下）
+ * - `failed` + 作者主页 → 重试（主操作是「去加好友」，成为好友后还得再点一次重试）
+ */
+export type TaskSecondaryAction = { kind: 'force-download'; labelKey: 'tasks.actionForceDownload' } | { kind: 'retry'; labelKey: 'common.retry' }
 
 /**
  * 主操作。
@@ -73,8 +78,9 @@ export type TaskSecondaryAction = { kind: 'force-download'; labelKey: 'tasks.act
  * 1. **`skipped` 的主操作是「打开视频页」而不是「重试」**：
  *    重试会重新解析并再过一次 `checkDownloadLink`，命中后又是 `skipped`——
  *    用户看到的是「点了没反应」的死循环。想下就必须显式「强制下载」。
- * 2. **`failed` 带 `followUpUrl` 时主操作是「打开原始地址」**：
- *    那是外部嵌入视频（iwara 不托管），重试一百次也不会成功，链接是唯一有用的信息。
+ * 2. **`failed` 带 `followUpUrl` 时主操作是跳转而不是重试**：外部嵌入视频去原始地址
+ *    （重试一百次也不会成功），私有视频去作者主页（加为好友才能让解析通过）。
+ *    按钮文案由 `followUpKind` 决定——把作者主页标成「打开原始地址」等于告诉用户错的事。
  * 3. **`running` / `queued` 也返回 `retry`**（由 UI 置灰）：
  *    让每行的按钮形状稳定（主操作槽位永远存在），否则行与行之间按钮错位，
  *    键盘焦点与屏幕阅读器顺序都会跳。
@@ -87,7 +93,9 @@ export function taskPrimaryActionOf(task: QueueTask): TaskPrimaryAction {
             return url !== undefined && url !== '' ? { kind: 'open', url, labelKey: 'tasks.actionOpenVideo' } : { kind: 'force-download', labelKey: 'tasks.actionForceDownload' }
         }
         case 'failed':
-            if (task.followUpUrl !== undefined && task.followUpUrl !== '') return { kind: 'open', url: task.followUpUrl, labelKey: 'tasks.actionOpenSource' }
+            if (task.followUpUrl !== undefined && task.followUpUrl !== '') {
+                return { kind: 'open', url: task.followUpUrl, labelKey: task.followUpKind === 'author' ? 'tasks.actionOpenAuthor' : 'tasks.actionOpenSource' }
+            }
             return { kind: 'retry', labelKey: 'common.retry' }
         // `handed-off` 也给重试：想再交一次（比如外部下载器其实没接住）
         case 'running':
@@ -98,11 +106,23 @@ export function taskPrimaryActionOf(task: QueueTask): TaskPrimaryAction {
     }
 }
 
-/** 次操作：只有「已经能打开视频页的跳过任务」才额外给一个强制下载入口 */
+/**
+ * 次操作。
+ *
+ * 私有视频必须**同时**给「打开作者主页」和「重试」：加好友只是前置条件（还要对方通过），
+ * 成为好友后还得再发一次请求；只给跳转等于把重试入口藏起来（旧实现的镜像问题：
+ * 只给重试，用户不知道为什么要重试、要去哪才能让重试变有效）。
+ * 外部嵌入视频不给重试：它永远失败在 `external Video` 分支上。
+ */
 export function taskSecondaryActionOf(task: QueueTask): TaskSecondaryAction | null {
-    if (task.status !== 'skipped') return null
-    if (task.followUpUrl === undefined || task.followUpUrl === '') return null
-    return { kind: 'force-download', labelKey: 'tasks.actionForceDownload' }
+    if (task.status === 'skipped') {
+        if (task.followUpUrl === undefined || task.followUpUrl === '') return null
+        return { kind: 'force-download', labelKey: 'tasks.actionForceDownload' }
+    }
+    if (task.status === 'failed' && task.followUpKind === 'author' && task.followUpUrl !== undefined && task.followUpUrl !== '') {
+        return { kind: 'retry', labelKey: 'common.retry' }
+    }
+    return null
 }
 
 /**

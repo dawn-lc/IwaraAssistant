@@ -42,6 +42,10 @@
 > `shared/taskView.ts` 的 `followUpOpenSettles`；只对 `failed` / `skipped` 生效，避免误点旧通知时
 > 取消掉一条已经重试成 `running` 的任务）。
 >
+> `followUpUrl` 的语义由 `QueueTask.followUpKind` 区分（旧记录缺省按 `video`）：`video` = 跳过任务的
+> 视频页、`external` = 外部嵌入视频的原始地址、`author` = 私有视频（仅好友可见）的作者主页（加为好友并通过后才能重试通过）。
+> 文案不能从 URL 反推，写入时就必须知道意图。
+>
 > 三条硬约束（每个消费点都要遵守）：
 >
 > - **不算失败**：不进「重试全部失败」，`RETRY_TASK` 对它会**明确报错**而不是静默重试

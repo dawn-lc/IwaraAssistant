@@ -171,7 +171,7 @@ npm run dev:chrome        # watch 模式
 ## 测试
 
 - **单元测试**：纯函数与状态机（路径、模板、配置 schema、页面路由、消息协议、旧库预算、任务对账、i18n 键一致性）。
-- **Playwright**：10 个 spec / 49 个用例，Chromium 直载构建产物；站点结构与 API 响应使用脱敏快照，CI 零外网依赖。
+- **Playwright**：10 个 spec / 51 个用例，Chromium 直载构建产物；站点结构与 API 响应使用脱敏快照，CI 零外网依赖。
 - **WebdriverIO**：Chrome + Firefox 同一份用例，25 个常规用例 + 13 个真实站点用例 + 4 个真实下载用例；不进 CI。
 - **Firefox 冒烟**：`web-ext run` 验证装载、`boot()` 与事件链。
 

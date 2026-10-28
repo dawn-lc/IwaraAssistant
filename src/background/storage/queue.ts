@@ -289,9 +289,10 @@ export async function notifyTask(task: QueueTask): Promise<void> {
     /**
      * 通知落点：有 `followUpUrl` 时必须去那里，而不是任务列表。
      *
-     * `followUpUrl` 只有两种来源，两者都是「去那里才有用」：
+     * `followUpUrl` 有三种来源，三者都是「去那里才有用」：
      * - `skipped`：跳过了，用户要去视频页看简介里的网盘链接；
-     * - `failed` + 外部视频（embedUrl）：重试一万次也不会成功，原始地址是唯一信息。
+     * - `failed` + 外部视频（embedUrl）：重试一万次也不会成功，原始地址是唯一信息；
+     * - `failed` + 私有视频（仅好友可见）：去作者主页加好友，对方通过后重试才可能成功。
      * 其余失败（解析错、网络错、下载器拒绕）才落到任务列表去重试。
      */
     const followUp = (state === 'skipped' || state === 'failed') && task.followUpUrl !== undefined

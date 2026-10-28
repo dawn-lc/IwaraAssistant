@@ -11,6 +11,14 @@ import type { DownloadKind } from '../messaging/protocol'
 
 // ── 持久化形态 ──────────────────────────────────────────────────────────
 
+/**
+ * 后续地址是什么（决定任务列表那颗按钮的文案）。
+ *
+ * 不能从 URL 反推：`/profile/x` 与 `/video/x` 只差一个路径段，而「打开原始地址」
+ * 指的外部 embed 域名更是不可枚举。文案要靠**写入时就知道的意图**，不是事后猜。
+ */
+export type FollowUpKind = 'video' | 'external' | 'author'
+
 export interface QueueTask {
     id: string
     videoId: string
@@ -48,13 +56,16 @@ export interface QueueTask {
     /** 失败原因、跳过原因等补充信息（不与 filename 混用） */
     detail?: string
     /**
-     * 「下一步该去哪」的地址：任务列表里点它直接打开。
+     * 「下一步该去哪」的地址：任务列表里点它直接打开（打开成功即视为待办已处理，见 `taskView.followUpOpenSettles`）。
      *
      * - `skipped`（第三方网盘链接）→ 视频页，用户自己看简介/评论决定用哪个下载方式
-     * - 外部嵌入视频 → 原始 embed 地址
+     * - 外部嵌入视频 → 原始 embed 地址（重试永远不会成功，链接是唯一有用的信息）
+     * - 私有视频（`errors.privateVideo`）→ 作者主页，加为好友（对方通过）是唯一能让解析通过的动作
      * 空值表示这个任务没有可跳转的目标（普通下载任务就没有：文件已经在本机了）。
      */
     followUpUrl?: string
+    /** `followUpUrl` 的语义，决定按钮文案（旧记录没有这个字段 → 按 `video` 处理） */
+    followUpKind?: FollowUpKind
     /** 自动重试已尝试次数（retry-failed alarm 用；上限见 alarms.ts） */
     attempts?: number
     /** 入队时间（ms）；旧记录可能缺失，UI 需容错 */

@@ -16,7 +16,7 @@ import { siteUrl } from '../../shared/site'
 import { addTask, getTasks, notifyTask, removeSkippedFor, syncTask } from '../storage/queue'
 import { blockingTaskFor, reusableFailedTaskFor } from '../../shared/downloadDedupe'
 import type { QueueTask } from '../../shared/task'
-import { channelTracksResult } from '../../shared/task'
+import { channelTracksResult, type FollowUpKind } from '../../shared/task'
 import type { FullVideoInfo } from '../../shared/videoInfo'
 import { stringify } from '../../shared/strings'
 import { uriExpiresAt } from '../../shared/url'
@@ -24,6 +24,7 @@ import { VideoParseError, parseVideoFull } from '../iwara/videoApi'
 import { getDownloadPath } from './downloadPath'
 import { aria2Download, browserDownload, browserDownloadErrorParse, downloadMetadata, iwaradlDownload, othersDownload, type ChannelContext } from './downloaders'
 import { deferBrowserStart, hasFreeBrowserSlot } from './browserQueue'
+import { describeParseFailure } from './parseFailure'
 import { followUser, likeVideo } from '../iwara/interactions'
 import { checkIsHaveDownloadLink } from '../iwara/linkCheck'
 import { notifyWarn } from '../runtime/notify'
@@ -251,17 +252,20 @@ async function runDownloadInner(payload: DispatchPayload): Promise<DispatchOutco
         video = await resolveVideo(payload)
     } catch (error) {
         const failInfo = error instanceof VideoParseError ? error.videoInfo : undefined
-        const detail = failInfo?.Msg ?? stringify(error)
+        // 私有视频（errors.privateVideo）是唯一一种「可行动」的解析失败：把作者主页写进
+        // `followUpUrl`，任务列表就会给出「打开作者主页」而不是一个永远无效的「重试」。
+        const failure = await describeParseFailure(payload.videoId, failInfo?.Msg ?? stringify(error), failInfo === undefined ? undefined : { username: failInfo.Author, alias: failInfo.Alias })
         // 外部视频（embedUrl）：源项目在失败提示里给一个「打开视频链接」按钮——
         // 因为我们根本不会去下载它，那个链接是唯一有用的信息。
         const externalUrl = failInfo?.ExternalUrl !== undefined && failInfo.ExternalUrl !== '' ? failInfo.ExternalUrl : undefined
+        const followUp: { followUpUrl?: string; followUpKind?: FollowUpKind } = failure.followUpUrl !== undefined ? { followUpUrl: failure.followUpUrl, followUpKind: failure.followUpKind } : externalUrl === undefined ? {} : { followUpUrl: externalUrl, followUpKind: 'external' }
         const task = await addTask({
             id: crypto.randomUUID(),
             videoId: payload.videoId,
             kind,
             status: 'failed',
-            detail: i18n.t('error.parseFailed', { detail }),
-            ...(externalUrl === undefined ? {} : { followUpUrl: externalUrl })
+            detail: i18n.t('error.parseFailed', { detail: failure.reason }),
+            ...followUp
         })
         await notifyTask(task)
         return task
@@ -283,6 +287,7 @@ async function runDownloadInner(payload: DispatchPayload): Promise<DispatchOutco
             status: 'skipped',
             detail: i18n.t('tasks.skippedDetail'),
             followUpUrl: siteUrl(`/video/${video.ID}`),
+            followUpKind: 'video',
             // 源项目点「打开视频链接」会顺手把保存文件名写进剪贴板；这里同样记下来，
             // 通知点击时复制（是否复制由 autoCopySaveFileName 在 notifyTask 里判断）
             filename
@@ -311,6 +316,7 @@ async function runDownloadInner(payload: DispatchPayload): Promise<DispatchOutco
         reusable.detail = undefined
         reusable.progress = undefined
         reusable.followUpUrl = undefined
+        reusable.followUpKind = undefined
         reusable.attempts = 0
         reusable.filename = filename
         await syncTask(reusable)
@@ -391,8 +397,16 @@ export async function retryTask(task: QueueTask): Promise<QueueTask> {
         try {
             video = await parseVideoFull(task.videoId)
         } catch (error) {
+            const failInfo = error instanceof VideoParseError ? error.videoInfo : undefined
+            const failure = await describeParseFailure(task.videoId, failInfo?.Msg ?? stringify(error), failInfo === undefined ? undefined : { username: failInfo.Author, alias: failInfo.Alias })
             task.attempts = (task.attempts ?? 0) + 1
-            task.detail = i18n.t('error.retryParseFailed', { message: error instanceof VideoParseError ? (error.videoInfo.Msg ?? error.message) : stringify(error) })
+            task.detail = i18n.t('error.retryParseFailed', { message: failure.reason })
+            // 只有新失败给出了更具体的下一步才覆盖。外部视频重试仍会以 "external Video" 失败，
+            // 而那种失败本身不带地址（地址在 FailVideoInfo.ExternalUrl 上）——无脑清空会把那条链接弄丢。
+            if (failure.followUpUrl !== undefined) {
+                task.followUpUrl = failure.followUpUrl
+                task.followUpKind = failure.followUpKind
+            }
             await syncTask(task)
             return task
         }
@@ -401,6 +415,9 @@ export async function retryTask(task: QueueTask): Promise<QueueTask> {
         task.detail = undefined
         // 进度属于「上一次尝试」：不清掉的话，重试后界面会从上一轮的 80% 开始显示
         task.progress = undefined
+        // 后续地址属于「上一次失败的诊断」：这次解析成功了就不该再把用户引向作者主页
+        task.followUpUrl = undefined
+        task.followUpKind = undefined
         task.filename = getDownloadPath(video).fullName
         await syncTask(task)
         return await executeChannels(task, video, ctx)

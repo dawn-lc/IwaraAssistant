@@ -21,12 +21,13 @@
 import { nextQueuedBrowserTask, slotAvailable } from '../../shared/browserConcurrency'
 import { i18n } from '../../shared/i18n'
 import { stringify } from '../../shared/strings'
-import type { QueueTask } from '../../shared/task'
+import type { FollowUpKind, QueueTask } from '../../shared/task'
 import type { FullVideoInfo } from '../../shared/videoInfo'
 import { VideoParseError, parseVideoFull } from '../iwara/videoApi'
 import { getConfig } from '../storage/configStore'
 import { getTasks, notifyTask, syncTask } from '../storage/queue'
 import { browserDownload, browserDownloadErrorParse, downloadMetadata, type ChannelContext } from './downloaders'
+import { describeParseFailure } from './parseFailure'
 
 interface PendingStart {
     video: FullVideoInfo
@@ -81,7 +82,7 @@ export async function pumpBrowserQueue(): Promise<void> {
     if (pumping) return
     pumping = true
     try {
-        for (;;) {
+        for (; ;) {
             const limit = getConfig().browserConcurrentDownloads
             if (!slotAvailable(activeBrowserDownloads(), 0, limit)) return
             const next = nextQueuedBrowserTask(getTasks())
@@ -120,7 +121,9 @@ async function startBrowserTask(task: QueueTask): Promise<void> {
         try {
             video = await parseVideoFull(task.videoId)
         } catch (error) {
-            await failTask(task, i18n.t('error.retryParseFailed', { message: error instanceof VideoParseError ? (error.videoInfo.Msg ?? error.message) : stringify(error) }))
+            const failInfo = error instanceof VideoParseError ? error.videoInfo : undefined
+            const failure = await describeParseFailure(task.videoId, failInfo?.Msg ?? stringify(error), failInfo === undefined ? undefined : { username: failInfo.Author, alias: failInfo.Alias })
+            await failTask(task, i18n.t('error.retryParseFailed', { message: failure.reason }), failure)
             return
         }
     }
@@ -140,9 +143,13 @@ async function startBrowserTask(task: QueueTask): Promise<void> {
     }
 }
 
-async function failTask(task: QueueTask, detail: string): Promise<void> {
+async function failTask(task: QueueTask, detail: string, followUp?: { followUpUrl?: string; followUpKind?: FollowUpKind }): Promise<void> {
     task.status = 'failed'
     task.detail = detail
+    if (followUp?.followUpUrl !== undefined) {
+        task.followUpUrl = followUp.followUpUrl
+        task.followUpKind = followUp.followUpKind
+    }
     await syncTask(task)
     await notifyTask(task)
 }
