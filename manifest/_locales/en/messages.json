@@ -25,5 +25,8 @@
     },
     "guardFooter": {
         "message": "While this warning is shown, the browser blocks every request this page makes — only navigating away still works."
+    },
+    "extDescription": {
+        "message": "Download and manage videos from iwara.tv: browser/Aria2/iwaradl channels, list filters, metadata cache, queue notifications."
     }
 }

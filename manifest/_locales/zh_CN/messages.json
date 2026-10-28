@@ -25,5 +25,8 @@
     },
     "guardFooter": {
         "message": "显示此警告期间，该页面发出的所有请求都会被浏览器拦下（只有跳转到其他地址不受影响）。"
+    },
+    "extDescription": {
+        "message": "批量下载与管理 iwara.tv 视频：Browser/Aria2/iwaradl 四通道、列表过滤、元数据缓存、系统通知任务队列。"
     }
 }

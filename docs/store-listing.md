@@ -19,7 +19,7 @@
 | Name           | Iwara Assistant                                                                                                              |
 | Summary (≤132) | Download and manage videos from iwara.tv: browser/Aria2/iwaradl channels, list filters, metadata cache, queue notifications. |
 | Category       | Tools                                                                                                                        |
-| Language       | en + ja + zh-CN（商店文字素材多语言在下方）                                                                                  |
+| Language       | en + ja + zh_CN（商店文字素材多语言在下方；扩展 locale 码用下划线）                                                          |
 | License        | Apache-2.0（与仓库根 `LICENSE` 一致）                                                                                        |
 
 ### Privacy tab（审核必填）
