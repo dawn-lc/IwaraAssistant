@@ -28,6 +28,20 @@ concurrency:
 # CI 不跑 WebdriverIO（它只在本机 `test:e2e:wdio*` 用），所以跳过 chromedriver 的
 # postinstall 下载——否则每个 job 都要各下一份 ~7 MB 的驱动，纯浪费。
 # 将来加 WDIO job 时，在该 job 里覆盖这个变量为 'false'。
+#
+# ── runner 镜像：钉 ubuntu-24.04，不用 ubuntu-latest ─────────────────────────────
+# `ubuntu-latest` 从 2026-10-19 起分几周逐步切到 Ubuntu 26.04（11-19 完成），
+# 期间**同一标签会在 24.04 / 26.04 之间随机落点**（actions/runner-images#14748）。
+# 随机的镜像 + 随机的系统库 = 「同一个 commit 重跑一次结果不同」，排查成本远高于
+# 手动升级一次的代价。钉住后 OS 变更成为一次显式提交、带自己的绿跑。
+# 升级方式：把下面两处 `ubuntu-24.04` 改成 `ubuntu-26.04`，观察一轮 CI 即可。
+#
+# ── action 版本：全部用 Node 24 运行时 ────────────────────────────────────────
+# v4 系列仍声明 Node 20，被 GitHub 强制跑在 Node 24 上并每轮刷 2 条 deprecation
+# 警告（2026-10 实测：checkout/setup-node/cache/upload-artifact 都被点名）。
+# 现用 checkout@v7 / setup-node@v7 / cache@v6 / upload-artifact@v7（均为最新主版本，
+# 破坏性变更只有「迁移到 ESM」与新增可选参数，本项目未受影响）。
+# 升级前需 runner ≥ v2.327.1（GitHub 托管 runner 早已满足）。
 env:
   CHROMEDRIVER_SKIP_DOWNLOAD: "true"
 
@@ -39,11 +53,11 @@ jobs:
   # 之前单独拆一个 package job 只是把同样的 npm ci + build 再跑一遍。
   verify:
     name: 类型 / 单测 / 构建 / Firefox 校验 / 打包
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -60,7 +74,7 @@ jobs:
         run: npm run build
       - name: Firefox 清单校验（web-ext lint）
         run: npm run lint:firefox
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: extension-zips
           path: |
@@ -74,11 +88,11 @@ jobs:
   # 换来的是总时长从「verify + e2e」变成「max(verify, e2e)」。
   e2e-chromium:
     name: Chromium 扩展 e2e（Playwright）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -89,7 +103,7 @@ jobs:
         id: playwright-version
         run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
       - name: 缓存 Playwright Chromium
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}

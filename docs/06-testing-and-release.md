@@ -39,6 +39,8 @@
 
 - 同一分支连推会取消上一轮（`concurrency.cancel-in-progress`）。
 - `permissions: contents: read`，job 超时 15 / 25 分钟。
+- **runner 钉 `ubuntu-24.04`，不用 `ubuntu-latest`**：后者从 2026-10-19 起分几周切到 Ubuntu 26.04（11-19 完成），期间同一标签在 24.04 / 26.04 之间**随机落点**（[actions/runner-images#14748](https://github.com/actions/runner-images/issues/14748)）——同一个 commit 重跑一次结果可能不同。钉住后 OS 变更是一次显式提交、带自己的绿跑；升级只需把 `runs-on` 改成 `ubuntu-26.04`。
+- **action 全部使用 Node 24 运行时**（`checkout@v7` / `setup-node@v7` / `cache@v6` / `upload-artifact@v7`）：v4 系列仍声明 Node 20，会被强制跑在 Node 24 上并每轮刷 deprecation 警告。这几个大版本的破坏性变更只有「迁移到 ESM」与新增可选参数，本项目未受影响。
 - **CI 不检查格式**（prettier）：格式由提交前钩子保证（见下一节），CI 不必再为它设门。它一旦变红会让单测/构建/`web-ext lint`/上传全部 `skipped`——用「没按空格」清零整条流水线的验证价值。
 - CI 不跑 WDIO，因此设置 `CHROMEDRIVER_SKIP_DOWNLOAD=true` 跳过后安装下载；将来加 WDIO job 时在该 job 覆盖为 `false`。
 - Playwright 浏览器缓存键使用 `@playwright/test` 自身版本，依赖变动不会无谓失效。
