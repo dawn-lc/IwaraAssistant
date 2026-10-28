@@ -18,24 +18,24 @@ const ICON = 'icons/icon-128.png'
 export type NotificationTarget =
     | { kind: 'options'; tab: OptionsTabId }
     | {
-          kind: 'url'
-          url: string
-          /**
-           * 点击时要写入剪贴板的文本（目前只有「发现第三方网盘链接」用）。
-           *
-           * 必须挂在**点击**上而不是检测时：源项目的 `autoCopySaveFileName` 语义就是
-           * 「用户点了『打开视频链接』按钮才复制」——点那一下才表示他决定改用外部下载器。
-           */
-          copyText?: string
-          /**
-           * 这条通知对应的队列任务（待办的 id）。
-           *
-           * 点击 = 用户去手动处理了这条待办，后台会在打开页面后把记录结掉
-           * （见 `background/index.ts` 的 `onClicked`）。**必须复核当前状态**：
-           * 重试会复用同一条记录，旧通知点下去时它可能已经是 running。
-           */
-          taskId?: string
-      }
+        kind: 'url'
+        url: string
+        /**
+         * 点击时要写入剪贴板的文本（目前只有「发现第三方网盘链接」用）。
+         *
+         * 必须挂在**点击**上而不是检测时：源项目的 `autoCopySaveFileName` 语义就是
+         * 「用户点了『打开视频链接』按钮才复制」——点那一下才表示他决定改用外部下载器。
+         */
+        copyText?: string
+        /**
+         * 这条通知对应的队列任务（待办的 id）。
+         *
+         * 点击 = 用户去手动处理了这条待办，后台会在打开页面后把记录结掉
+         * （见 `background/index.ts` 的 `onClicked`）。**必须复核当前状态**：
+         * 重试会复用同一条记录，旧通知点下去时它可能已经是 running。
+         */
+        taskId?: string
+    }
 
 export interface NotifyOptions {
     message: string
@@ -218,8 +218,8 @@ export async function showNotification(id: string, options: NotifyOptions): Prom
     if (options.autoCloseMs !== undefined && options.autoCloseMs > 0) {
         // 不 await：定时器到了才执行；SW 被挂起时定时器丢失，退化为「通知留着」
         const timer = setTimeout(() => void clearNotification(id), options.autoCloseMs)
-        // node 单测环境里定时器会拖住进程退出；浏览器里 setTimeout 返回 number，没有 unref
-        ;(timer as unknown as { unref?: () => void }).unref?.()
+            // node 单测环境里定时器会拖住进程退出；浏览器里 setTimeout 返回 number，没有 unref
+            ; (timer as unknown as { unref?: () => void }).unref?.()
     }
 }
 
