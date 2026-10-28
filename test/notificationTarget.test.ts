@@ -138,6 +138,17 @@ test('copyText 类型不对的脏目标整条丢弃（宁可点了不复制，�
     assert.equal(await consumeNotificationTarget('warn-links-bad-copy'), null)
 })
 
+test('任务 id 随目标往返（点击通知后要能结掉队列里那条待办）', async () => {
+    const url = 'https://www.iwara.tv/video/withtask'
+    await showNotification('task-withtask', { message: 'm', target: { kind: 'url', url, taskId: 'task-row-1' } })
+    assert.deepEqual(await consumeNotificationTarget('task-withtask'), { kind: 'url', url, taskId: 'task-row-1' })
+})
+
+test('taskId 类型不对的脏目标整条丢弃（宁可不结算，也不要删错记录）', async () => {
+    sessionStore.set('notificationTargets', { 'task-bad-taskid': { kind: 'url', url: 'https://www.iwara.tv/video/bad', taskId: 42 } })
+    assert.equal(await consumeNotificationTarget('task-bad-taskid'), null)
+})
+
 // ── 生命周期（对齐源 toastify 的 duration/silent 语义）──────────────────
 
 test('信息级通知：静音 + 到点自动关闭（对齐源 Info 的 duration:2000）', async () => {

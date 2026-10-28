@@ -6,9 +6,10 @@
  * 所以每条规则都要能被单测逐条钉住。
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable } from '../src/shared/taskView'
+import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, followUpOpenSettles } from '../src/shared/taskView'
 import type { QueueTask } from '../src/shared/task'
 
 function task(overrides: Partial<QueueTask> & Pick<QueueTask, 'status'>): QueueTask {
@@ -97,6 +98,45 @@ test('次操作：其它状态一律没有（避免同意义的两个入口）',
     }
     // 没有跳转目标的跳过行，主操作本身就是强制下载，再加一个就是重复
     assert.equal(taskSecondaryActionOf(task({ status: 'skipped' })), null)
+})
+
+// ── 打开后续地址 = 手动处理完 ───────────────────────────────────────────
+// 待办清单不能只进不出：用户打开视频页/原始地址去处理之后，记录必须自己消失。
+// 但**只有待办能结**——重试复用同一条记录，旧通知点下去时它可能正在下载；
+// 那种情况移除会先取消下载器，代价不该由误点承担。
+
+test('打开后续地址：只有待办（失败/跳过）才结算', () => {
+    for (const status of ['failed', 'skipped'] as const) assert.equal(followUpOpenSettles(task({ status })), true, `${status} 应结算`)
+    for (const status of ['running', 'queued', 'complete', 'handed-off'] as const) assert.equal(followUpOpenSettles(task({ status })), false, `${status} 不该被「打开通知」结掉`)
+})
+
+// ── 接线守卫（缺失不会有任何类型错误）──────────────────────────────────
+
+test('接线：任务页「打开」必须成功打开页面后再移除记录', () => {
+    const source = readFileSync('src/options/tabs/TasksTab.tsx', 'utf8')
+    const openIndex = source.indexOf('await browser.tabs.create({ url, active: true })')
+    const removeIndex = source.indexOf("return send<RemoveResult>({ type: 'REMOVE_TASK'")
+    assert.ok(openIndex > 0, '打开后续地址的调用应存在')
+    assert.ok(removeIndex > 0, '打开后必须把待办从队列移除（否则「需要处理」只增不减）')
+    assert.ok(openIndex < removeIndex, '顺序不能反：页面没打开就删记录等于把待办弄丢')
+})
+
+test('接线：点通知结算前必须复核任务当前状态（复用记录可能已是 running）', () => {
+    const source = readFileSync('src/background/index.ts', 'utf8')
+    const start = source.indexOf('browser.notifications.onClicked.addListener')
+    const end = source.indexOf('// ── 启动恢复', start)
+    assert.ok(start > 0 && end > start, '通知点击处理器应存在')
+    const block = source.slice(start, end)
+    assert.match(block, /findTask\(\{ id: target\.taskId \}\)/, '必须先取出这条任务')
+    assert.match(block, /followUpOpenSettles\(task\)/, '必须按当前状态判断能不能结算')
+    const guardIndex = block.indexOf('followUpOpenSettles(task)')
+    const removeIndex = block.indexOf('removeTaskById(task.id)')
+    assert.ok(guardIndex > 0 && removeIndex > guardIndex, '判据必须在移除之前')
+})
+
+test('接线：任务通知的目标必须带 taskId（不带就结不掉那条待办）', () => {
+    const source = readFileSync('src/background/storage/queue.ts', 'utf8')
+    assert.match(source, /taskId: task\.id/, 'notifyTask 的 url 目标必须登记对应的任务 id')
 })
 
 // ── 排序与计数 ──────────────────────────────────────────────────────────

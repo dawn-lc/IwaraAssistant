@@ -22,6 +22,7 @@ import { onMessage } from '../messaging/hub'
 import type { Req } from '../messaging/protocol'
 import { siteUrl } from '../shared/site'
 import { getLanguage, watchLanguage, i18n } from '../shared/i18n'
+import { followUpOpenSettles } from '../shared/taskView'
 import { db, countStores, readStorePage } from './storage/db'
 import { configReady, getConfig } from './storage/configStore'
 import { loadQueue, findTask, notifyTask, syncTask, updateBadge, queueReady, collapseDuplicateLiveTasks } from './storage/queue'
@@ -107,6 +108,16 @@ browser.notifications.onClicked.addListener((notificationId) => {
         if (target.kind === 'url' && target.copyText !== undefined) await copyText(target.copyText)
         const url = target.kind === 'options' ? browser.runtime.getURL(`options/index.html#${target.tab}`) : target.url
         await browser.tabs.create({ url, active: true })
+        // 打开后续地址 = 用户去手动处理这条待办（看简介里的网盘链接 / 去外部源），
+        // 待办到此为止：把记录结掉。两个条件都不能省——
+        // ① 有 taskId 才说明这条通知对应任务列表里的一行；
+        // ② 必须复核**当前**状态：重试复用同一条记录，旧通知点下去时它可能已是 running，
+        //    那种情况移除会先取消下载器（download/queueActions.ts），代价不该由误点承担。
+        if (target.kind === 'url' && target.taskId !== undefined) {
+            await queueReady()
+            const task = findTask({ id: target.taskId })
+            if (task !== undefined && followUpOpenSettles(task)) await removeTaskById(task.id).catch(() => undefined)
+        }
     })()
 })
 

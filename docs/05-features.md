@@ -92,6 +92,7 @@ aria2 的 `waiting` / `paused` 映射为 `queued`（「排队中（aria2）」�
 任务状态：`queued`、`running`、`complete`、`failed`、`skipped`。
 
 - **移除**：先按通道能力取消下载器，再删记录。能取消的通道（browser / aria2 / iwaradl pending）先取消；`others` 没有撤销接口，删记录但提示「可能仍在下载」；仍在传输且取消失败时抛错并保留任务。
+- **处理完即移除**：打开后续地址（视频页 / 外部原始地址）就表示用户去手动处理了这条待办，**页面开成功后记录自动移除**；点通知走同一条规则。只对 `failed` / `skipped` 生效（判据 `shared/taskView.ts` 的 `followUpOpenSettles`）：重试复用同一条记录，旧通知点下去时它可能正在下载，那种情况移除会先取消下载器。
 - **清空已结束**：只清 `complete` / `failed` 等终态，不清 `skipped`（它属于待办）。
 - **重试**：单条重试重置尝试次数；`skipped` 不允许重试，否则会再次命中链接预检形成死循环，只能走「强制下载」。
 - **启动对账**：`boot()` 会校正持久化队列与后端真实状态，避免 SW 回收后界面永远停在 `running`。
@@ -99,8 +100,8 @@ aria2 的 `waiting` / `paused` 映射为 `queued`（「排队中（aria2）」�
 ### 链接预检与元数据
 
 - `CHECK_LINK` 对下载地址做 HEAD 探测（10 秒超时，仅 `http/https`）。命中的任务仍会入库，状态为 `skipped`，并带上视频页地址与保存文件名，方便用户稍后处理。
-- `skipped` 不算失败、不算进行中、不算已结束；任务列表提供「打开视频页」与「强制下载」。
-- 「强制下载」走 `FORCE_DOWNLOAD`，不伪造页面类型，避免绕过逻辑随页面判定变化而失效。
+- `skipped` 不算失败、不算进行中、不算已结束；任务列表提供「打开视频页」与「强制下载」。打开视频页（或点击那条通知）之后待办即视为处理完毕，自动从队列移除。
+- 「强制下载」走 `FORCE_DOWNLOAD`，不伪造页面类型，避免绕过逻辑随页面判定变化而失效；它同时把同视频那条 `skipped` 待办结掉（用户已经做出了选择，解析失败也只该留一条失败记录）。
 - 元数据 JSON 通过 `DOWNLOAD_METADATA` 单独下载，文件名经过 `analyzePath` / `toDownloadFilename` 清洗。
 - `autoCopySaveFileName` 开启时，检测到网盘链接会把保存文件名写入剪贴板（Chrome 经 offscreen 文档，Firefox 后台页直接写）。
 

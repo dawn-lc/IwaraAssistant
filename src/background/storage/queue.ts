@@ -300,7 +300,9 @@ export async function notifyTask(task: QueueTask): Promise<void> {
               kind: 'url',
               url: task.followUpUrl as string,
               // 源项目点「打开视频链接」会顺手把保存文件名写进剪贴板；只有跳过场景才复制
-              ...(state === 'skipped' && getConfig().autoCopySaveFileName && task.filename ? { copyText: task.filename } : {})
+              ...(state === 'skipped' && getConfig().autoCopySaveFileName && task.filename ? { copyText: task.filename } : {}),
+              // 点击 = 去处理这条待办：后台打开页面后把记录结掉（见 index.ts 的 onClicked）
+              taskId: task.id
           }
         : { kind: 'options', tab: 'tasks' }
 

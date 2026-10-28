@@ -38,6 +38,9 @@
 > **`checkDownloadLink` 命中时仍然建记录，但状态是 `skipped`**：
 > 把「你去看看这个视频」的入口放进 options 任务列表：`skipped` 任务带 `followUpUrl`（视频页）与 `filename`
 > （`autoCopySaveFileName` 开启时点击通知复制），列表里给「打开视频页」+「强制下载」两颗按钮。
+> **打开就视为处理完**：页面开成功后这条待办自动从队列移除（列表与通知点击同一规则，判据
+> `shared/taskView.ts` 的 `followUpOpenSettles`；只对 `failed` / `skipped` 生效，避免误点旧通知时
+> 取消掉一条已经重试成 `running` 的任务）。
 >
 > 三条硬约束（每个消费点都要遵守）：
 >

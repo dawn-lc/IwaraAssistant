@@ -105,6 +105,22 @@ export function taskSecondaryActionOf(task: QueueTask): TaskSecondaryAction | nu
     return { kind: 'force-download', labelKey: 'tasks.actionForceDownload' }
 }
 
+/**
+ * 「打开后续地址」（视频页 / 外部源）之后，这条记录是否还要从队列移除 —— 是，就等于
+ * **打开了就说明用户在手动处理**：去看简介里的网盘链接、或去外部源自己下。
+ *
+ * 为什么必须在打开后移除：源项目那类提示是页内 toast，点掉即消失；我们的记录是持久的，
+ * 留着它「需要处理」的计数只会越滚越多，待办清单就退化成历史遗留。
+ *
+ * 为什么**只**对 `attention` 生效：重试会复用同一条记录（`retryTask`），一条当时登记的通知
+ * 可能指向一条已经变成 `running` 的任务；那种情况下移除会先取消下载器
+ * （见 `download/queueActions.ts` 的 `removeTaskById`）——用户只是点了一条过时通知，
+ * 不该付出「下载被取消」的代价。`done` 同理：没有待办可结。
+ */
+export function followUpOpenSettles(task: Pick<QueueTask, 'status'>): boolean {
+    return taskGroupOf(task) === 'attention'
+}
+
 /** 分组排序权重：待办永远在最上面（通知没叫住的人，打开任务页第一眼要能看见） */
 function groupRank(group: TaskGroup): number {
     switch (group) {

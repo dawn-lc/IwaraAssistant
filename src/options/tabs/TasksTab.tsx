@@ -19,6 +19,9 @@
  *   失败给「重试」；而不是所有人共用一对「重试 / 移除」
  * - 「重试」不再对 `skipped` 可用：重试会重新过 `checkDownloadLink`，命中后又是
  *   `skipped`——那是「点了没反应」的死循环。想下必须走「强制下载」（显式绕门）
+ * - **打开后续地址 = 手动处理完**：页面开成功后这条待办自动从队列移除（判据见
+ *   `shared/taskView.ts` 的 `followUpOpenSettles`）。通知点击走同一条规则，
+ *   所以「打开视频页」不会在两个入口给出不同结果
  *
  * ## 契约（e2e 依赖，改前先看这一段）
  *
@@ -94,7 +97,7 @@ interface ActionMessage {
  * 拼出来的值，批量操作是固定名。之前写 `string | null` 时任何拼写错误都能通过编译，
  * 而按钮文案不依赖这个值，错了也不会有任何可见异常——属于只有类型能挡的一类错。
  */
-type BusyKey = 'clear-finished' | 'retry-failed' | 'sync-download' | `retry-${string}` | `remove-${string}` | `force-${string}`
+type BusyKey = 'clear-finished' | 'retry-failed' | 'sync-download' | `retry-${string}` | `remove-${string}` | `force-${string}` | `open-${string}`
 
 export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
     const [filter, setFilter] = useState<FilterId>('all')
@@ -144,13 +147,22 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
         }
     }
 
-    /** 打开外部地址（视频页 / 外部嵌入源）。失败要让用户知道，不能静默吞掉 */
-    const openUrl = async (url: string): Promise<void> => {
-        try {
-            await browser.tabs.create({ url, active: true })
-        } catch (error) {
-            toast.error(tr('common.operationFailed', { message: error instanceof Error ? error.message : String(error) }), { duration: 6000 })
-        }
+    /**
+     * 「打开后续地址」= 用户去手动处理这条待办（看简介里的网盘链接 / 去外部源）。
+     *
+     * 打开的这一刻待办就结束了：源项目那类提示是页内 toast，点掉即消失；
+     * 我们的记录是持久的，留着它「需要处理」只会越滚越多，待办清单就退化成历史遗留。
+     * 顺序不能反——**页面开成功了才删记录**，开不出来还要留着重试（不能把待办弄丢）。
+     */
+    const openFollowUp = (task: QueueTask, url: string): void => {
+        void run(
+            `open-${task.id}`,
+            async () => {
+                await browser.tabs.create({ url, active: true })
+                return send<RemoveResult>({ type: 'REMOVE_TASK', payload: { taskId: task.id } })
+            },
+            (result) => (result.removed ? { message: tr('tasks.handledRemoved', { id: task.videoId }) } : { message: tr('tasks.notInQueue', { id: task.videoId }), tone: 'info' as const })
+        )
     }
 
     const retryOne = (task: QueueTask): void => {
@@ -206,7 +218,7 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
         const action = taskPrimaryActionOf(task)
         switch (action.kind) {
             case 'open':
-                void openUrl(action.url)
+                openFollowUp(task, action.url)
                 return
             case 'retry':
                 retryOne(task)

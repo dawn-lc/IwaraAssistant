@@ -27,6 +27,14 @@ export type NotificationTarget =
            * 「用户点了『打开视频链接』按钮才复制」——点那一下才表示他决定改用外部下载器。
            */
           copyText?: string
+          /**
+           * 这条通知对应的队列任务（待办的 id）。
+           *
+           * 点击 = 用户去手动处理了这条待办，后台会在打开页面后把记录结掉
+           * （见 `background/index.ts` 的 `onClicked`）。**必须复核当前状态**：
+           * 重试会复用同一条记录，旧通知点下去时它可能已经是 running。
+           */
+          taskId?: string
       }
 
 export interface NotifyOptions {
@@ -70,9 +78,9 @@ type TargetMap = Record<string, NotificationTarget>
 
 function isTarget(value: unknown): value is NotificationTarget {
     if (value === null || typeof value !== 'object') return false
-    const entry = value as { kind?: unknown; tab?: unknown; url?: unknown; copyText?: unknown }
+    const entry = value as { kind?: unknown; tab?: unknown; url?: unknown; copyText?: unknown; taskId?: unknown }
     if (entry.kind === 'options') return typeof entry.tab === 'string'
-    if (entry.kind === 'url') return typeof entry.url === 'string' && (entry.copyText === undefined || typeof entry.copyText === 'string')
+    if (entry.kind === 'url') return typeof entry.url === 'string' && (entry.copyText === undefined || typeof entry.copyText === 'string') && (entry.taskId === undefined || typeof entry.taskId === 'string')
     return false
 }
 

@@ -179,6 +179,14 @@ test('接线：FORCE_DOWNLOAD 必须绕过队列去重（用户明确的「我�
     assert.match(line, /skipDedupe: true/, '强制下载被自动判据拦住就变成「点了没反应」')
 })
 
+test('接线：强制下载必须先结掉同视频的 skipped 待办（解析失败也不该留两行待办）', () => {
+    const source = readFileSync('src/background/download/dispatch.ts', 'utf8')
+    const settle = source.indexOf('if (payload.skipLinkCheck === true) await removeSkippedFor(payload.videoId)')
+    const parse = source.indexOf('await resolveVideo(payload)')
+    assert.ok(settle > 0, '强制下载入口必须先结掉 skipped 待办（用户已经做出了选择）')
+    assert.ok(parse > settle, '必须排在解析之前：解析失败时只该留一条「失败」记录')
+})
+
 test('接线：消息路由必须等队列就绪再处理（否则 dedupe 看到空队列、addTask 覆盖磁盘）', () => {
     const source = readFileSync('src/background/index.ts', 'utf8')
     // 逐行判、且要求整行只有这条语句：用 `/await queueReady\(\)/` 会匹配到注释，

@@ -240,6 +240,11 @@ async function runDownloadInner(payload: DispatchPayload): Promise<DispatchOutco
         }
     }
 
+    // 「强制下载」= 用户在任务列表里明确选了「我就是要下」：那条 `skipped` 待办在他做出选择的
+    // 那一刻就算处理完。放在解析**之前**是刻意的——解析失败时只该留一条「失败」记录，
+    // 而不是 skipped + failed 两行同时挂在「需要处理」里（同一视频两条待办，用户不知道该看哪条）。
+    if (payload.skipLinkCheck === true) await removeSkippedFor(payload.videoId)
+
     // full 解析（payload 已带 full 信息则直用；原 downloadFlow 同构）
     let video: FullVideoInfo
     try {
