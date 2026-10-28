@@ -36,6 +36,7 @@
         "type-check": "tsc --noEmit",
         "type-check:e2e": "tsc -p e2e/tsconfig.json --noEmit",
         "type-check:wdio": "tsc -p e2e/wdio/tsconfig.json --noEmit",
+        "prepare": "node .githooks/install.mjs",
         "format": "prettier --write .",
         "format:check": "prettier --check ."
     },

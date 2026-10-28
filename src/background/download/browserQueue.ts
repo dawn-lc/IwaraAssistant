@@ -82,7 +82,7 @@ export async function pumpBrowserQueue(): Promise<void> {
     if (pumping) return
     pumping = true
     try {
-        for (; ;) {
+        for (;;) {
             const limit = getConfig().browserConcurrentDownloads
             if (!slotAvailable(activeBrowserDownloads(), 0, limit)) return
             const next = nextQueuedBrowserTask(getTasks())

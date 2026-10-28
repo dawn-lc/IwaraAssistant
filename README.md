@@ -158,9 +158,13 @@ npm run test:firefox:smoke # web-ext run 装载冒烟
 npm run type-check        # 扩展 + 单测
 npm run type-check:e2e    # Playwright
 npm run type-check:wdio   # WDIO
-npm run format            # prettier
+npm run format            # prettier（提交时钩子也会自动格式化暂存的文件）
 npm run dev:chrome        # watch 模式
 ```
+
+> `npm install` 会自动把 git 钩子目录指向 `.githooks`：提交时**自动格式化暂存的文件**并重新暂存，
+> 所以格式问题进不了仓库，CI 也就不必查它。逃生阀：`git commit --no-verify`。
+> 详见 [06-testing-and-release.md](docs/06-testing-and-release.md#提交前自动格式化pre-commit-钩子)。
 
 > 需要环境变量的脚本统一写成 `node --import tsx/esm ./build/env.ts KEY=VALUE … -- <命令>`（见 `build/env.ts`）。
 

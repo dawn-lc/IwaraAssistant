@@ -1,0 +1,15 @@
+#!/bin/sh
+# 提交前自动格式化暂存的文件（逻辑在 formatStaged.mjs，用 node 跑所以三平台一致）。
+#
+# 为什么用 sh：Git for Windows 自带 sh.exe 执行钩子，Windows 上不依赖文件的可执行位；
+# Linux/macOS 上由 .githooks/install.mjs 补 chmod，不需要用户手动处理。
+#
+# 逃生阀：
+#   git commit --no-verify          连钩子都不执行
+#   SKIP_FORMAT_HOOK=1 git commit   执行到这里但跳过格式化
+if [ "$SKIP_FORMAT_HOOK" = "1" ]; then
+    echo "[format] SKIP_FORMAT_HOOK=1，跳过提交前格式化"
+    exit 0
+fi
+
+exec node .githooks/formatStaged.mjs

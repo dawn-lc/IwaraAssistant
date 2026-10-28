@@ -30,18 +30,41 @@
 
 `.github/workflows/ci.yml` 有两个并行 job：
 
-| Job            | 内容                                                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `verify`       | 安装依赖 → 三条类型检查 → prettier 格式检查 → 单元测试 → 双目标构建（含 ZIP）→ `web-ext lint` → 上传 `dist/*.zip` 产物（保留 14 天） |
-| `e2e-chromium` | 安装依赖 → 按 Playwright 版本缓存 Chromium → 构建 `dist/chrome` → 无头 Playwright e2e                                                |
+| Job            | 内容                                                                                                             |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `verify`       | 安装依赖 → 三条类型检查 → 单元测试 → 双目标构建（含 ZIP）→ `web-ext lint` → 上传 `dist/*.zip` 产物（保留 14 天） |
+| `e2e-chromium` | 安装依赖 → 按 Playwright 版本缓存 Chromium → 构建 `dist/chrome` → 无头 Playwright e2e                            |
 
 约定：
 
 - 同一分支连推会取消上一轮（`concurrency.cancel-in-progress`）。
 - `permissions: contents: read`，job 超时 15 / 25 分钟。
+- **CI 不检查格式**（prettier）：格式由提交前钩子保证（见下一节），CI 不必再为它设门。它一旦变红会让单测/构建/`web-ext lint`/上传全部 `skipped`——用「没按空格」清零整条流水线的验证价值。
 - CI 不跑 WDIO，因此设置 `CHROMEDRIVER_SKIP_DOWNLOAD=true` 跳过后安装下载；将来加 WDIO job 时在该 job 覆盖为 `false`。
 - Playwright 浏览器缓存键使用 `@playwright/test` 自身版本，依赖变动不会无谓失效。
 - CI 全程零外网依赖；真实站点冒烟与 WDIO 跨浏览器套件只在本地运行。
+
+## 提交前自动格式化（pre-commit 钩子）
+
+格式问题应该**在提交前消失**，而不是在 CI 里报警——所以它由 git 钩子解决，不占 CI 门禁。
+
+| 文件                         | 职责                                                                                      |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| `.githooks/pre-commit`       | sh 入口（Git for Windows 自带 sh，不依赖可执行位）                                        |
+| `.githooks/formatStaged.mjs` | 实际逻辑：只处理**本次暂存**的文件                                                        |
+| `.githooks/install.mjs`      | 把 `core.hooksPath` 指向 `.githooks`，由 `prepare` 在 `npm install` / `npm ci` 后自动执行 |
+
+**为什么不能把钩子直接放 `.git/hooks`**：那个目录不进版本控制，克隆后就是空的。官方唯一可分发机制是 `core.hooksPath`，因此需要一次配置——挂在 `prepare` 上就不需要用户记任何命令（它永不失败：非 git 环境、浅克隆、用户已自设 hooksPath 都静默跳过）。
+
+三条安全性质（写错会丢用户的工作）：
+
+1. **只碰暂存的文件**（`git diff --cached --diff-filter=ACMR`），不扫工作区。
+2. **暂存内容与工作区不一致时阻止提交**：部分暂存（改了 A 段 add、又改了 B 段没 add）时，格式化工作区再 `git add` 会把 B 段一起提交。提示里给出两种解决办法（全部暂存 / `git stash push --keep-index`）。
+3. **与 `npm run format` 同一套判据**：`.prettierignore` + prettier 能否推断出 parser（`*.json`、`dist`、`temp`、`reference`、录制快照全部跳过）。
+
+格式化失败（文件有语法错误）时阻止提交并打印 prettier 原话——那种情况不可能「帮你改好」。
+
+逃生阀：`git commit --no-verify`，或 `SKIP_FORMAT_HOOK=1 git commit ...`。
 
 ## 发布流程
 
@@ -59,12 +82,14 @@ npm run lint:firefox            # web-ext lint，应为 0 error / 0 notice
 ### 提交检查清单
 
 1. `npm run type-check && npm run type-check:e2e && npm run type-check:wdio`
-2. `npm run format:check`
-3. `npm run test:unit`
-4. `npm run build`
-5. `npm run lint:firefox`
-6. 需要时本机运行 `npm run test:e2e:wdio`（Chrome + Firefox）
-7. 上传 `dist/chrome.zip` 与 `dist/firefox.zip`，按商店要求填写权限用途与隐私声明
+2. `npm run test:unit`
+3. `npm run build`
+4. `npm run lint:firefox`
+5. 需要时本地 e2e：`npm run test:e2e:wdio`（Chrome + Firefox）
+6. 上传 `dist/chrome.zip` 与 `dist/firefox.zip`，按商店要求填写权限用途与隐私声明
+
+> 格式化不需要手动跑：提交时钩子会自动处理暂存的文件（见「提交前自动格式化」）。
+> 想整仓收拾一遍仍可用 `npm run format`。
 
 ## 未完成事项（代码之外）
 

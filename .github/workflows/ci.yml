@@ -14,6 +14,17 @@ concurrency:
 # 所有步骤都是「本地能跑的命令」，不在 CI 里引入额外魔法：
 # 单元测试用 node --test（无框架依赖），构建/打包/校验都走 package.json scripts。
 #
+# ⚠️ 这里**故意不检查格式**（prettier）。理由：
+# 1. 格式由**提交前钩子**保证（`.githooks/`，见 docs/06）。钩子会在提交时把暂存的文件排好版，
+#    格式问题根本没有机会进入仓库 —— CI 再查一遍只是在验证「钩子有没有被人 --no-verify 绕过」；
+# 2. 语法与类型由 `verify` 里的三条 `tsc --noEmit` 负责，prettier 只管排版（空格、缩进、行尾），
+#    它红的时候代码往往完全正确 —— 把「没按空格」和「代码有问题」放进同一个失败信号里，
+#    就是在稀释门禁的含义；
+# 3. 它排在 verify 前段，一旦红会让后面「单元测试 / 构建 / web-ext lint / 上传产物」全部
+#    skipped（2026-10-29 实测：389 单测全绿、三套类型检查 0、构建打包成功、
+#    web-ext 0/0/0，只有格式红 → 四个真正有价值的步骤一个都没跑）。
+# 若哪天想加回校验，请放在 `verify` 的最末尾并带 `if: always()`，别让它吃掉前面的步骤。
+#
 # CI 不跑 WebdriverIO（它只在本机 `test:e2e:wdio*` 用），所以跳过 chromedriver 的
 # postinstall 下载——否则每个 job 都要各下一份 ~7 MB 的驱动，纯浪费。
 # 将来加 WDIO job 时，在该 job 里覆盖这个变量为 'false'。
@@ -43,8 +54,6 @@ jobs:
           npm run type-check
           npm run type-check:e2e
           npm run type-check:wdio
-      - name: 格式检查（prettier）
-        run: npm run format:check
       - name: 单元测试
         run: npm run test:unit
       - name: 构建并打包（Chrome + Firefox → dist/*.zip）
