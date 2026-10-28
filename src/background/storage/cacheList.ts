@@ -1,11 +1,11 @@
 /**
- * 缓存回填列表（CACHE_INJECTION_LIST 载荷）—— 原 handleVideosResponse 内联逻辑的拆出
+ * 缓存回填列表（`GET_CACHE_INJECTION` / `CACHE_INJECTION_LIST` 载荷）—— 原 handleVideosResponse 内联逻辑的拆出
  *
  * 原实现每次 /videos 响应同步查库取窗口内 private/unlisted 缓存并排序；
- * 扩展化后由后台预计算推送给 MAIN 世界做纯合并（docs/01 注入最小化：
- * MAIN 不查库、不引入 idb 依赖）。与原版的唯一偏差：列表按「页面窗口上报
- * → 后台计算 → 下行推送」异步到达，首个响应若早于推送则该页暂不回填
- * （后续同窗口响应即时生效）。
+ * 扩展化后 MAIN 世界不能查库，改为按当前页窗口向后台要一份即时列表
+ * （docs/04 的 `GET_CACHE_INJECTION`）：查库与排序仍在后台，MAIN 只做纯合并。
+ * `CACHE_INJECTION_LIST` 推送（入库/配置变更后重算）只作后台暂时不可用时的兜底——
+ * 它对应的是「上一页」窗口，不能作为主路径。
  */
 import { db } from './db'
 import type { CacheInjection } from '../../messaging/protocol'

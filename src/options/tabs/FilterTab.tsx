@@ -20,10 +20,10 @@ export function FilterTab({ config }: { config: Config }): ReactElement {
                 <Toggle label="" checked={config.filterLikedVideos} onChange={(next) => save({ filterLikedVideos: next })} />
             </Row>
             <Row label={t('filter.unlistedFilter')} hint={t('filter.unlistedFilterHint')}>
-                <Toggle label="" checked={config.filterUnlistedAndPrivate} onChange={(next) => save({ filterUnlistedAndPrivate: next })} />
+                <Toggle label="" checked={config.filterUnlistedAndPrivate} onChange={(next) => save(next ? { filterUnlistedAndPrivate: true, addUnlistedAndPrivate: false } : { filterUnlistedAndPrivate: false })} />
             </Row>
             <Row label={t('filter.unlistedAdd')} hint={t('filter.unlistedAddHint')}>
-                <Toggle label="" checked={config.addUnlistedAndPrivate} onChange={(next) => save({ addUnlistedAndPrivate: next })} />
+                <Toggle label="" checked={config.addUnlistedAndPrivate} onChange={(next) => save(next ? { addUnlistedAndPrivate: true, filterUnlistedAndPrivate: false } : { addUnlistedAndPrivate: false })} />
             </Row>
         </Section>
     )

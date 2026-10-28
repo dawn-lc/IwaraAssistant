@@ -164,4 +164,44 @@ test.describe('页内 fetch 钩子', () => {
         expect(plain.results).toHaveLength(fixture.results.length)
         await iwara.close()
     })
+
+    test('回填：换页后的首个响应按当前窗口带上库内私有视频', async ({ sharedSession }) => {
+        const { context, page } = sharedSession
+        await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: iwaraListPage() }))
+        await mockIwaraApi(context, {
+            videos: (base, url) => {
+                // 订阅流里有一条 1 月 4 日的私有视频：它只入库，不该出现在首页原响应里
+                if (url.searchParams.has('subscribed')) {
+                    return { ...base, results: base.results.map((video, index) => (index === 2 ? { ...video, private: true } : video)) }
+                }
+                // 第 0 页把后台推送窗口顶到 1 月 10 日（与私有视频的 1 月 2-7 日不重叠）
+                if (url.searchParams.get('page') === '0') {
+                    return { ...base, page: 0, results: [{ ...base.results[0], id: 'fixtureVideoNew', createdAt: '2024-01-10T12:00:00.000Z' }] }
+                }
+                return base
+            }
+        })
+
+        await openExtensionPage(page, sharedSession.extensionId, 'options/index.html')
+        await setPageConfig(page, { addUnlistedAndPrivate: true })
+
+        const iwara = await context.newPage()
+        await iwara.goto('https://www.iwara.tv/videos')
+        await expect(iwara.locator('html[data-ia-bridge]')).toHaveAttribute('data-ia-bridge', /ready|no-ack/, { timeout: 15_000 })
+
+        // 1) 订阅流入库（data-ia-ingest 回执证明后台已写完，后续查询一定看得到）
+        const fixture = apiFixture<IwaraVideoPage>('videos')
+        await readVideos(iwara, '//api.iwara.tv/videos?subscribed=true&rating=all&page=0')
+        await expect(iwara.locator('html')).toHaveAttribute('data-ia-ingest', `ok:${fixture.results.length}:${fixture.results.length}`, { timeout: 10_000 })
+
+        // 2) 第 0 页（1 月 10 日）入库后，最后一次推送的窗口是 1 月 10 日前后
+        await readVideos(iwara, '//api.iwara.tv/videos?rating=all&sort=date&page=0')
+
+        // 3) 第 1 页（1 月 2-7 日）的**首个**响应必须按本页窗口重新查库，
+        //    不能吃第 0 页推送的旧窗口（旧实现会漏掉那条 1 月 4 日的私有视频）
+        const page1 = await readVideos(iwara, '//api.iwara.tv/videos?rating=all&sort=date&page=1')
+        expect(page1.results).toHaveLength(fixture.results.length + 1)
+        expect(page1.results).toContainEqual(expect.objectContaining({ id: 'fixtureVideo3', private: true }))
+        await iwara.close()
+    })
 })

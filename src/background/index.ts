@@ -27,6 +27,7 @@ import { db, countStores, readStorePage } from './storage/db'
 import { configReady, getConfig } from './storage/configStore'
 import { loadQueue, findTask, notifyTask, syncTask, updateBadge, queueReady, collapseDuplicateLiveTasks } from './storage/queue'
 import { pageReadySnapshot } from './storage/pageReady'
+import { computeCacheList } from './storage/cacheList'
 import { importLegacyDb, recordLegacyProgress, recordLegacyScan, storeLegacyBatch } from './storage/legacyImport'
 import { clearFinishedTasks, removeTaskById, retryAllFailed, retryTaskById, syncDownloadTasks } from './download/queueActions'
 import { readBackendStats } from './download/backendStats'
@@ -219,6 +220,8 @@ onMessage<Req>(async (req, sender) => {
             return ingestPageVideos(req.payload)
         case 'PAGE_READY':
             return pageReadySnapshot()
+        case 'GET_CACHE_INJECTION':
+            return computeCacheList(req.payload.start, req.payload.end)
         case 'INGEST_AUTH':
             return recordAuthToken(req.payload.kind, req.payload.token)
         case 'INGEST_COOKIE':

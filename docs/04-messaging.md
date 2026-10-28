@@ -12,17 +12,17 @@
 
 完整类型定义以 [`src/messaging/protocol.ts`](../src/messaging/protocol.ts) 为准；这里只列分组与用途，避免文档和代码各维护一份类型。
 
-| 分组      | 消息                                                                                                                                       | 说明                                                               |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| 采集      | `INGEST_VIDEO_INFO` / `INGEST_AUTH` / `INGEST_COOKIE`                                                                                      | 页面 MAIN / ISOLATED 上行；后台负责解析、落库与 token 使用         |
-| 下载      | `INIT_DOWNLOAD` / `DOWNLOAD` / `DOWNLOAD_METADATA` / `CHECK_LINK` / `BATCH_DOWNLOAD` / `FORCE_DOWNLOAD`                                    | 发起下载、链接预检、批量入队、跳过预检的显式强制下载               |
-| 查询/配置 | `GET_VIDEOS` / `GET_CONFIG` / `PAGE_READY` / `ENV_CHECK` / `GET_CARD_META` / `GET_BACKEND_STATS`                                           | 视频库与配置查询、页面就绪、环境自检、卡片角标、后端容量           |
-| 队列      | `RETRY_TASK` / `REMOVE_TASK` / `CLEAR_FINISHED` / `RETRY_FAILED` / `SYNC_DOWNLOAD_TASKS`                                                   | 队列操作全部由后台执行；running 任务不可直接移除                   |
-| 同步      | `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` / `GET_SYNC_STATE` / `SYNC_MEDIA_CENTER` / `REMOVE_PLAYLIST_ITEMS`                                   | 全量/订阅遍历、MediaCenter 推送、播放列表移除                      |
-| 好友      | `APPROVE_FRIEND_REQUESTS` / `GET_FRIEND_APPROVE_STATE`                                                                                     | 审批只返回「已开始」，结果由快照轮询获取                           |
-| 迁移/导出 | `LEGACY_DB_SCAN` / `IMPORT_LEGACY_DB` / `LEGACY_DB_PULL` / `LEGACY_DB_BATCH` / `LEGACY_DB_PROGRESS` / `DB_EXPORT_PAGE` / `DB_STORE_COUNTS` | 旧库检测与显式导入、四表分页导出、进度与条数                       |
-| 钓鱼防护  | `GUARD_SYNC` / `GUARD_RELEASE`                                                                                                             | 页面请求后台裁决；放行决定由后台记录                               |
-| 后台推送  | `DOWNLOAD_STATE` / `CONFIG_INVALIDATED` / `CONFIG_SYNC` / `CACHE_INJECTION_LIST` / `DOWNLOAD_TASK_SETTLED` / `HELLO`                       | 只能由后台发出；`DOWNLOAD_TASK_SETTLED` 只发给发起批量下载的标签页 |
+| 分组      | 消息                                                                                                                                            | 说明                                                                                                                                                              |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 采集      | `INGEST_VIDEO_INFO` / `INGEST_AUTH` / `INGEST_COOKIE`                                                                                           | 页面 MAIN / ISOLATED 上行；后台负责解析、落库与 token 使用                                                                                                        |
+| 下载      | `INIT_DOWNLOAD` / `DOWNLOAD` / `DOWNLOAD_METADATA` / `CHECK_LINK` / `BATCH_DOWNLOAD` / `FORCE_DOWNLOAD`                                         | 发起下载、链接预检、批量入队、跳过预检的显式强制下载                                                                                                              |
+| 查询/配置 | `GET_VIDEOS` / `GET_CONFIG` / `PAGE_READY` / `GET_CACHE_INJECTION` / `ENV_CHECK` / `GET_CARD_META` / `GET_BACKEND_STATS`                        | 视频库与配置查询、页面就绪、按页窗查询回填列表、环境自检、卡片角标、后端容量                                                                                      |
+| 队列      | `RETRY_TASK` / `REMOVE_TASK` / `CLEAR_FINISHED` / `RETRY_FAILED` / `SYNC_DOWNLOAD_TASKS`                                                        | 队列操作全部由后台执行；running 任务不可直接移除                                                                                                                  |
+| 同步      | `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` / `GET_SYNC_STATE` / `SYNC_MEDIA_CENTER` / `REMOVE_PLAYLIST_ITEMS`                                        | 全量/订阅遍历、MediaCenter 推送、播放列表移除                                                                                                                     |
+| 好友      | `APPROVE_FRIEND_REQUESTS` / `GET_FRIEND_APPROVE_STATE`                                                                                          | 审批只返回「已开始」，结果由快照轮询获取                                                                                                                          |
+| 迁移/导出 | `LEGACY_DB_SCAN` / `IMPORT_LEGACY_DB` / `LEGACY_DB_PULL` / `LEGACY_DB_BATCH` / `LEGACY_DB_PROGRESS` / `DB_EXPORT_PAGE` / `DB_STORE_COUNTS`      | 旧库检测与显式导入、四表分页导出、进度与条数                                                                                                                      |
+| 钓鱼防护  | `GUARD_SYNC` / `GUARD_RELEASE`                                                                                                                  | 页面请求后台裁决；放行决定由后台记录                                                                                                                              |
+| 后台推送  | `DOWNLOAD_STATE` / `CONFIG_INVALIDATED` / `CONFIG_SYNC` / `CACHE_INJECTION_LIST` / `CACHE_INJECTION_RESULT` / `DOWNLOAD_TASK_SETTLED` / `HELLO` | 后台或 ISOLATED 应答通道发出；`CACHE_INJECTION_RESULT` 由 ISOLATED 按 `GET_CACHE_INJECTION` 的请求号回给 MAIN；`DOWNLOAD_TASK_SETTLED` 只发给发起批量下载的标签页 |
 
 响应统一为 `{ ok: true; data } | { ok: false; error }`；所有 payload 必须可 `structuredClone`，跨 MAIN 世界通道只传 JSON 字符串。
 
@@ -113,7 +113,7 @@ window.addEventListener(CH.up, (e) => {
 设计要点：
 
 1. **payload 走 JSON 字符串**：Firefox X-ray wrappers 下，裸对象/自定义类实例跨世界引用不共享原型链；纯 JSON 最安全。
-2. **`CACHE_INJECTION_LIST`（注入最小化配套）**：后台预先算好时间窗命中列表（HELLO 握手后首推、`CONFIG_INVALIDATED` 后重推），MAIN 世界改写 `/videos` 响应时只做纯合并——**页面内零查库、零业务依赖**。
+2. **回填列表按窗口查询**：源项目在每个 `/videos` 响应处理函数里同步查库；扩展的 MAIN 世界不能查库，因此改写前用 `GET_CACHE_INJECTION {start,end}`（经 ISOLATED 转发）问一次后台，后台用**本响应的时间窗**返回命中列表。`CACHE_INJECTION_LIST` 推送（HELLO 后首推、入库/配置变更后重推）只作兜底：它永远对应「上一页」的窗口，换页后的首个响应若只吃推送就会整页漏回填。两条路的列表都只被 MAIN 纯合并——**页面内零查库、零业务依赖**。
 3. **安装时间差兜底**：MAIN 世界 `document_start` 先于 ISOLATED 注入（manifest 数组顺序），ISOLATED 就绪前 MAIN 缓存待发事件（简单的 ready 门闩）；ISOLATED 启动时向 MAIN 发一次 `HELLO` 拉取积压。
 4. **版本号协商**：两个 bundle 的 `CONTENT_SCHEMA` 常量在 HELLO 时校验，不匹配（部分更新装了半个扩展）则 ISOLATED 停用功能并提示 reload。
 

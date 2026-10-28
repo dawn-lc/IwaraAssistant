@@ -10,7 +10,7 @@
  * 配置面板 / 引导浮层（迁 options 页）、RPC（迁后台）。
  */
 import { CONTENT_SCHEMA, MAIN_CHANNEL } from '../messaging/protocol'
-import type { PageReadyData, Push, Req, Res } from '../messaging/protocol'
+import type { CacheInjection, PageReadyData, Push, Req, Res } from '../messaging/protocol'
 import { send } from '../messaging/hub'
 import { i18n } from '../shared/i18n'
 import { EMPTY_LEGACY_COUNTS, LEGACY_DB_NAME, LEGACY_STORE_KEY_PATH, LEGACY_STORES, estimateLegacyRecordBytes, planLegacyBatches } from '../shared/legacyDb'
@@ -43,7 +43,7 @@ recordEarlyTiming()
 // ── 上行：MAIN 世界数据 → 后台 ────────────────────────────────────────
 
 window.addEventListener(MAIN_CHANNEL.up, (event) => {
-    let msg: { kind?: string; type?: string; body?: unknown; window?: { start?: number; end?: number }; token?: unknown }
+    let msg: { kind?: string; type?: string; body?: unknown; window?: { start?: number; end?: number }; token?: unknown; requestId?: string }
     try {
         msg = JSON.parse((event as CustomEvent).detail as string)
     } catch {
@@ -60,7 +60,7 @@ window.addEventListener(MAIN_CHANNEL.up, (event) => {
 })
 
 /** MAIN 世界捕获数据 → 后台（协议见 docs/04） */
-async function forwardToBackground(msg: { kind?: string; body?: unknown; window?: { start?: number; end?: number }; token?: unknown }): Promise<void> {
+async function forwardToBackground(msg: { kind?: string; body?: unknown; window?: { start?: number; end?: number }; token?: unknown; requestId?: string }): Promise<void> {
     try {
         switch (msg.kind) {
             case 'videos': {
@@ -76,6 +76,22 @@ async function forwardToBackground(msg: { kind?: string; body?: unknown; window?
                 const res = (await browser.runtime.sendMessage(req)) as { ok?: boolean; data?: { ingested?: number }; error?: string }
                 // 入库结果标记（无敏感信息）：真实站点冒烟靠它证明「拦截→解析→入库」链路真的通了
                 document.documentElement?.setAttribute(INGEST_MARKER_ATTR, res?.ok ? `ok:${res.data?.ingested ?? '?'}:${Array.isArray(msg.body) ? msg.body.length : -1}` : `fail:${res?.error ?? 'unknown'}`)
+                break
+            }
+            case 'cache-injection': {
+                // 回填列表按需查询：后台查库后原路答复（源项目在 /videos 响应内同步查库的等价物）
+                const requestId = typeof msg.requestId === 'string' ? msg.requestId : ''
+                const start = msg.window?.start
+                const end = msg.window?.end
+                if (requestId === '' || typeof start !== 'number' || typeof end !== 'number') break
+                let list: CacheInjection | null = null
+                try {
+                    list = await send<CacheInjection | null>({ type: 'GET_CACHE_INJECTION', payload: { start, end } })
+                } catch (error) {
+                    // 查询失败也回一包 null：MAIN 立即退回推送列表，不必干等超时
+                    console.debug('[iwara-assistant] cache injection query failed:', error)
+                }
+                pushDown({ type: 'CACHE_INJECTION_RESULT', payload: { requestId, list } })
                 break
             }
             case 'authorization': {

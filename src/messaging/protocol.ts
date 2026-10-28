@@ -92,6 +92,14 @@ export type Req =
     /** 视频库查询：给 ids 则按 ID 取，否则按 UploadTime 倒序取最近 limit 条 */
     | { type: 'GET_VIDEOS'; payload: { ids?: string[] }; limit?: number }
     | { type: 'GET_CONFIG'; payload: Record<string, never> }
+    /**
+     * 按当前页窗口即时查询回填列表（MAIN 世界 → 后台）。
+     *
+     * 源项目在每个 `/videos` 响应里同步查库；MAIN 世界不能查库，只能一问一答。
+     * 若只靠 `CACHE_INJECTION_LIST` 推送，拿到的是**上一页**窗口算出的列表，
+     * 当前页响应永远慢一拍（换页后整页都吃不到回填）。
+     */
+    | { type: 'GET_CACHE_INJECTION'; payload: { start: number; end: number } }
     /** 页面就绪：ISOLATED 启动时请求配置快照与回填列表（HELLO 握手后首推） */
     | { type: 'PAGE_READY'; payload: Record<string, never> }
     /** 链接可达性检查（HEAD，超时 10s；仅 http/https） */
@@ -220,6 +228,8 @@ export type Push =
     | { type: 'CONFIG_SYNC'; payload: { page: PageConfig } }
     /** 注入最小化：缓存回填列表由后台预算推送（HELLO 后首推，入页新窗/CONFIG_INVALIDATED 后重推） */
     | { type: 'CACHE_INJECTION_LIST'; payload: CacheInjection }
+    /** `GET_CACHE_INJECTION` 的 MAIN 侧答复（ISOLATED 转发；按请求窗返回库内列表） */
+    | { type: 'CACHE_INJECTION_RESULT'; payload: { requestId: string; list: CacheInjection | null } }
     /**
      * 后台 → 发起批量下载的那个标签页：这批视频里有哪些已经处理完（任务已建或已判失败）。
      *

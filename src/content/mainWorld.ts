@@ -5,8 +5,8 @@
  *  1. 劫持 window.fetch —— 在站点应用代码运行前生效
  *  2. 上行捕获：/videos 响应体、/user/token、Authorization 请求头
  *  3. 保留原"改写响应体"能力：点赞过滤 / 私有过滤 / 缓存回填
- *     —— 改写只做纯函数合并；缓存回填数据来自后台下推的 CACHE_INJECTION_LIST，
- *        本世界不解析入库、不查库、无 idb 依赖（docs/01 注入最小化原则）
+ *     —— 改写只做纯函数合并；缓存回填按本页窗口向后台即时查询（CACHE_INJECTION_RESULT），
+ *        后台推送的 CACHE_INJECTION_LIST 仅作兜底；本世界不解析入库、不查库、无 idb 依赖（docs/01 注入最小化原则）
  *
  * Chrome 平台上这是响应体改写的唯一非 CDP 途径（webRequest 无 body、DNR 不改 body）。
  * Firefox 可选 filterResponseData 后台通道，见 docs/02（可选增强）。
@@ -55,6 +55,55 @@ let pageConfig: PageConfig = {
     addUnlistedAndPrivate: false
 }
 let injectionList: CacheInjection | null = null
+
+/**
+ * 首次改写前等一次配置快照。
+ *
+ * 源项目的配置在 fetch 钩子安装前就已同步可读；扩展里 `CONFIG_SYNC` 要等
+ * HELLO → PAGE_READY 两个往返，站点首屏的 `/videos` 可能先到。不等这一下，
+ * 首屏会按默认值（全关）透传——私有回填/点赞过滤都会「第一次打开不生效」。
+ * 只等一次且上限 500ms：后台真正挂掉时不能让每个响应都白白挂起。
+ */
+let configSynced = false
+let resolveConfigSync: () => void = () => {}
+const configSyncedPromise = new Promise<void>((resolve) => {
+    resolveConfigSync = resolve
+})
+let configWaitPromise: Promise<void> | null = null
+
+function whenPageConfigReady(): Promise<void> {
+    if (configSynced) return Promise.resolve()
+    configWaitPromise ??= Promise.race([configSyncedPromise, new Promise<void>((resolve) => setTimeout(resolve, 500))])
+    return configWaitPromise
+}
+
+/**
+ * 按当前页窗口向后台要一份**即时**回填列表（源项目在响应处理函数里同步查库的等价物）。
+ *
+ * `injectionList` 是「上一页入库 → 后台重算 → 广播」的异步推送，永远比当前响应慢一拍；
+ * 换页后整页都会因为窗口不匹配而漏掉回填。这里用一次消息往返把窗口换成答案，
+ * 推送列表只在超时/后台不可用时兜底。
+ */
+const pendingCacheRequests = new Map<string, (list: CacheInjection | null) => void>()
+let cacheRequestSeq = 0
+/** 后台无响应时的等待上限：宁可少回填一次，也不让页面请求一直挂着 */
+const CACHE_REQUEST_TIMEOUT_MS = 1500
+
+function requestCacheInjection(window: { start: number; end: number }): Promise<CacheInjection | null> {
+    const requestId = `${Date.now().toString(36)}-${++cacheRequestSeq}`
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            pendingCacheRequests.delete(requestId)
+            resolve(null)
+        }, CACHE_REQUEST_TIMEOUT_MS)
+        pendingCacheRequests.set(requestId, (list) => {
+            clearTimeout(timer)
+            pendingCacheRequests.delete(requestId)
+            resolve(list)
+        })
+        postUp({ kind: 'cache-injection', requestId, window })
+    })
+}
 
 // 页面 localStorage 键（原 core/constants.ts）
 const LS_KEY_TOKEN = 'token'
@@ -176,6 +225,9 @@ async function handleVideosResponse(response: Response, url: URL): Promise<Respo
     const pageWindow = computePageWindow(rawVideos)
     postUp({ kind: 'videos', body: rawVideos, window: pageWindow })
 
+    // 改写依赖配置快照（首屏请求可能早于 CONFIG_SYNC）
+    await whenPageConfigReady()
+
     // 过滤已点赞视频
     if (pageConfig.filterLikedVideos) {
         page.results = rawVideos.filter((i) => !i.liked)
@@ -198,13 +250,15 @@ async function handleVideosResponse(response: Response, url: URL): Promise<Respo
     if (url.searchParams.has('subscribed')) return preResponse
     if (url.searchParams.has('sort') && url.searchParams.get('sort') !== 'date') return preResponse
 
-    if (!injectionList) return preResponse
-
-    const currentWindow = computePageWindow(rawVideos)
+    const currentWindow = pageWindow
     if (!currentWindow) return preResponse
 
-    // 后台已按 UploadTime 降序推送；窗口边界同原实现为开区间（background-bound exclusive）
-    const cacheVideos = injectionList.raws
+    // 即时查询当前窗口；后台不可用时退回最近一次推送（仍按本页窗口过滤，不会串页）
+    const cache = (await requestCacheInjection(currentWindow)) ?? injectionList
+    if (!cache) return preResponse
+
+    // 后台已按 UploadTime 降序返回；窗口边界同原实现为开区间（background-bound exclusive）
+    const cacheVideos = cache.raws
         .map((raw) => raw as Iwara.Video)
         .filter((raw) => {
             if (isExternalVideo(raw)) return false
@@ -283,10 +337,15 @@ window.addEventListener(MAIN_CHANNEL.down, (event) => {
         } else if (msg?.type === 'CONFIG_SYNC') {
             // 配置快照（HELLO ACK 后首推 + 后台 storage 变更重推）
             pageConfig = { ...pageConfig, ...((msg.payload as { page?: PageConfig })?.page ?? {}) }
+            configSynced = true
+            resolveConfigSync()
             console.debug('[iwara-assistant] CONFIG_SYNC applied')
         } else if (msg?.type === 'CACHE_INJECTION_LIST' && msg.payload && typeof msg.payload === 'object') {
             injectionList = msg.payload as CacheInjection
             console.debug(`[iwara-assistant] CACHE_INJECTION_LIST applied (${injectionList.raws.length} raws)`)
+        } else if (msg?.type === 'CACHE_INJECTION_RESULT' && msg.payload && typeof msg.payload === 'object') {
+            const { requestId, list } = msg.payload as { requestId?: string; list?: CacheInjection | null }
+            if (typeof requestId === 'string') pendingCacheRequests.get(requestId)?.(list ?? null)
         }
     } catch {
         // 非 JSON payload（他方同名事件）：忽略
