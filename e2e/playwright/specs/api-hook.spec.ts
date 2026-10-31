@@ -201,6 +201,10 @@ test.describe('页内 fetch 钩子', () => {
         // 3) 第 1 页（1 月 2-7 日）的**首个**响应必须按本页窗口重新查库，
         //    不能吃第 0 页推送的旧窗口（旧实现会漏掉那条 1 月 4 日的私有视频）
         const page1 = await readVideos(iwara, '//api.iwara.tv/videos?rating=all&sort=date&page=1')
+        // 先断言「决策本身」：只有 `ok:` 才是「查到了但没注入」的编码问题，
+        // `off` 是配置没到、`skip:*` 是某个前置条件关着。CI 上出过偶发失败，
+        // 没有这条断言时错误信息只有「6 ≠ 7」，完全看不出是哪道门。
+        await expect(iwara.locator('html')).toHaveAttribute('data-ia-cache', 'ok:candidates=1;injected=1')
         expect(page1.results).toHaveLength(fixture.results.length + 1)
         expect(page1.results).toContainEqual(expect.objectContaining({ id: 'fixtureVideo3', private: true }))
         await iwara.close()

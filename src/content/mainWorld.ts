@@ -62,8 +62,13 @@ let injectionList: CacheInjection | null = null
  * 源项目的配置在 fetch 钩子安装前就已同步可读；扩展里 `CONFIG_SYNC` 要等
  * HELLO → PAGE_READY 两个往返，站点首屏的 `/videos` 可能先到。不等这一下，
  * 首屏会按默认值（全关）透传——私有回填/点赞过滤都会「第一次打开不生效」。
- * 只等一次且上限 500ms：后台真正挂掉时不能让每个响应都白白挂起。
+ *
+ * 上限从 500ms 提到 2000ms：`PAGE_READY` 内部要等 `configReady` + 开 IndexedDB 查
+ * 最新 UploadTime，冷启动的 CI runner 上这条链超过 500ms 是常态（实测：回填用例
+ * 在 GitHub Actions 上偶发「一个都没注入」，本机复现不出来）。
+ * 代价只发生在后台真的挂了的时候——那条路径本来就已经退化成「不回填」。
  */
+const CONFIG_WAIT_MS = 2000
 let configSynced = false
 let resolveConfigSync: () => void = () => {}
 const configSyncedPromise = new Promise<void>((resolve) => {
@@ -73,7 +78,7 @@ let configWaitPromise: Promise<void> | null = null
 
 function whenPageConfigReady(): Promise<void> {
     if (configSynced) return Promise.resolve()
-    configWaitPromise ??= Promise.race([configSyncedPromise, new Promise<void>((resolve) => setTimeout(resolve, 500))])
+    configWaitPromise ??= Promise.race([configSyncedPromise, new Promise<void>((resolve) => setTimeout(resolve, CONFIG_WAIT_MS))])
     return configWaitPromise
 }
 
@@ -87,7 +92,7 @@ function whenPageConfigReady(): Promise<void> {
 const pendingCacheRequests = new Map<string, (list: CacheInjection | null) => void>()
 let cacheRequestSeq = 0
 /** 后台无响应时的等待上限：宁可少回填一次，也不让页面请求一直挂着 */
-const CACHE_REQUEST_TIMEOUT_MS = 1500
+const CACHE_REQUEST_TIMEOUT_MS = 2000
 
 function requestCacheInjection(window: { start: number; end: number }): Promise<CacheInjection | null> {
     const requestId = `${Date.now().toString(36)}-${++cacheRequestSeq}`
