@@ -15,7 +15,7 @@
 | Opera             | `opera://extensions`  | ✅                 |
 | Arc               | `arc://extensions`    | ✅                 |
 
-最低版本 **Chrome 111**（manifest 里声明了 `minimum_chrome_version: 111`，低于此版本商店/加载器会直接拒绝）。
+最低版本 **Chrome 111**（manifest 里声明了 `minimum_chrome_version: 111`，低于此版本的加载器会直接拒绝）。
 
 ## 第一步：拿到 `dist/chrome`
 
