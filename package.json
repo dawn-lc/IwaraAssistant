@@ -18,6 +18,7 @@
         "package": "node --import tsx/esm ./build/package.ts",
         "package:chrome": "node --import tsx/esm ./build/package.ts chrome",
         "package:firefox": "node --import tsx/esm ./build/package.ts firefox",
+        "source:zip": "node --import tsx/esm ./build/sourceArchive.ts",
         "test:e2e": "playwright test",
         "test:e2e:headless": "node --import tsx/esm ./build/env.ts E2E_HEADLESS=1 -- playwright test",
         "test:e2e:wdio": "wdio run ./wdio.conf.ts",

@@ -4,24 +4,25 @@
 
 全部入口都在 `package.json` 的 scripts 里；CI 与 git 钩子调用的也是这些命令，不另设一套。
 
-| 命令                                       | 作用                                                                 |
-| ------------------------------------------ | -------------------------------------------------------------------- |
-| `npm run build`                            | 双目标编译 + 打包 → `dist/chrome(.zip)`、`dist/firefox(.zip)`        |
-| `npm run build:chrome`                     | 仅 Chrome（MV3 service worker）                                      |
-| `npm run build:firefox`                    | 仅 Firefox（MV2 持久后台页）                                         |
-| `npm run dev:chrome` / `dev:firefox`       | watch 模式（只监听 JS；html/css/manifest 改动需重跑）                |
-| `npm run lint:firefox`                     | `web-ext lint`（应为 0 error / 0 notice）                            |
-| `npm run package`                          | 仅重打包已有 `dist`（`package:chrome` / `package:firefox` 可单目标） |
-| `npm run build:icons`                      | 导出图标 PNG 到 `assets/icons`（构建不依赖，构建期自渲染）           |
-| `npm run type-check`                       | 扩展源码 + 单测                                                      |
-| `npm run type-check:e2e`                   | Playwright specs                                                     |
-| `npm run type-check:wdio`                  | WDIO specs                                                           |
-| `npm run test:unit`                        | 单元测试（`node:test`）                                              |
-| `npm run test:e2e` / `test:e2e:headless`   | Playwright e2e（有头 / 无头）                                        |
-| `npm run test:e2e:wdio[:chrome\|:firefox]` | WebdriverIO 跨浏览器 e2e                                             |
-| `npm run test:firefox:smoke`               | `web-ext run` 装载冒烟                                               |
-| `npm run format` / `format:check`          | prettier（提交时钩子会自动格式化暂存文件）                           |
-| `npm run fixtures:capture`                 | 刷新站点结构快照与 API 录制响应（需过 Cloudflare）                   |
+| 命令                                       | 作用                                                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `npm run build`                            | 双目标编译 + 打包 → `dist/chrome(.zip)`、`dist/firefox(.zip)`           |
+| `npm run build:chrome`                     | 仅 Chrome（MV3 service worker）                                         |
+| `npm run build:firefox`                    | 仅 Firefox（MV2 持久后台页）                                            |
+| `npm run dev:chrome` / `dev:firefox`       | watch 模式（只监听 JS；html/css/manifest 改动需重跑）                   |
+| `npm run lint:firefox`                     | `web-ext lint`（应为 0 error / 0 notice）                               |
+| `npm run package`                          | 仅重打包已有 `dist`（`package:chrome` / `package:firefox` 可单目标）    |
+| `npm run source:zip`                       | 用 `git archive HEAD` 打 AMO 审核用源码包 → `dist/source-<version>.zip` |
+| `npm run build:icons`                      | 导出图标 PNG 到 `assets/icons`（构建不依赖，构建期自渲染）              |
+| `npm run type-check`                       | 扩展源码 + 单测                                                         |
+| `npm run type-check:e2e`                   | Playwright specs                                                        |
+| `npm run type-check:wdio`                  | WDIO specs                                                              |
+| `npm run test:unit`                        | 单元测试（`node:test`）                                                 |
+| `npm run test:e2e` / `test:e2e:headless`   | Playwright e2e（有头 / 无头）                                           |
+| `npm run test:e2e:wdio[:chrome\|:firefox]` | WebdriverIO 跨浏览器 e2e                                                |
+| `npm run test:firefox:smoke`               | `web-ext run` 装载冒烟                                                  |
+| `npm run format` / `format:check`          | prettier（提交时钩子会自动格式化暂存文件）                              |
+| `npm run fixtures:capture`                 | 刷新站点结构快照与 API 录制响应（需过 Cloudflare）                      |
 
 > 需要环境变量的脚本统一写成 `node --import tsx/esm ./build/env.ts KEY=VALUE … -- <命令>`（实现在 `build/env.ts`）。
 > 不要在 scripts 里重写 `node -e "process.env.X=…"`：引号规则在 PowerShell / cmd / bash 各不相同。
@@ -115,12 +116,22 @@
 npm version patch|minor|major   # 唯一版本真源：package.json
 npm run build                   # 双目标构建 + 校验 + 打包 → dist/chrome.zip、dist/firefox.zip
 npm run lint:firefox            # web-ext lint，应为 0 error / 0 notice
+npm run source:zip              # → dist/source-<version>.zip（AMO 审核用源码包）
 ```
 
 - 版本号由 `build/version.ts` 校验：1–4 段十进制整数、无前导零、每段 ≤ 65535、不得全零、不接受预发布标识；校验失败会在清理 `dist` 之前终止构建。
 - Chrome 产物为 MV3，`minimum_chrome_version: 111`；Firefox 产物由 `build/manifestV2.ts` 从同一 base 改写成 MV2，`strict_min_version: 128.0`。
 - Firefox `browser_specific_settings.gecko.data_collection_permissions.required = ["none"]`，与 [PRIVACY.md](../PRIVACY.md) 一致。
 - 商店文案、权限理由与截图清单见 [store-listing.md](store-listing.md)。
+
+### AMO 上传的四步（实操）
+
+1. devhub →「上传新版本」→ 选 `dist/firefox.zip`。自动验证应为 **0 error / 2 warning**（两条 `KEY_FIREFOX_*_UNSUPPORTED_BY_MIN_VERSION`，见 [store-listing.md](store-listing.md#二amofirefox-add-ons)）。
+2. 「此版本与哪个（些）应用程序兼容」：只勾 **Firefox**，不勾 Android（扩展是桌面专用）。
+3. 「发行说明 / 给审核员的备注」各自填写。审核备注里把权限用途、测试方法、源码位置、构建命令一次说清，省一轮往复。
+4. **源码问题必须答「是」**：本项目用 esbuild 打 IIFE，属于 AMO 政策里「将多个文件合并为一的工具」。漏答会导致版本已进「等待审核」但**没有源码**（活动提要里只有「已添加版本」而没有「源代码已上传」）。补传方式：版本管理页 →「源代码」字段 → 选 `dist/source-<version>.zip` → 保存更改，提要会多出一条「源代码已上传」。
+
+`npm run source:zip` 用 `git archive HEAD` 打包，只含已跟踪文件（`node_modules` / `dist` / `temp` 自动排除）。**必须先提交再打包**，否则工作区改动不在包里，审核员无法按源码复现同一个安装包——脚本检测到脏工作区时会列出未提交文件并警告。
 
 ### 发布前检查清单
 
@@ -131,7 +142,7 @@ npm run lint:firefox            # web-ext lint，应为 0 error / 0 notice
 3. `npm run build`
 4. `npm run lint:firefox`
 5. 需要时本地 e2e：`npm run test:e2e:wdio`（Chrome + Firefox）
-6. 上传 `dist/firefox.zip` 至 AMO，按商店要求填写权限用途与隐私声明；`dist/chrome.zip` 仅作存档（Chrome Web Store 已拒，见 [store-listing.md](store-listing.md#拒绝记录2026-10-30)）
+6. 上传 `dist/firefox.zip` 与 `dist/source-<version>.zip` 至 AMO（步骤见上），`dist/chrome.zip` 仅作存档（Chrome Web Store 已拒，见 [store-listing.md](store-listing.md#拒绝记录2026-10-30)）
 
 > 格式化不需要手动跑：提交时钩子会自动处理暂存的文件（见「Git 钩子」）。
 > 想整仓收拾一遍仍可用 `npm run format`。

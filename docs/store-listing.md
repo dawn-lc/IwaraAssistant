@@ -88,6 +88,8 @@
 
 `dist/firefox.zip`（`npm run package:firefox`）
 
+同时必须提交**源码包** `dist/source-<version>.zip`（`npm run source:zip`）：构建用 esbuild 打 IIFE，属于 AMO 政策 3.1 节的「将多个文件合并为一的工具」，需提供未处理的源码与可复现说明。提交处的问答「是否使用过代码生成/打包工具」要选**是**。上传步骤见 [06-testing-and-release.md](06-testing-and-release.md#amo-上传的四步实操)。
+
 自检结果：`addons-linter` **errors 0 / notices 0 / warnings 2**；manifest 含 `browser_specific_settings.gecko.id`、`strict_min_version: 128.0`、`data_collection_permissions: { required: ['none'] }`。
 
 2 条警告都是**已知且接受**的（不阻断签名，提交时可在 reviewer 备注里说明）：
