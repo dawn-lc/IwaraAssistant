@@ -58,6 +58,15 @@ export const NOTIFICATION_TARGETS_KEY = 'notificationTargets'
 export const RATING_KEY = 'siteRating'
 
 /**
+ * 订阅流**自动**遍历的上次尝试时间（毫秒时间戳）。
+ *
+ * 存 `storage.local` 而不是内存：Chrome MV3 的 SW 空闲约 30 秒就回收，只存内存等于
+ * 每次唤醒都当成「从没跑过」——用户连续切几个列表页就会连发多轮请求。
+ * 也不放 config：它是运行记录而不是用户可编辑的设置项。
+ */
+export const AUTO_SYNC_AT_KEY = 'autoSyncAt'
+
+/**
  * aria2 扫描的跨轮记忆（`Aria2ScanMemory`：慢速采样计数 + 恢复失败次数）。
  *
  * **存 `storage.session` 而不是内存 / 不是 local**：

@@ -269,12 +269,17 @@ WDIO 能双宿主同构，但拿不到 SW console。合并“一套跑两边”�
 
 ## 定时任务清单（`browser.alarms`）
 
-| alarm          | 周期                  | 动作                   |
-| -------------- | --------------------- | ---------------------- |
-| `scan-aria2`   | 5 min                 | 全量扫 aria2 任务入队  |
-| `ws-keepalive` | 2 min                 | WebSocket 探活重连     |
-| `retry-failed` | 可配置（默认 30 min） | 扫描失败任务按策略重试 |
-| `refresh-sync` | 可配置                | 按标签页广播扫描指令   |
+实现见 `src/background/runtime/alarms.ts`；全部周期为**编译期常量**，配置里没有可调间隔（多一个可调项就多一组「用户设成 0 分钟」的边界要处理）。
+
+| alarm          | 周期   | 创建方式 | 动作                                          |
+| -------------- | ------ | -------- | --------------------------------------------- |
+| `ws-keepalive` | 2 min  | 启动时   | aria2 WebSocket 探活重连                      |
+| `scan-aria2`   | 5 min  | 启动时   | 全量扫 aria2 任务入队（补 WS 通知丢失）       |
+| `retry-failed` | 30 min | 启动时   | 队列 failed 任务按 `attempts` 上限自动重试    |
+| `probe-aria2`  | 1 min  | **按需** | 有活跃 aria2 任务时才存在；只拉 tellActive    |
+| `scan-iwaradl` | 1 min  | **按需** | 有活跃 iwaradl 任务时才存在（它没有推送通道） |
+
+**没有的内容**：站点数据（投稿 / 订阅流 / 卡片元数据）**不在任何 alarm 里**。列表页数据靠页面 `/videos` 响应被动入库；订阅流则由页面在到达 `/videos` 时上报触发（`AUTO_SYNC_SUBSCRIBED` → `autoSyncSubscribed()`，与源项目 `menu.pageChange()` 同款时机，最小间隔 5 分钟）；全站投稿只能手动点。这是「不为可能发生的事让后台常驻」的直接后果，判据与差异见 [05-features.md](05-features.md#订阅流自动遍历的时机与源项目对齐)。
 
 ## 状态与数据
 

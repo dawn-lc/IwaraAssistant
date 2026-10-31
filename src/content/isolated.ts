@@ -73,9 +73,17 @@ async function forwardToBackground(msg: { kind?: string; body?: unknown; window?
                         ...(windowBounds ? { window: windowBounds } : {})
                     }
                 }
-                const res = (await browser.runtime.sendMessage(req)) as { ok?: boolean; data?: { ingested?: number }; error?: string }
-                // 入库结果标记（无敏感信息）：真实站点冒烟靠它证明「拦截→解析→入库」链路真的通了
-                document.documentElement?.setAttribute(INGEST_MARKER_ATTR, res?.ok ? `ok:${res.data?.ingested ?? '?'}:${Array.isArray(msg.body) ? msg.body.length : -1}` : `fail:${res?.error ?? 'unknown'}`)
+                const res = (await browser.runtime.sendMessage(req)) as { ok?: boolean; data?: { written?: number; parsed?: number; skipped?: number; failed?: number; reason?: string }; error?: string }
+                // 入库结果标记（无敏感信息）：真实站点冒烟靠它证明「拦截→解析→入库」链路真的通了。
+                // 三个数字必须分开报——只报一个总数时，「解析成功但没写库」和「解析全失败」
+                // 在页面上长得一模一样，而这两种情况的排查方向完全相反。
+                if (res?.ok) {
+                    const data = res.data ?? {}
+                    const detail = `ok:written=${data.written ?? '?'};parsed=${data.parsed ?? '?'};skipped=${data.skipped ?? '?'};failed=${data.failed ?? '?'}`
+                    document.documentElement?.setAttribute(INGEST_MARKER_ATTR, data.reason !== undefined ? `${detail};reason=${data.reason}` : detail)
+                } else {
+                    document.documentElement?.setAttribute(INGEST_MARKER_ATTR, `fail:${res?.error ?? 'unknown'}`)
+                }
                 break
             }
             case 'cache-injection': {

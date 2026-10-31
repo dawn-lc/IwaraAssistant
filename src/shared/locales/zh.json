@@ -321,7 +321,7 @@
         "autoCollapse": "菜单自动收起",
         "autoCollapseHint": "悬浮菜单在鼠标移开/点击外部后收起",
         "syncTitle": "批量入库",
-        "syncNote": "逐页拉取 iwara 列表并写入本地视频库；可离开本页，后台继续执行",
+        "syncNote": "逐页拉取 iwara 列表并写入本地视频库；可离开本页，后台继续执行。开启「回填私有/不公开缓存」后，打开全站视频列表页（/videos）时会自动尝试一次订阅流（追平当月即停）",
         "syncAll": "遍历全站视频列表",
         "syncSubscribed": "遍历订阅流（私有/不公开）",
         "submitting": "提交中…",

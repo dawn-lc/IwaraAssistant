@@ -23,7 +23,8 @@
  * | `page/requests.ts` | 向后台发下载请求                                |
  * | **本文件**        | 启动顺序、路由重建、DOM 观察器 —— 只做编排      |
  */
-import { pageTypeOf } from '../shared/pageType'
+import { isAllVideosPath, pageTypeOf } from '../shared/pageType'
+import type { Req } from '../messaging/protocol'
 import { setLanguagePref } from '../shared/i18n'
 import { changedValue } from '../shared/storageChanges'
 import { CONFIG_KEY } from '../shared/storageKeys'
@@ -54,6 +55,25 @@ function rebuildForRoute(): void {
     resetCardMeta()
     rebuildMenu()
     refreshCards()
+    reportAllVideosVisit()
+}
+
+/**
+ * 自动遍历订阅流的触发点（与源项目同款时机）。
+ *
+ * 源 `ui/menu.ts` 的 `pageChange()`：落在 `PageType.VideoList`（即 `/videos`）且
+ * 「回填私有/不公开缓存」开、「过滤订阅页 不公开/私有」关时，调一次 `parseUnlistedAndPrivate()`。
+ * `pageChange()` 在首屏就绪与每次 SPA 路由变化时都会执行，所以它不是定时器，
+ * 而是「每次到达就试一次」，靠防重入 + 跨页锁 + 「追平当月即停」把成本压到 1 个请求。
+ *
+ * 本文件只负责「报到达」：是否真的跑由后台按配置、最小间隔与登录态决定，
+ * 页面侧不复制一份配置语义（那是两个真相源的开端）。
+ */
+function reportAllVideosVisit(): void {
+    if (!isAllVideosPath(window.location.pathname)) return
+    void browser.runtime.sendMessage({ type: 'AUTO_SYNC_SUBSCRIBED', payload: {} } satisfies Req).catch(() => {
+        // 后台未就绪（SW 冷启动竞态）：不重试，下一次路由变化会再报一次
+    })
 }
 
 function scheduleRefresh(): void {
@@ -172,6 +192,8 @@ function start(): void {
     installSpaceShortcut()
 
     lastRouteKey = routeKey()
+    // 冷加载也算一次「到达」：源项目 `registerInjectionRule` 注入后显式补发 pageChange()
+    reportAllVideosVisit()
 
     // 后退/前进（popstate）与锚点（hashchange）立即重建；pushState 由观察器兜底
     const onRouteChange = (): void => {

@@ -112,6 +112,20 @@ const LS_KEY_ACCESS_TOKEN = 'accessToken'
 /** 原实现窗宽：dayjs add/sub({ hours: 4 }) */
 const PAGE_WINDOW_PAD_MS = 4 * 60 * 60 * 1000
 
+/**
+ * 回填决策标记（`data-ia-cache`）。
+ *
+ * 为什么要这个：回填有 7 道门（开关、互斥开关、user/subscribed/sort 参数、时间窗、
+ * 后台答复），任一门不过都是静默 `return`，“没回填”在页面上长得一模一样。
+ * 把最后一个决策落成属性，排障时只需看一眼 DOM 就知道是哪道门关的。
+ * 只写决策与条数，不含标题/作者/token 等任何内容。
+ */
+const CACHE_MARKER_ATTR = 'data-ia-cache'
+
+function markCache(value: string): void {
+    document.documentElement?.setAttribute(CACHE_MARKER_ATTR, value)
+}
+
 function isPageApi(url: URL): boolean {
     return url.hostname === 'apiq.iwara.tv' || url.hostname === 'api.iwara.tv'
 }
@@ -243,19 +257,41 @@ async function handleVideosResponse(response: Response, url: URL): Promise<Respo
     const preResponse = cloneBodyResponse(page, cloneResponse)
 
     // 添加未列出和私有视频缓存（与「过滤订阅页不公开/私有」功能互斥）
-    if (!pageConfig.addUnlistedAndPrivate || pageConfig.filterUnlistedAndPrivate) return preResponse
+    if (!pageConfig.addUnlistedAndPrivate) {
+        markCache('off')
+        return preResponse
+    }
+    if (pageConfig.filterUnlistedAndPrivate) {
+        markCache('skip:filter-exclusive')
+        return preResponse
+    }
 
     // 检查是否满足添加缓存的条件（原实现逐项 return）
-    if (url.searchParams.has('user')) return preResponse
-    if (url.searchParams.has('subscribed')) return preResponse
-    if (url.searchParams.has('sort') && url.searchParams.get('sort') !== 'date') return preResponse
+    if (url.searchParams.has('user')) {
+        markCache('skip:user')
+        return preResponse
+    }
+    if (url.searchParams.has('subscribed')) {
+        markCache('skip:subscribed')
+        return preResponse
+    }
+    if (url.searchParams.has('sort') && url.searchParams.get('sort') !== 'date') {
+        markCache('skip:sort')
+        return preResponse
+    }
 
     const currentWindow = pageWindow
-    if (!currentWindow) return preResponse
+    if (!currentWindow) {
+        markCache('skip:no-window')
+        return preResponse
+    }
 
     // 即时查询当前窗口；后台不可用时退回最近一次推送（仍按本页窗口过滤，不会串页）
     const cache = (await requestCacheInjection(currentWindow)) ?? injectionList
-    if (!cache) return preResponse
+    if (!cache) {
+        markCache('skip:no-cache')
+        return preResponse
+    }
 
     // 后台已按 UploadTime 降序返回；窗口边界同原实现为开区间（background-bound exclusive）
     const cacheVideos = cache.raws
@@ -266,6 +302,7 @@ async function handleVideosResponse(response: Response, url: URL): Promise<Respo
             return uploadTime > currentWindow.start && uploadTime < currentWindow.end
         })
 
+    markCache(`ok:candidates=${cache.raws.length};injected=${cacheVideos.length}`)
     page.results.push(...cacheVideos)
     pageFixups(page)
 

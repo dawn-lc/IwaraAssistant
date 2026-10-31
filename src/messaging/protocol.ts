@@ -129,6 +129,13 @@ export type Req =
     | { type: 'SYNC_ALL_VIDEOS'; payload: Record<string, never> }
     /** 订阅页私有/不公开视频遍历入库 */
     | { type: 'SYNC_SUBSCRIBED'; payload: Record<string, never> }
+    /**
+     * 页面到达 `/videos` 时请求**自动**遍历订阅流（源项目 `menu.pageChange()` 的同款时机）。
+     *
+     * 与 `SYNC_SUBSCRIBED` 的分工：那条是用户点了按钮，无论配置与间隔都必须执行；
+     * 这条只是「报到达」，是否真的跑由后台按配置、最小间隔与登录态决定。
+     */
+    | { type: 'AUTO_SYNC_SUBSCRIBED'; payload: Record<string, never> }
     /** 读取批量遍历进度（options 任务页轮询） */
     | { type: 'GET_SYNC_STATE'; payload: Record<string, never> }
     /** MediaCenter 批量同步（库内 full 记录） */

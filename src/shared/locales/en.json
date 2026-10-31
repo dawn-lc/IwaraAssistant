@@ -321,7 +321,7 @@
         "autoCollapse": "Auto-collapse menu",
         "autoCollapseHint": "The floating menu collapses when the pointer leaves or you click outside",
         "syncTitle": "Library sync",
-        "syncNote": "Walks the iwara lists page by page and writes them to the local library; you may leave this page",
+        "syncNote": "Walks the iwara lists page by page and writes them to the local library; you may leave this page. With \"merge private/unlisted cache\" on, opening the all-videos list (/videos) also runs the subscribed feed once automatically (stops as soon as the current month is caught up)",
         "syncAll": "Walk the whole site's videos",
         "syncSubscribed": "Walk the subscription feed (unlisted/private)",
         "submitting": "Submitting…",

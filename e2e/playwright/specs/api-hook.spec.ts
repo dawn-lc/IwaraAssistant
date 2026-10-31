@@ -101,8 +101,9 @@ test.describe('页内 fetch 钩子', () => {
         // 全部开关关闭时钩子只做透传：字段一个都不能丢/改
         const fixture = apiFixture<IwaraVideoPage>('videos')
         expect(result.body).toEqual(fixture)
-        // 透传之外还要「上行入库」：`data-ia-ingest` 是 MAIN→ISOLATED→后台 全链路的回执
-        await expect(iwara.locator('html')).toHaveAttribute('data-ia-ingest', `ok:${fixture.results.length}:${fixture.results.length}`, { timeout: 10_000 })
+        // 透传之外还要「上行入库」：`data-ia-ingest` 是 MAIN→ISOLATED→后台 全链路的回执。
+        // 断言四个数字：written 才是真正落库数（解析成功不等于写进去了）
+        await expect(iwara.locator('html')).toHaveAttribute('data-ia-ingest', `ok:written=${fixture.results.length};parsed=${fixture.results.length};skipped=0;failed=0`, { timeout: 10_000 })
         expect(mock.requests).toEqual(['https://api.iwara.tv/videos?rating=all&sort=date&page=0'])
         expect(mock.unmatched).toEqual([])
         await iwara.close()
@@ -192,7 +193,7 @@ test.describe('页内 fetch 钩子', () => {
         // 1) 订阅流入库（data-ia-ingest 回执证明后台已写完，后续查询一定看得到）
         const fixture = apiFixture<IwaraVideoPage>('videos')
         await readVideos(iwara, '//api.iwara.tv/videos?subscribed=true&rating=all&page=0')
-        await expect(iwara.locator('html')).toHaveAttribute('data-ia-ingest', `ok:${fixture.results.length}:${fixture.results.length}`, { timeout: 10_000 })
+        await expect(iwara.locator('html')).toHaveAttribute('data-ia-ingest', `ok:written=${fixture.results.length};parsed=${fixture.results.length};skipped=0;failed=0`, { timeout: 10_000 })
 
         // 2) 第 0 页（1 月 10 日）入库后，最后一次推送的窗口是 1 月 10 日前后
         await readVideos(iwara, '//api.iwara.tv/videos?rating=all&sort=date&page=0')
@@ -203,5 +204,115 @@ test.describe('页内 fetch 钩子', () => {
         expect(page1.results).toHaveLength(fixture.results.length + 1)
         expect(page1.results).toContainEqual(expect.objectContaining({ id: 'fixtureVideo3', private: true }))
         await iwara.close()
+    })
+
+    /**
+     * 回执说 ok 不等于库里真有数据。
+     *
+     * 旧实现把「解析成功数」当入库数报给页面，索引库里一条都没有时 `data-ia-ingest`
+     * 照样是 `ok:N`；这个用例直接打开扩展 origin 的 IndexedDB 数条数，
+     * 把「拦截 → 解析 → 落库」的最后一段真正盯住。
+     */
+    test('入库落盘：列表响应写进扩展库 videos 表', async ({ sharedSession }) => {
+        const { context, page } = sharedSession
+        await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: iwaraListPage() }))
+        await mockIwaraApi(context)
+
+        const iwara = await context.newPage()
+        await iwara.goto('https://www.iwara.tv/videos')
+        await expect(iwara.locator('html[data-ia-bridge]')).toHaveAttribute('data-ia-bridge', /ready|no-ack/, { timeout: 15_000 })
+
+        const fixture = apiFixture<IwaraVideoPage>('videos')
+        await readVideos(iwara, '//api.iwara.tv/videos?rating=all&sort=date&page=0')
+        await expect(iwara.locator('html')).toHaveAttribute('data-ia-ingest', /^ok:written=6;/, { timeout: 10_000 })
+
+        await openExtensionPage(page, sharedSession.extensionId, 'options/index.html')
+        const stored = await page.evaluate(async () => {
+            const db = await new Promise<IDBDatabase>((resolve, reject) => {
+                const request = indexedDB.open('IwaraAssistant')
+                request.onsuccess = () => resolve(request.result)
+                request.onerror = () => reject(request.error)
+            })
+            const readAll = <T>(store: string): Promise<T[]> =>
+                new Promise<T[]>((resolve, reject) => {
+                    const request = db.transaction(store, 'readonly').objectStore(store).getAll()
+                    request.onsuccess = () => resolve(request.result as T[])
+                    request.onerror = () => reject(request.error)
+                })
+            const all = await readAll<{ ID: string; Type: string; UploadTime: number; Private: boolean; Unlisted: boolean; RAW?: unknown }>('videos')
+            db.close()
+            return all
+        })
+
+        const written = stored.filter((record) => record.ID.startsWith('fixtureVideo'))
+        expect(written).toHaveLength(fixture.results.length)
+        // 字段展开必须齐：回填窗口筛选依赖 Type / UploadTime / Private / Unlisted / RAW
+        for (const record of written) {
+            expect(record.Type).toBe('partial')
+            expect(record.UploadTime).toBeGreaterThan(0)
+            expect(record.RAW).toBeTruthy()
+        }
+        await iwara.close()
+    })
+
+    /**
+     * 自动遍历订阅流（源项目 `menu.pageChange()` 的同款时机）。
+     *
+     * 这条链路跨三个上下文：pageUi 判断到达 `/videos` → 上报 → 后台按配置/间隔/登录态决定 →
+     * 自己 fetch 订阅流并入库。任何一段断了都没有报错（用户只看到「回填一直没数据」），
+     * 所以这里端到端断言「订阅流真的被请求了，而且记录真的进了库」。
+     */
+    test('自动遍历：到达 /videos 且开关就绪时，订阅流被自动拉取并入库', async ({ sharedSession }) => {
+        const { context, page } = sharedSession
+        await context.route('**/*.iwara.tv/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: iwaraListPage() }))
+        // 只回第 0 页：遍历拿到空页就停（夹具对所有页都返回同样内容，不停会跑满 64 页）
+        const mock = await mockIwaraApi(context, {
+            videos: (base, url) => (url.searchParams.has('subscribed') && url.searchParams.get('page') !== '0' ? { ...base, results: [], page: Number(url.searchParams.get('page')) } : base)
+        })
+
+        await openExtensionPage(page, sharedSession.extensionId, 'options/index.html')
+        await page.evaluate(async () => {
+            // 未登录时自动遍历会直接跳过：塞一个未过期的 refresh_token 型 JWT，
+            // 再塞 access token——否则 `getAuth()` 会先去 POST /user/token 换票（夹具里没有可用凭据）
+            const payload = btoa(JSON.stringify({ type: 'refresh_token', exp: Math.floor(Date.now() / 1000) + 3600 }))
+            await chrome.storage.local.set({ 'auth:refresh': `header.${payload}.signature`, 'auth:access': 'fixture-access-token', autoSyncAt: 0 })
+        })
+        await setPageConfig(page, { addUnlistedAndPrivate: true, filterUnlistedAndPrivate: false })
+
+        const iwara = await context.newPage()
+        await iwara.goto('https://www.iwara.tv/videos')
+
+        await expect.poll(() => mock.requests.some((url) => url.includes('subscribed=true')), { timeout: 20_000 }).toBe(true)
+
+        const fixture = apiFixture<IwaraVideoPage>('videos')
+        await expect
+            .poll(
+                async () =>
+                    page.evaluate(async () => {
+                        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+                            const request = indexedDB.open('IwaraAssistant')
+                            request.onsuccess = () => resolve(request.result)
+                            request.onerror = () => reject(request.error)
+                        })
+                        const count = await new Promise<number>((resolve, reject) => {
+                            const request = db.transaction('videos', 'readonly').objectStore('videos').count()
+                            request.onsuccess = () => resolve(request.result)
+                            request.onerror = () => reject(request.error)
+                        })
+                        db.close()
+                        return count
+                    }),
+                { timeout: 20_000 }
+            )
+            .toBe(fixture.results.length)
+
+        // 页面本身没有请求过 /videos：这批记录只可能来自自动遍历
+        expect(mock.requests.filter((url) => url.includes('/videos') && !url.includes('subscribed=true'))).toEqual([])
+        expect(mock.unmatched).toEqual([])
+
+        await iwara.close()
+        await page.evaluate(async () => {
+            await chrome.storage.local.remove(['auth:refresh', 'auth:access', 'autoSyncAt'])
+        })
     })
 })

@@ -46,7 +46,7 @@ import { syncKeepAlive } from './runtime/keepAlive'
 import { startAria2Tracking, watchAria2Endpoint } from './backends/aria2/tracker'
 import { consumeNotificationTarget, notifyInfo } from './runtime/notify'
 import { readFriendApproveProgress, startFriendApproval } from './iwara/friendApprove'
-import { parseUnlistedAndPrivate, readSyncState, syncAllVideosPages, ingestPageVideos } from './iwara/pageSync'
+import { autoSyncSubscribed, parseUnlistedAndPrivate, readSyncState, syncAllVideosPages, ingestPageVideos } from './iwara/pageSync'
 import { syncCachedToMediaCenter } from './iwara/mediaCenter'
 import { promoteAuthor } from './iwara/promoteAuthor'
 import { removePlaylistItems } from './iwara/playlists'
@@ -253,6 +253,10 @@ onMessage<Req>(async (req, sender) => {
             return syncAllVideosPages()
         case 'SYNC_SUBSCRIBED':
             return parseUnlistedAndPrivate()
+        case 'AUTO_SYNC_SUBSCRIBED':
+            // 页面到达 /videos 时的自动遍历（源 menu.pageChange() 同款时机）；
+            // 与手动路径分开：这里按配置 + 最小间隔 + 登录态自己决定跑不跑
+            return autoSyncSubscribed()
         case 'GET_SYNC_STATE':
             return readSyncState()
         case 'SYNC_MEDIA_CENTER':

@@ -34,6 +34,18 @@ export function isVideoListPath(pathname: string): boolean {
     return true
 }
 
+/**
+ * 是否落在**全站视频列表页** `/videos`（源项目 `PageType.VideoList`）。
+ *
+ * 与 `isVideoListPath` 刻意区分：后者覆盖首页 / 搜索 / 主页 / 播放列表等所有带卡片的路由，
+ * 而订阅流自动遍历的触发页在源项目里只有 `/videos`（首页是 `PageType.Home`，不触发）。
+ * 用窄判据是为了照搬源行为——否则每次刷首页都会多打一轮订阅流请求。
+ */
+export function isAllVideosPath(pathname: string): boolean {
+    const segments = segmentsOf(pathname)
+    return segments.length === 1 && segments[0] === 'videos'
+}
+
 /** 解析当前页面类型 */
 export function pageTypeOf(pathname: string): PageType {
     if (videoIdFromPath(pathname) !== null) return 'video'

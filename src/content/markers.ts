@@ -21,7 +21,14 @@ export const BRIDGE_MARKER_ATTR = 'data-ia-bridge'
 /** ISOLATED 世界执行时机（`body=0;head=0;elements=N`） */
 export const EARLY_MARKER_ATTR = 'data-ia-early'
 
-/** 入库结果（`ok:<ingested>:<上行条数>` 或 `fail:<原因>`，由 ISOLATED 写入） */
+/**
+ * 入库结果（`ok:written=<落库>;parsed=<解析成功>;skipped=<已有 full 跳过>;failed=<解析失败>[;reason=<首条原因>]`
+ * 或 `fail:<原因>`，由 ISOLATED 写入）。
+ *
+ * 三个数字分开报不是啰嗦：「库里没数据」时，`written=0;parsed=0` 说明没拦截到或字段不符，
+ * `written=0;parsed=32;skipped=32` 说明是去重跳过，`fail:` 说明消息/写库报错——
+ * 排查方向完全不同，只报一个总数就全糊在一起。
+ */
 export const INGEST_MARKER_ATTR = 'data-ia-ingest'
 
 /** 卡片元数据链路（`ok:<返回条数>:<有 uploadTime 的条数>` 或 `fail:<原因>`，由页内 UI 写入） */

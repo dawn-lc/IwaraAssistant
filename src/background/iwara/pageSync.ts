@@ -12,9 +12,10 @@
  */
 import { apiUrl } from '../../shared/site'
 import { i18n } from '../../shared/i18n'
-import { RATING_KEY } from '../../shared/storageKeys'
+import { AUTO_SYNC_AT_KEY, RATING_KEY } from '../../shared/storageKeys'
+import { isAutoSyncDue, shouldAutoSyncSubscribed } from '../../shared/autoSync'
 import { getAuth, isLoggedIn } from './auth'
-import { defaultWindow, refreshCacheInjection } from '../storage/configStore'
+import { defaultWindow, getConfig, refreshCacheInjection } from '../storage/configStore'
 import { db } from '../storage/db'
 import { parseCacheVideo } from '../storage/parse'
 
@@ -39,6 +40,14 @@ const MAX_FIND_PAGES = 64
 const PAGE_INTERVAL_MS = 500
 /** 失败页退避（源 `delay(5000 + Math.random() * 1000)`）：连续报错往往是被限流，快重试只会延长封禁 */
 const FAILED_PAGE_BACKOFF_MS = 5000
+/**
+ * 订阅流连续失败多少页就中止。
+ *
+ * 订阅流遍历现在会被**自动触发**（到达 `/videos` 时），而它的失败原因几乎都是全局的
+ * （掉登录 / 网络断 / 被限流）——这些情况下继续翻满 64 页只是把 64 个必然失败的请求打出去，
+ * 既救不回数据又延长封禁。3 页已经足够区分「偶发单页抽风」和「整条链路坏了」。
+ */
+const MAX_CONSECUTIVE_FAILURES = 3
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000
 /** 失败页重试轮数（源就一遍：首轮全跑完再逐页补一次，不循环重试） */
 const MAX_PAGE_RETRIES = 1
@@ -102,20 +111,46 @@ async function readRatingPref(): Promise<string> {
 }
 
 /**
+ * 入库结果。
+ *
+ * 为什么不是一个数字：`parsed`（解析成功）与 `written`（真正落库）是两件事，
+ * 只报一个总数会让排查彻底失去方向——「库里没数据」时到底是**没拦截到**、
+ * **解析全失败**、还是**写入被去重跳过**，必须能一眼分开。
+ */
+export interface IngestResult {
+    /** 真正写库的条数 */
+    written: number
+    /** 解析成功（Type=partial）的条数 = written + skipped */
+    parsed: number
+    /** 解析成功但库里已是 full、按「不降级」跳过的条数 */
+    skipped: number
+    /** 解析失败的条数（外链视频 / RAW 缺字段） */
+    failed: number
+    /** 第一条失败原因（`parseCacheVideo` 的 Msg），供页面标记与日志定位 */
+    reason?: string
+}
+
+/**
  * 批量入库（保留已有 full 记录，不被 partial 降级）。
  *
- * 返回两个数字：`parsed` 是**解析成功**的条数（页面缓存消息要把它回给页面做统计），
- * `written` 是真正落库的条数（已被 full 覆盖的会被减掉）。
+ * 返回 `IngestResult`：三个数字各自代表一个环节，页面的 `data-ia-ingest`
+ * 与后台日志都按它输出，排查时不用再猜。
  */
-async function upsertVideos(raws: Iwara.Video[]): Promise<{ parsed: number; written: number }> {
-    const parsed = raws.map((raw) => parseCacheVideo(raw)).filter((info) => info.Type === 'partial')
-    if (parsed.length === 0) return { parsed: 0, written: 0 }
+async function upsertVideos(raws: Iwara.Video[]): Promise<IngestResult> {
+    const infos = raws.map((raw) => parseCacheVideo(raw))
+    const parsed = infos.filter((info) => info.Type === 'partial')
+    const failed = infos.filter((info) => info.Type === 'fail')
+    const reason = failed[0]?.Msg
+
+    if (parsed.length === 0) {
+        return { written: 0, parsed: 0, skipped: 0, failed: failed.length, ...(reason !== undefined ? { reason } : {}) }
+    }
 
     const existing = await db.getVideosByIds(parsed.map((info) => info.ID))
     const fullIds = new Set(existing.filter((info) => info.Type === 'full').map((info) => info.ID))
     const toPut = parsed.filter((info) => !fullIds.has(info.ID))
     if (toPut.length > 0) await db.bulkPutVideos(toPut)
-    return { parsed: parsed.length, written: toPut.length }
+    return { written: toPut.length, parsed: parsed.length, skipped: parsed.length - toPut.length, failed: failed.length, ...(reason !== undefined ? { reason } : {}) }
 }
 
 /**
@@ -124,14 +159,14 @@ async function upsertVideos(raws: Iwara.Video[]): Promise<{ parsed: number; writ
  * 与 `syncAllVideosPages` 共用 `upsertVideos`：两条路都是「列表页 RAW → partial → 不降级 full」，
  * 区别只在于数据是从页面消息来还是从站内 API 拉。
  */
-export async function ingestPageVideos(payload: { videos: unknown[]; window?: { start: number; end: number } }): Promise<{ ingested: number }> {
-    const { parsed, written } = await upsertVideos(payload.videos as Iwara.Video[])
-    console.info(`[iwara-assistant] ingest ${written}/${parsed}${payload.window ? ' (window attached)' : ''}`)
+export async function ingestPageVideos(payload: { videos: unknown[]; window?: { start: number; end: number } }): Promise<IngestResult> {
+    const result = await upsertVideos(payload.videos as Iwara.Video[])
+    console.info(`[iwara-assistant] ingest written=${result.written} parsed=${result.parsed} skipped=${result.skipped} failed=${result.failed}${payload.window ? ' (window attached)' : ''}${result.reason !== undefined ? ` reason=${result.reason}` : ''}`)
 
     // 回填列表重算：优先用页面随消息上报的当前页窗口；库空/无窗口则跳过
     const windowBounds = payload.window ?? (await defaultWindow())
     if (windowBounds) await refreshCacheInjection(windowBounds.start, windowBounds.end)
-    return { ingested: parsed }
+    return result
 }
 
 /**
@@ -236,6 +271,7 @@ export async function parseUnlistedAndPrivate(): Promise<SyncState> {
         const monthVideos = await db.getFilteredVideos(monthAgo, Number.MAX_SAFE_INTEGER)
         const monthIds = new Set(monthVideos.map((video) => video.ID))
         const collected: Iwara.Video[] = []
+        let consecutiveFailures = 0
 
         for (let page = 0; page < MAX_FIND_PAGES; page++) {
             state.page = page
@@ -246,10 +282,18 @@ export async function parseUnlistedAndPrivate(): Promise<SyncState> {
             try {
                 data = await fetchSubscribedVideos(page)
                 state.succeeded++
+                consecutiveFailures = 0
             } catch (error) {
                 state.failed++
+                consecutiveFailures++
                 state.message = i18n.t('notify.syncPageFailed', { page, message: error instanceof Error ? error.message : String(error) })
                 await report(state)
+                // 连续失败：退避后再试，超过上限直接收工（原因见 MAX_CONSECUTIVE_FAILURES）
+                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    state.message = i18n.t('notify.syncRetryFailed', { count: state.failed })
+                    break
+                }
+                await sleep(FAILED_PAGE_BACKOFF_MS)
                 continue
             }
 
@@ -275,4 +319,42 @@ export async function parseUnlistedAndPrivate(): Promise<SyncState> {
         running = false
     }
     return state
+}
+
+/** 自动遍历被跳过的原因（供页面标记与日志定位，不面向用户） */
+export type AutoSyncSkipReason = 'config' | 'running' | 'interval' | 'not-logged-in'
+
+export interface AutoSyncResult {
+    started: boolean
+    reason?: AutoSyncSkipReason
+    state?: SyncState
+}
+
+/**
+ * 自动遍历订阅流 —— 源项目 `menu.pageChange()` 的同款时机，由页面在到达 `/videos` 时上报。
+ *
+ * 判据全部留在这里（页面侧不复制配置语义）：
+ * 1. `回填私有/不公开缓存` 开 **且** `过滤订阅页 不公开/私有` 关（源条件原样）；
+ * 2. 没有正在跑的遍历（源 `parseUnlistedRunning` 的等价物）；
+ * 3. 距上次尝试超过 `AUTO_SYNC_MIN_INTERVAL_MS`；
+ * 4. 已登录（未登录必然空跑；源也是在锁内先 `verifyLogin()`）。
+ *
+ * 时间戳在**真正开跑之前**写入：失败也算一次尝试。否则掉登录/被限流时，
+ * 用户每切一个列表页就会重打一轮请求，而界面没有任何反馈能让他察觉。
+ */
+export async function autoSyncSubscribed(): Promise<AutoSyncResult> {
+    if (!shouldAutoSyncSubscribed(getConfig())) return { started: false, reason: 'config' }
+    if (running) return { started: false, reason: 'running' }
+
+    const stored = (await browser.storage.local.get(AUTO_SYNC_AT_KEY))[AUTO_SYNC_AT_KEY]
+    const lastAt = typeof stored === 'number' ? stored : undefined
+    if (!isAutoSyncDue(lastAt, Date.now())) return { started: false, reason: 'interval' }
+
+    if (!(await isLoggedIn())) return { started: false, reason: 'not-logged-in' }
+
+    await browser.storage.local.set({ [AUTO_SYNC_AT_KEY]: Date.now() })
+    console.info('[iwara-assistant] 自动遍历订阅流（到达 /videos 触发）')
+    // await 而不是 fire-and-forget：整轮里持续有扩展 API / fetch 调用，SW 不会被中途回收；
+    // 与手动 `SYNC_SUBSCRIBED` 走同一条等待语义，两条路径不会出现「谁更容易被打断」的差异。
+    return { started: true, state: await parseUnlistedAndPrivate() }
 }
