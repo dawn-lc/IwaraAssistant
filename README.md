@@ -9,6 +9,9 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 
 > 技术实现（架构、跨浏览器差异、manifest、消息协议、测试与发布）在 [docs/](docs/) 目录，本文只讲怎么用。
 
+> [!IMPORTANT]
+> **Chrome 应用商店已拒绝上架**（2026-10-30，参考 ID `Grey Lithium`：内容政策 / 色情内容）。这是产品定位层面的禁止项，无法通过修改代码整改——Chromium 系浏览器请按 [Chromium 系手动安装指南](docs/07-install-chromium.md) 手动加载，功能与商店安装完全一致。原因与取舍见 [下文](#为什么不在商店里)。
+
 ## 功能一览
 
 | 领域 | 能力                                                                                                          |
@@ -27,17 +30,45 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 
 ## 安装
 
-扩展尚未上架商店，目前从源码构建：
+### 为什么不在商店里
+
+2026-10-30 提交的 0.1.31 被 **Chrome 应用商店拒绝**：违规类型「内容政策」，参考 ID `Grey Lithium`（色情内容），纠正要求是「移除所有与色情相关的内容/代码」，依据「我们不允许发布任何……会将用户定向到此类内容的产品」。官方 troubleshooting 页面对应那一条写得更直白——**该扩展程序的主要目的是改进提供露骨色情内容的网站**。
+
+扩展本身不含也不展示成人内容：代码里没有露骨素材，图标是自绘 SVG，全部 JS 打包在包内，不代理也不绕过站点的访问限制。被拒的实际原因是**服务对象**——它只对 iwara.tv 生效，而该站点是成人站点。这属于 Chrome 的禁止项而非可整改项（政策原文要求「取消发布」而不是「改完再交」），且「成人内容」开关在送审时已勾选仍照此判定，因此不再向 Chrome 应用商店提交。
+
+不接受为了过审把扩展改成「通用下载器」或抹掉站点名——那会同时踩上欺骗行为、关键字堆砌、最低功能等条款，而站点性质不会因此改变。Firefox 走 [AMO](https://addons.mozilla.org/)，[其内容政策](https://extensionworkshop.com/documentation/publish/add-on-policies/)没有同类条款。
+
+### Chromium 系（Chrome / Edge / Brave / Vivaldi / Opera）
+
+功能上与商店安装完全一致，只是需要手动加载一次。完整步骤（含更新、回滚、数据保留、故障排查）见 **[docs/07-install-chromium.md](docs/07-install-chromium.md)**，最短路径：
+
+**方式一：源码构建**（需 Node ≥ 20.11）
 
 ```bash
-npm install     # Node >= 20.11
-npm run build   # 产出 dist/chrome、dist/firefox 与对应的 .zip
+git clone https://github.com/dawn-lc/IwaraAssistant.git
+cd IwaraAssistant
+npm install
+npm run build:chrome   # → dist/chrome
 ```
 
-- **Chrome / Edge**：打开 `chrome://extensions` → 打开「开发者模式」→「加载已解压的扩展程序」→ 选 `dist/chrome`。
-- **Firefox**：打开 `about:debugging#/runtime/this-firefox` →「临时载入附加组件」→ 选 `dist/firefox/manifest.json`。
+**方式二：下载 CI 产物**（无需 Node，但需 GitHub 登录，产物保留 14 天）
 
-`npm install` 会顺带启用仓库自带的 git 钩子（提交时自动格式化、校验提交消息、推送前跑本地门禁）；不需要的话执行 `git config --unset core.hooksPath`。
+到 [Actions](https://github.com/dawn-lc/IwaraAssistant/actions/workflows/ci.yml) 选最新一次绿色运行 → 页面底部 Artifacts → 下载 `extension-zips` → 解压出 `chrome.zip` 再解压。
+
+拿到目录后：打开 `chrome://extensions`（Edge 是 `edge://extensions`）→ 打开「开发者模式」→「加载已解压的扩展程序」→ 选**直接含 `manifest.json`** 的那个目录。然后刷新已打开的 iwara 页面。
+
+> 只从本仓库源码或本仓库 Actions 取产物。第三方转发的 zip / crx 无法与源码对照，不要用。
+
+### Firefox
+
+```bash
+npm install    # Node >= 20.11
+npm run build  # 产出 dist/chrome、dist/firefox 与对应的 .zip
+```
+
+打开 `about:debugging#/runtime/this-firefox` →「临时载入附加组件」→ 选 `dist/firefox/manifest.json`。临时载入的扩展会在 Firefox 退出后失效，重开需重新载入（AMO 上架尚未完成）。
+
+`npm install` 会顺带启用仓库自带的 git 钩子（提交时自动格式化、校验提交消息、推送前跑本地门禁）；只安装不开发的话可以忽略，或执行 `git config --unset core.hooksPath` 关掉。
 
 ### 权限说明
 
@@ -132,6 +163,12 @@ npm run build   # 产出 dist/chrome、dist/firefox 与对应的 .zip
 
 ## 常见问题
 
+**Chrome 应用商店里为什么搜不到？**
+2026-10-30 被拒，参考 ID `Grey Lithium`（内容政策 / 色情内容），理由是扩展「主要用途是改进提供露骨色情内容的网站」。属禁止项，改代码解决不了，也不再重投。Chromium 系请手动加载，见 [Chromium 系手动安装指南](docs/07-install-chromium.md)。
+
+**加载后浏览器提示扩展「不受信任」或不来自商店？**
+非商店扩展的固定标记（浏览器对侧载的策略），无法关闭，忽略即可，不影响任何功能。
+
 **点了下载，为什么没开始下，而是出现在「需要处理」里？**
 开启了「第三方网盘链接检查」，且该视频的简介或评论里有网盘链接。这是刻意不下载：请打开视频页自己选择用网盘还是用下载器，确认要下再点「强制下载」。
 
@@ -162,7 +199,8 @@ npm run build   # 产出 dist/chrome、dist/firefox 与对应的 .zip
 | [04-messaging.md](docs/04-messaging.md)                     | 消息协议、全兼容监听器、MAIN ⇄ ISOLATED 桥、后台路由                    |
 | [05-features.md](docs/05-features.md)                       | 当前功能、下载通道、队列语义、通知、配置、迁移、社交与钓鱼防护          |
 | [06-testing-and-release.md](docs/06-testing-and-release.md) | 开发命令、测试分层、CI、Git 钩子、发布流程与未完成事项                  |
-| [store-listing.md](docs/store-listing.md)                   | Chrome Web Store / AMO 上架素材与文案                                   |
+| [07-install-chromium.md](docs/07-install-chromium.md)       | Chromium 系手动安装：获取产物、加载、更新、数据保留与故障排查           |
+| [store-listing.md](docs/store-listing.md)                   | AMO 上架素材与文案、Chrome Web Store 拒绝记录                           |
 
 常用命令（完整清单与测试分层见 [docs/06](docs/06-testing-and-release.md#开发命令)）：
 
