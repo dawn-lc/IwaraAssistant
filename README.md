@@ -10,7 +10,8 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 > 技术实现（架构、跨浏览器差异、manifest、消息协议、测试与发布）在 [docs/](docs/) 目录，本文只讲怎么用。
 
 > [!IMPORTANT]
-> **Chrome 应用商店已拒绝上架**（2026-10-30，参考 ID `Grey Lithium`：内容政策 / 色情内容）。这是产品定位层面的禁止项，无法通过修改代码整改——Chromium 系浏览器请按 [Chromium 系手动安装指南](docs/07-install-chromium.md) 手动加载，功能与商店安装完全一致。原因与取舍见 [下文](#为什么不在商店里)。
+> **Firefox：已上架 AMO**，[点此安装](https://addons.mozilla.org/firefox/addon/iwara-assistant/)（自动更新）。
+> **Chrome 应用商店：已拒绝上架**（2026-10-30，参考 ID `Grey Lithium`：内容政策 / 色情内容）。这是产品定位层面的禁止项，无法通过修改代码整改——Chromium 系浏览器请按 [Chromium 系手动安装指南](docs/07-install-chromium.md) 手动加载，功能与商店安装完全一致。原因与取舍见 [下文](#为什么不在商店里)。
 
 ## 功能一览
 
@@ -30,13 +31,27 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 
 ## 安装
 
-### 为什么不在商店里
+| 浏览器                                        | 安装方式                                                                  | 备注                         |
+| --------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------- |
+| **Firefox 128+**                              | [AMO 商店安装](https://addons.mozilla.org/firefox/addon/iwara-assistant/) | 审核通过，自动更新           |
+| Chrome / Edge / Brave / Vivaldi / Opera / Arc | 手动加载（[教程](docs/07-install-chromium.md)）                           | 商店已拒，功能与商店安装一致 |
 
-2026-10-30 提交的 0.1.31 被 **Chrome 应用商店拒绝**：违规类型「内容政策」，参考 ID `Grey Lithium`（色情内容），纠正要求是「移除所有与色情相关的内容/代码」，依据「我们不允许发布任何……会将用户定向到此类内容的产品」。官方 troubleshooting 页面对应那一条写得更直白——**该扩展程序的主要目的是改进提供露骨色情内容的网站**。
+### Firefox（推荐）
 
-扩展本身不含也不展示成人内容：代码里没有露骨素材，图标是自绘 SVG，全部 JS 打包在包内，不代理也不绕过站点的访问限制。被拒的实际原因是**服务对象**——它只对 iwara.tv 生效，而该站点是成人站点。这属于 Chrome 的禁止项而非可整改项（政策原文要求「取消发布」而不是「改完再交」），且「成人内容」开关在送审时已勾选仍照此判定，因此不再向 Chrome 应用商店提交。
+在 [AMO 产品页](https://addons.mozilla.org/firefox/addon/iwara-assistant/) 点「添加到 Firefox」，确认权限即完成安装，后续随版本自动更新。
 
-不接受为了过审把扩展改成「通用下载器」或抹掉站点名——那会同时踩上欺骗行为、关键字堆砌、最低功能等条款，而站点性质不会因此改变。Firefox 走 [AMO](https://addons.mozilla.org/)，[其内容政策](https://extensionworkshop.com/documentation/publish/add-on-policies/)没有同类条款。
+- 上架版本 **0.1.30**（2026-10-29 通过审核），可能落后于仓库最新（当前 0.1.32）。要用最新构建就走下面的临时载入。
+- 最低 **Firefox 128**（`strict_min_version`），低于此版本 AMO 会拦下。
+- 上架包是 **MV2**，所以局域网里的 aria2 直接用 `http://192.168.x.x:6800/jsonrpc` 就行，不受 MV3 本地网络限制。
+
+临时载入仓库最新代码：
+
+```bash
+npm install    # Node >= 20.11
+npm run build  # → dist/chrome、dist/firefox 与对应的 .zip
+```
+
+打开 `about:debugging#/runtime/this-firefox` →「临时载入附加组件」→ 选 `dist/firefox/manifest.json`。临时载入的扩展会在 Firefox 退出后失效，重开需重新载入。
 
 ### Chromium 系（Chrome / Edge / Brave / Vivaldi / Opera）
 
@@ -59,14 +74,13 @@ npm run build:chrome   # → dist/chrome
 
 > 只从本仓库源码或本仓库 Actions 取产物。第三方转发的 zip / crx 无法与源码对照，不要用。
 
-### Firefox
+### 为什么不在商店里
 
-```bash
-npm install    # Node >= 20.11
-npm run build  # 产出 dist/chrome、dist/firefox 与对应的 .zip
-```
+2026-10-30 提交的 0.1.31 被 **Chrome 应用商店拒绝**：违规类型「内容政策」，参考 ID `Grey Lithium`（色情内容），纠正要求是「移除所有与色情相关的内容/代码」，依据「我们不允许发布任何……会将用户定向到此类内容的产品」。官方 troubleshooting 页面对应那一条写得更直白——**该扩展程序的主要目的是改进提供露骨色情内容的网站**。
 
-打开 `about:debugging#/runtime/this-firefox` →「临时载入附加组件」→ 选 `dist/firefox/manifest.json`。临时载入的扩展会在 Firefox 退出后失效，重开需重新载入（AMO 上架尚未完成）。
+扩展本身不含也不展示成人内容：代码里没有露骨素材，图标是自绘 SVG，全部 JS 打包在包内，不代理也不绕过站点的访问限制。被拒的实际原因是**服务对象**——它只对 iwara.tv 生效，而该站点是成人站点。这属于 Chrome 的禁止项而非可整改项（政策原文要求「取消发布」而不是「改完再交」），且「成人内容」开关在送审时已勾选仍照此判定，因此不再向 Chrome 应用商店提交。
+
+不接受为了过审把扩展改成「通用下载器」或抹掉站点名——那会同时踩上欺骗行为、关键字堆砌、最低功能等条款，而站点性质不会因此改变。同样一份代码在 AMO 已通过审核：[Mozilla 的内容政策](https://extensionworkshop.com/documentation/publish/add-on-policies/)只要求不违反商标、AUP 与美国法律，没有 Chrome 那种针对「服务对象」的禁止条款。
 
 `npm install` 会顺带启用仓库自带的 git 钩子（提交时自动格式化、校验提交消息、推送前跑本地门禁）；只安装不开发的话可以忽略，或执行 `git config --unset core.hooksPath` 关掉。
 
@@ -168,6 +182,9 @@ npm run build  # 产出 dist/chrome、dist/firefox 与对应的 .zip
 
 **加载后浏览器提示扩展「不受信任」或不来自商店？**
 非商店扩展的固定标记（浏览器对侧载的策略），无法关闭，忽略即可，不影响任何功能。
+
+**AMO 上装的版本比仓库旧？**
+AMO 上架需要审核，商店版本天然滞后于仓库（当前 0.1.30 / 仓库 0.1.32）。想用最新代码就在本地 `npm run build` 后临时载入 `dist/firefox/manifest.json`；临时载入与商店版互不冲突，但建议只留一个，避免两个实例同时注入。
 
 **点了下载，为什么没开始下，而是出现在「需要处理」里？**
 开启了「第三方网盘链接检查」，且该视频的简介或评论里有网盘链接。这是刻意不下载：请打开视频页自己选择用网盘还是用下载器，确认要下再点「强制下载」。

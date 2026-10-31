@@ -2,6 +2,8 @@
 
 本扩展**无法从 Chrome 应用商店安装**（原因见 [README「为什么不在商店里」](../README.md#为什么不在商店里)），Chromium 系浏览器只能手动加载。这份文档给出从零到能用的完整步骤，含更新、回滚与常见故障。
 
+Firefox 用户不需要本文：已在 [AMO 上架](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，直接装。
+
 手动加载（sideload，"加载已解压的扩展程序"）在功能上与商店安装**完全一致**：同一个 `dist/chrome` 目录，全站权限、下载通道、后台任务、系统通知都正常。
 
 ## 适用浏览器
@@ -145,7 +147,7 @@ Chrome 对侧载扩展的固定标记与提示，无法关闭，忽略即可。�
 不要。Chrome 稳定版已不再支持拖入 crx 安装（除企业策略），而且 crx 里的代码无法和仓库源码逐行对照。用「加载已解压的扩展程序」。
 
 **公司/学校账号装不上**
-组织策略可能禁止加载未打包扩展（`ExtensionInstallBlocklist` / 强制商店来源）。这个改不了，换个人浏览器配置，或改用 Firefox（`about:debugging` 临时载入，策略限制同样可能存在）。
+组织策略可能禁止加载未打包扩展（`ExtensionInstallBlocklist` / 强制商店来源）。这个改不了，换个人浏览器配置，或改用 Firefox（[AMO 已上架](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，策略限制同样可能存在）。
 
 **换台电脑要重装一遍吗**
 要，但只需重复「第一步 + 第二步」。想同步数据就在旧机器导出迁移包、新机器导入。
@@ -160,4 +162,4 @@ Chrome 对侧载扩展的固定标记与提示，无法关闭，忽略即可。�
 1. **来源**：只用本仓库源码构建，或本仓库 Actions 产出的 `extension-zips`。别人转发的包无法验证。
 2. **可验证性**：`npm run build:chrome` 是确定性的，同一 commit 构建出的产物可以互相比较；想核对某个行为，直接看 `src/background/` 与 `src/content/`。
 
-Firefox 用户请走 `about:debugging#/runtime/this-firefox` 的「临时载入附加组件」，选 `dist/firefox/manifest.json`（AMO 上架状态见 [06-testing-and-release.md](06-testing-and-release.md#未完成事项代码之外)）。
+Firefox 不需要看本文：它已在 [AMO 上架](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，直接安装即可，自动更新；只有想跑仓库最新代码时才走 `about:debugging#/runtime/this-firefox` 临时载入 `dist/firefox/manifest.json`。上架状态见 [06-testing-and-release.md](06-testing-and-release.md#未完成事项代码之外)。

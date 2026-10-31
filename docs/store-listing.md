@@ -1,6 +1,6 @@
 # 商店上架素材
 
-分发路线：**AMO 上传审核**（Firefox，默认，零配置）、**Firefox 自建签名自更新**（设环境变量，包内注入 `gecko.update_url`）、**Chromium 系手动加载**（Chrome Web Store 已拒绝且不再重投，见下文与 [07-install-chromium.md](07-install-chromium.md)）。
+分发路线：**AMO**（Firefox，已上架，见下文第二节）、**Firefox 自建签名自更新**（设环境变量，包内注入 `gecko.update_url`）、**Chromium 系手动加载**（Chrome Web Store 已拒绝且不再重投，见下文与 [07-install-chromium.md](07-install-chromium.md)）。
 
 > 首轮发布建议保留旧版脚本一个发布周期，README 提供迁移指引；确认无误后用户再禁用旧脚本。发布流程见 [06-testing-and-release.md](06-testing-and-release.md)。
 
@@ -64,6 +64,21 @@
 - **Data usage**: 不收集/不上传任何数据（对应 PRIVACY.md）。
 
 ## 二、AMO（Firefox Add-ons）
+
+### 状态：已上架
+
+产品页：<https://addons.mozilla.org/firefox/addon/iwara-assistant/>（`/zh-CN/` 等语言前缀均可访问）
+
+| 项       | 值                                                                   |
+| -------- | -------------------------------------------------------------------- |
+| 上架版本 | **0.1.30**（与仓库 0.1.32 有差距，发版后走「新版本」上传）           |
+| 审核结果 | 已通过审核（2026-10-29，无人工退回记录）                             |
+| 包体积   | 716.03 KB                                                            |
+| 许可证   | Apache License 2.0                                                   |
+| 分类     | 下载管理                                                             |
+| 数据收集 | 「开发者称此扩展无需收集数据」（对应 `data_collection_permissions`） |
+
+商店页当前**待补**：描述为空、未上传图标与截图、「实验性」开关仍为勾选。三项都会直接压低曝光度（实验性会额外限流），文案已备在本文第三节。
 
 ### 上传包
 
