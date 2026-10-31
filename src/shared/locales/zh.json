@@ -476,6 +476,7 @@
         "subscribedPage": "正在遍历订阅流第 {page} 页（已收集 {collected} 条）",
         "subscribedReached": "已追平当月记录（第 {page} 页），停止遍历",
         "subscribedDone": "完成：扫描 {collected} 条，写入 {written} 条（成功 {ok} 页 / 失败 {failed} 页）",
+        "subscribedAborted": "连续 {count} 页失败，已停止遍历（可能是未登录、网络中断或被限流）",
         "taskNotFound": "任务不存在",
         "taskRunningRetry": "任务正在下载中，无法重试",
         "taskSkippedRetry": "该任务因第三方下载链接被跳过，想下载请用「强制下载」（重试会再次被跳过）",

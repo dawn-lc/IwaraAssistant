@@ -476,6 +476,7 @@
         "subscribedPage": "Walking subscription page {page} ({collected} collected)",
         "subscribedReached": "Caught up with the current month (page {page}), stopping",
         "subscribedDone": "Done: scanned {collected}, wrote {written} ({ok} pages succeeded / {failed} failed)",
+        "subscribedAborted": "Stopped after {count} consecutive page failures (not signed in, network down, or rate limited)",
         "taskNotFound": "Task not found",
         "taskRunningRetry": "The task is still downloading and cannot be retried",
         "taskSkippedRetry": "This task was skipped because of a third-party download link. Use \"Force download\" instead (retrying would be skipped again)",

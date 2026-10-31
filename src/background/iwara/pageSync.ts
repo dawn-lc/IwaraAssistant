@@ -290,7 +290,7 @@ export async function parseUnlistedAndPrivate(): Promise<SyncState> {
                 await report(state)
                 // 连续失败：退避后再试，超过上限直接收工（原因见 MAX_CONSECUTIVE_FAILURES）
                 if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                    state.message = i18n.t('notify.syncRetryFailed', { count: state.failed })
+                    state.message = i18n.t('notify.subscribedAborted', { count: state.failed })
                     break
                 }
                 await sleep(FAILED_PAGE_BACKOFF_MS)

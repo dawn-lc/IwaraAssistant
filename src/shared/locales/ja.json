@@ -476,6 +476,7 @@
         "subscribedPage": "登録チャンネル {page} ページを走査中（{collected} 件収集）",
         "subscribedReached": "当月の記録に追いつきました（{page} ページ）、走査を停止",
         "subscribedDone": "完了：{collected} 件を走査し {written} 件を書き込み（成功 {ok} ページ / 失敗 {failed} ページ）",
+        "subscribedAborted": "{count} ページ連続で失敗したため巡回を中止しました（未ログイン・通信断・レート制限の可能性）",
         "taskNotFound": "タスクが存在しません",
         "taskRunningRetry": "タスクはダウンロード中のため再試行できません",
         "taskSkippedRetry": "このタスクは第三者のダウンロードリンクのためスキップされました。ダウンロードするには「強制ダウンロード」を使ってください（再試行しても再びスキップされます）",
