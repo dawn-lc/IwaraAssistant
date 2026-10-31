@@ -77,8 +77,12 @@
 | 许可证   | Apache License 2.0                                                   |
 | 分类     | 下载管理                                                             |
 | 数据收集 | 「开发者称此扩展无需收集数据」（对应 `data_collection_permissions`） |
+| 主页     | <https://github.com/dawn-lc/IwaraAssistant>                          |
+| 支持站点 | <https://github.com/dawn-lc/IwaraAssistant/issues>                   |
 
-商店页当前**待补**：描述为空、未上传图标与截图、「实验性」开关仍为勾选。三项都会直接压低曝光度（实验性会额外限流），文案已备在本文第三节。
+商品文案（2026-10-31 已填入，三语描述与摘要全部生效）：见本文第三节。
+
+**仍待补**：附加组件图标与屏幕截图（AMO 要求至少 1 张 1280×800 或 640×400 的截图，无截图时商品页不展示预览区）。「实验性」开关由作者有意保留（尚未达到发布标准），取消后曝光度才会恢复。
 
 ### 上传包
 
@@ -128,46 +132,77 @@ npx web-ext sign --source-dir dist/firefox --api-key <JWT-issuer> --api-secret <
 > 必须 1~4 段十进制整数、非零段不得前导零、每段 ≤ 65535（Chrome 上限，AMO 的 9 位上限自动满足）、不得全零。
 > 预发布标识（`1.0.0-beta.1`）会被直接拒绝（不静默削成 `1.0.0`）——要用构建号请写第 4 段（`1.0.0.1`）。
 
-## 三、多语言商店文案
+## 三、多语言商店文案（已在 AMO 生效）
 
-### English
+以下为 2026-10-31 实际填入 AMO 的三语文本。改动后需在 devhub 「编辑产品页面」重新保存，否则仓库与商店会再次脱节。
 
-**Summary**: Download and manage videos from iwara.tv: browser/Aria2/iwaradl channels, list filters, metadata cache, queue notifications.
+AMO 的 `description` 只接受「当前编辑语言」的字段：默认（en-us）字段在表单里，其他语言需要在同一个 `edit_describe` 表单里提交 `description_<locale>` / `summary_<locale>` 字段（浏览器界面里没有单独的语言页签）。
 
-**Description**:
-Iwara Assistant turns IwaraDownloadTool from a userscript into a native browser extension.
+### English (en-US)
 
-- Right-click any video link → "Iwara Assistant → Download this video".
-- Four download channels: browser (downloads API, **the default** — real progress/completion tracking), Aria2 (JSON-RPC over WebSocket — completions arrive instantly via push), iwaradl, or open-the-link (Others).
-- Save path templates with per-segment sanitizing (NFKC, emoji folding, length caps) and live preview.
-- Feed filters: hide liked videos; optionally merge private/unlisted videos you already have into the home timeline.
-- Background video library (IndexedDB) with the download queue, system notifications, and a badge counter — even with no tabs open.
-- Settings, RPC endpoints (host access is declared once at install; no per-origin permission prompt), migration wizard from the userscript, and a built-in guide.
-
-No data collection. No telemetry. Everything stays in your browser.
-
-### 日本語
-
-**Summary**: iwara.tv の動画を一括ダウンロード：Browser/Aria2/iwaradl 対応、リストフィルタ、メタデータキャッシュ、通知つきキュー。
+**Summary**: Download and manage videos from iwara.tv
 
 **Description**:
-右クリックから動画をダウンロード。4 つのダウンロード経路（ブラウザ内蔵＝既定／Aria2 WebSocket リアルタイム追跡／iwaradl／直接リンク）、保存パステンプレートとファイル名サニタイズ、フィードフィルタ、バックグラウンドキューとシステム通知、ユーザースクリプトからの移行ウィザードを内蔵。データ収集なし，すべてはブラウザ内に留まります。
 
-### 简体中文
+```text
+Iwara Assistant turns the IwaraDownloadTool userscript into a native browser extension for iwara.tv.
 
-**Summary**: 批量下载与管理 iwara.tv 视频：Browser/Aria2/iwaradl/直链四通道、列表过滤、元数据缓存、系统通知任务队列。
+- Right-click any video link, or switch list pages into checkbox mode and queue a whole page at once.
+- Four download channels: browser built-in (default, with real progress and completion tracking), Aria2 over JSON-RPC / WebSocket, iwaradl, or open the resolved link in a tab.
+- Save-path templates with per-segment sanitizing and a live preview, plus metadata JSON export.
+- Feed filters: hide liked videos, and optionally merge private or unlisted videos you already collected back into the home timeline.
+- Background video library (IndexedDB), persistent task queue, system notifications and a badge counter: downloads keep going after you close the tab.
+- Playlist pages: remove entries in bulk (owner only).
+- Migration wizard for the original userscript database, a built-in guide, and a nine-tab settings center.
+- Look-alike site warning: flags iwara look-alike domains and blocks the page until you decide to continue.
+- Interface in English, Japanese and Simplified Chinese.
+
+No data collection, no telemetry, no developer server: settings, queue and cached metadata stay in your browser.
+```
+
+### 日本語 (ja)
+
+**Summary**: iwara.tv の動画を一括ダウンロード：ブラウザ内蔵 / Aria2 / iwaradl / 直リンクの 4 経路、リストフィルタ、通知つきキュー。
 
 **Description**:
-Iwara Assistant 是面向 iwara.tv 的浏览器扩展：
 
-- 右键视频链接 → 「Iwara Assistant → 下载此视频」。
-- 四条下载通道：浏览器内建（默认，进度与完成情况真实回传）、Aria2（WebSocket 实时推送，完成/失败即时通知）、iwaradl、后台标签页开直链。
-- 保存路径模板（逐段清洗：NFKC / emoji 折叠 / 长度截断）+ 实时预览。
-- 信息流过滤：隐藏已点赞内容；可把已收录的私有/不公开视频回填到首页时间线。
-- 后台视频库 + 任务队列持久化（浏览器关掉标签页任务照跑），完成/失败走系统通知 + 角标。
-- RPC 端点随安装一次授予站点访问（没有逐地址授权弹窗）、旧版数据迁移向导、内置使用引导。
+```text
+Iwara Assistant は iwara.tv 向けのブラウザ拡張機能です。ユーザースクリプト版の一括ダウンロード・リストフィルタ・タスク管理を、ネイティブ拡張として作り直しました。
 
-不收集任何数据，无遥测；一切数据只留在你的浏览器里。
+- 動画リンクを右クリックしてダウンロード。リストページをチェックボックス表示に切り替えれば、1 ページ分をまとめてキューに追加できます。
+- 4 つのダウンロード経路：ブラウザ内蔵（既定。進捗と完了を正確に追跡）、Aria2（JSON-RPC / WebSocket で完了・失敗を即時通知）、iwaradl、解決済みリンクをタブで開く。
+- 保存パステンプレート（セグメント単位のサニタイズ + リアルタイムプレビュー）、メタデータ JSON の書き出し。
+- フィルタ：高評価済みを隠す。収集済みの非公開 / 限定公開動画をホームのタイムラインに合流させることもできます。
+- バックグラウンドの動画ライブラリ（IndexedDB）、永続タスクキュー、システム通知、ツールバーのバッジ。タブを閉じてもダウンロードは継続します。
+- プレイリストページの一括削除（本人のみ）。
+- 旧ユーザースクリプトのデータ移行ウィザード、内蔵ガイド、9 タブの設定画面。
+- そっくりサイト警告：iwara の類似ドメインを検出すると全画面でブロックし、続行するかはご自身で選べます。
+- 表示言語は日本語 / English / 簡体字中国語。
+
+データ収集なし、テレメトリなし、開発者サーバーなし。設定・キュー・キャッシュはすべてブラウザ内に留まります。
+```
+
+### 简体中文 (zh-CN)
+
+**Summary**: 批量下载与管理 iwara.tv 视频：浏览器内建 / Aria2 / iwaradl / 直链四通道，列表过滤，系统通知任务队列。
+
+**Description**:
+
+```text
+Iwara Assistant 是面向 iwara.tv 的浏览器扩展：把批量下载、列表筛选与任务管理从油猴脚本搬进原生扩展。
+
+- 右键视频链接即可下载；也可以把列表页切成复选框模式，整页排队。
+- 四条下载通道：浏览器内建（默认，进度与完成情况真实回传）、Aria2（JSON-RPC / WebSocket，完成与失败即时推送）、iwaradl、以及在后台标签页打开直链。
+- 保存路径模板（逐段清洗 + 实时预览），可同时导出元数据 JSON。
+- 信息流过滤：隐藏已点赞内容；可把已收录的私有 / 不公开视频回填到首页时间线。
+- 后台视频库（IndexedDB）+ 持久任务队列 + 系统通知 + 工具栏角标：关掉标签页任务照跑。
+- 播放列表页支持批量移除条目（仅作者本人）。
+- 旧版油猴脚本数据迁移向导、内置使用引导、九个页签的配置中心。
+- 仿冒域名警告：命中 iwara 仿冒站点时全屏拦截，由你决定是否继续。
+- 界面支持简体中文、English、日本語。
+
+不收集任何数据、无遥测、无开发者服务器：配置、任务队列与缓存元数据全部留在你的浏览器里。
+```
 
 ## 四、正式图标
 

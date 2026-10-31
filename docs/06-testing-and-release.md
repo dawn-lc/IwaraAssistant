@@ -143,7 +143,7 @@ npm run lint:firefox            # web-ext lint，应为 0 error / 0 notice
 | 商店宣传图 440×280    | 不再需要   | Chrome Web Store 专用尺寸，不提交后无用途；素材要求留档在 [store-listing.md](store-listing.md) 第四节                                                                                                                                                                             |
 | Chrome Web Store 提交 | **不提交** | 0.1.31 于 2026-10-30 被拒（`Grey Lithium`，内容政策）：判定依据是「主要用途为改进提供露骨色情内容的网站」，属禁止项而非可整改项。拒绝记录见 [store-listing.md](store-listing.md#拒绝记录2026-10-30)。Chromium 系改为手动加载，见 [07-install-chromium.md](07-install-chromium.md) |
 | AMO（Firefox）提交    | **已上架** | [iwara-assistant](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，上架版本 **0.1.30**（2026-10-29 通过审核）；仓库当前 0.1.32，发版后走「新版本」上传即可                                                                                                             |
-| AMO 商品页素材        | 待补       | 当前**描述为空、未上传图标与截图**，且「实验性」开关是勾选状态——三项都会压低曝光度（实验性额外限流）。文案已备在 [store-listing.md](store-listing.md) 第三节                                                                                                                      |
+| AMO 商品页素材        | 部分完成   | 三语描述与摘要、主页（仓库）、支持站点（issues）已于 2026-10-31 填入；**图标与截图仍缺**。「实验性」按作者决定保留（尚未达到发布标准），取消后曝光度才会恢复。文案与清单见 [store-listing.md](store-listing.md) 第二、三节                                                        |
 
 ## 风险与约束
 
