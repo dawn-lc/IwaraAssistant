@@ -39,7 +39,6 @@ import { analyzePath } from '../../../shared/analyzePath'
 import type { AnalyzedPath } from '../../../shared/analyzePath'
 import { buildChangeUriParams, canRebuildFromOldUris } from '../../../shared/aria2Recover'
 import type { FullVideoInfo } from '../../../shared/videoInfo'
-import { i18n } from '../../../shared/i18n'
 import { stringify } from '../../../shared/strings'
 import { aria2API, aria2TellStatus, type Aria2Status } from './client'
 import { getPageCookie } from '../../iwara/auth'
@@ -210,9 +209,4 @@ export async function isAria2QueueFull(): Promise<boolean> {
         // 查不到并发上限时**不阻塞恢复**：宁可多试一次，也不因为一个附加查询丢掉恢复机会
         return false
     }
-}
-
-/** 恢复失败后的用户可见文案（通知是唯一反馈通道，必须能操作） */
-export function describeRecoverFailure(videoId: string): string {
-    return i18n.t('notify.aria2RecoverFailed', { id: videoId })
 }

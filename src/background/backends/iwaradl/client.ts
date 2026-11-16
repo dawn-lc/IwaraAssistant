@@ -18,7 +18,7 @@
  */
 import { IWARADL_TARGET, callEndpoint, parseEndpoint } from '../../../shared/endpoint'
 import { i18n } from '../../../shared/i18n'
-import { parseIwaradlTask, parseIwaradlTasks, type IwaradlTask } from '../../../shared/iwaradlTask'
+import { parseIwaradlTasks, type IwaradlTask } from '../../../shared/iwaradlTask'
 import type { QueueTask } from '../../../shared/task'
 import { getConfig } from '../../storage/configStore'
 import { getTasks } from '../../storage/queue'
@@ -70,14 +70,6 @@ export async function iwaradlListTasks(): Promise<IwaradlTask[]> {
     const body = (await response.json().catch(() => undefined)) as unknown
     if (!Array.isArray(body)) throw new Error(i18n.t('notify.iwaradlNotReady'))
     return parseIwaradlTasks(body)
-}
-
-/** 取单个任务；404 表示它已经不在里面了（删除过/重启丢了），返回 undefined 而不是抛错 */
-export async function iwaradlGetTask(vid: string): Promise<IwaradlTask | undefined> {
-    const response = await request(iwaradlTaskUrl(getConfig().iwaradlPath, vid), { method: 'GET' })
-    if (response.status === 404) return undefined
-    if (!response.ok) throw new Error(i18n.t('notify.iwaradlNotReady'))
-    return parseIwaradlTask((await response.json().catch(() => undefined)) as unknown)
 }
 
 /** 删除任务的结果：iwaradl 只允许删 `pending`，`running` 会返回 409 */

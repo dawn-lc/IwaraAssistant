@@ -106,8 +106,3 @@ export async function syncIwaradlTasks(): Promise<IwaradlSyncResult> {
     }
     return { updated, settled }
 }
-
-/** 仅测试用：重置失败计数（模块级状态在同一个进程里会跨用例累积） */
-export function resetIwaradlFailureCount(): void {
-    consecutiveFailures = 0
-}

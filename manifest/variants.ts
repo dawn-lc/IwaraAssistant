@@ -33,21 +33,10 @@ export interface ManifestVariant {
     manifestVersion?: 2
 }
 
-/**
- * manifest 描述文案（en 供 placeholder；ja/zh_CN 备注用，UI 文案在 _locales）
- *
- * ⚠️ 键名必须与 `_locales` 目录名一致：Chrome/Firefox 的扩展 locale 码用下划线
- * （`zh_CN` / `zh_TW`），**`zh-CN` 不是受支持的码**——目录名写成 `zh-CN` 会被宿主
- * 静默忽略，商店的语言下拉里也就看不到中文（本仓库踩过这个坑）。
- */
-export const EXT_DESCRIPTION = {
-    en: 'Download and manage videos from iwara.tv',
-    ja: 'iwara.tv の動画を一括ダウンロード',
-    zh_CN: '批量下载与管理 iwara.tv 视频'
-}
-
 const sharedPlaceholder = {
-    // 商店摘要（≤132）随界面语言本地化：__MSG_ 由各 _locales/<code>/messages.json 的 extDescription 解析
+    // 商店摘要（≤132）随界面语言本地化：__MSG_ 由各 _locales/<code>/messages.json 的 extDescription 解析。
+    // ⚠️ 目录名必须用下划线的 locale 码（`zh_CN` / `zh_TW`）：`zh-CN` **不是**宿主支持的码，
+    // 写成连字符会被静默忽略——商店语言下拉里看不到中文，且没有任何报错（本仓库踩过）。
     description: '__MSG_extDescription__',
     action_title: 'Iwara Assistant'
 }
