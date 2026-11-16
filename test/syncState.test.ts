@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { IDLE_SYNC_STATE, parseSyncState, type SyncState } from '../src/shared/syncState'
+import { advanceSyncCursor, IDLE_SYNC_CURSOR, IDLE_SYNC_STATE, parseSyncCursor, parseSyncCursorOrIdle, parseSyncState, type SyncState } from '../src/shared/syncState'
 
 function state(overrides: Partial<SyncState>): SyncState {
     return { ...IDLE_SYNC_STATE, running: true, kind: 'all', updatedAt: 1_700_000_000_000, ...overrides }
@@ -65,4 +65,42 @@ test('正常值原样通过（含运行中与终态）', () => {
 
 test('空闲常量本身可被解析回同一个值（首屏与脏值回落都用它）', () => {
     assert.deepEqual(parseSyncState(IDLE_SYNC_STATE), IDLE_SYNC_STATE)
+})
+
+// ── 断点游标（全站遍历续跑）────────────────────────────────────────────
+
+test('游标：非对象 / 缺页码 / 负数页码一律不可信（按「没有游标」处理）', () => {
+    assert.equal(parseSyncCursor(undefined), null)
+    assert.equal(parseSyncCursor(null), null)
+    assert.equal(parseSyncCursor({ updatedAt: 1 }), null)
+    assert.equal(parseSyncCursor({ nextPage: -1 }), null)
+    assert.equal(parseSyncCursor({ nextPage: NaN }), null)
+    assert.equal(parseSyncCursor({ nextPage: '3' }), null)
+})
+
+test('游标：合法值原样通过，时间戳坏了只影响「多旧」不影响「从哪开始」', () => {
+    assert.deepEqual(parseSyncCursor({ nextPage: 0, updatedAt: 5 }), { nextPage: 0, updatedAt: 5 })
+    assert.deepEqual(parseSyncCursor({ nextPage: 12, updatedAt: 'x' }), { nextPage: 12, updatedAt: 0 })
+    // 小数页码向下取整：游标只可能是整数页
+    assert.equal(parseSyncCursor({ nextPage: 3.9, updatedAt: 0 })?.nextPage, 3)
+})
+
+test('游标解析器永不返回 null：游标「合法地可以不存在」（跑完就删）', () => {
+    // 直接用 parseSyncCursor 接 useStorageSnapshot 的话，跑完删键时 onChanged 解析成 null
+    // 会被 hook 当成「不可信、保留上一份」——界面于是永远显示「上次停在第 N 页」。
+    assert.deepEqual(parseSyncCursorOrIdle(undefined), IDLE_SYNC_CURSOR)
+    assert.deepEqual(parseSyncCursorOrIdle({ nextPage: 7, updatedAt: 1 }), { nextPage: 7, updatedAt: 1 })
+})
+
+test('游标只做连续推进：中间有洞就停在洞那里（按最大页推进会永久漏页）', () => {
+    // 第 3 页失败、4/5 页成功：游标必须停在 3，否则进程被杀后第 3 页永远补不回来
+    assert.equal(advanceSyncCursor(0, new Set([0, 1, 2, 4, 5])), 3)
+    // 洞被补上之后可以继续往前
+    assert.equal(advanceSyncCursor(3, new Set([0, 1, 2, 3, 4, 5])), 6)
+    // 一页都没成功：停在起点
+    assert.equal(advanceSyncCursor(0, new Set()), 0)
+    // 从断点起跑时同理
+    assert.equal(advanceSyncCursor(10, new Set([10, 11, 13])), 12)
+    // 脏起点（负数）回 0，不能把页码算到库外
+    assert.equal(advanceSyncCursor(-5, new Set([0])), 1)
 })

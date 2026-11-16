@@ -28,6 +28,7 @@ const legacyImportUi = readSource('src/options/tabs/migrate/LegacyDbImport.tsx')
 const legacyImportBg = readSource('src/background/storage/legacyImport.ts')
 const pageSyncSource = readSource('src/background/iwara/pageSync.ts')
 const advancedSource = readSource('src/options/tabs/AdvancedTab.tsx')
+const exportSource = readSource('src/options/tabs/migrate/ExportSection.tsx')
 
 test('好友审批：页面订阅 session 快照，且只保留「取初值」这一次消息', () => {
     assert.match(friendsSource, /useStorageSnapshot<FriendApproveProgress>\(\{/, '必须用统一 hook 订阅快照')
@@ -86,7 +87,7 @@ test('站点遍历：后台不再提供「给我当前进度」的消息（多�
 
 test('遍历：路由只占位就返回，绝不 await 整轮', () => {
     const router = readSource('src/background/index.ts')
-    assert.match(router, /case 'SYNC_ALL_VIDEOS':[\s\S]{0,400}return startSiteSync\('all'\)/, '全站遍历必须走 startSiteSync（立即返回）')
+    assert.match(router, /case 'SYNC_ALL_VIDEOS':[\s\S]{0,600}return startSiteSync\('all', req\.payload\.from === 'restart' \? 'restart' : 'resume'\)/, '全站遍历必须走 startSiteSync（立即返回），起点由后台按游标决定')
     assert.match(router, /case 'SYNC_SUBSCRIBED':\s*\n\s*return startSiteSync\('subscribed'\)/, '订阅遍历同理')
     // 旧的「等跑完再返回」入口不得回来（它们返回 SyncState，正是 5 分钟上限的来源）
     assert.doesNotMatch(router, /syncAllVideosPages|parseUnlistedAndPrivate/, '不得再直接调用「跑完才返回」的实现')
@@ -102,7 +103,7 @@ test('遍历：startSiteSync 必须 void 起任务并在前面同步占位', () 
     assert.notEqual(claimAt, -1, '必须同步占位 running')
     assert.ok(claimAt < awaitAt, '占位必须排在第一个 await 之前')
     // fire-and-forget：不 await 任务，否则又回到 5 分钟上限
-    assert.match(body, /void \(kind === 'all' \? runAllVideos\(\) : runSubscribed\(\)\)/, '任务必须 void 起（fire-and-forget）')
+    assert.match(body, /void \(kind === 'all' \? runAllVideos\(startPage\) : runSubscribed\(\)\)/, '任务必须 void 起（fire-and-forget），起点作为参数传入')
     assert.match(body, /return \{ started: true \}/, '占位后立即回 started')
     assert.doesNotMatch(body, /await (runAllVideos|runSubscribed)\(\)/, '不得 await 任务本身')
 })
@@ -140,4 +141,73 @@ test('遍历：每页开头都要写一次快照（进度来源 + SW 保活活�
     // 按**循环结构**断言（而不是数次数）：两条遍历都必须「设好页码 → 写文案 → 上报」。
     const perPage = pageSyncSource.match(/state\.page = page\s*\n\s*state\.message = [^\n]*\n\s*await report\(state\)/g) ?? []
     assert.equal(perPage.length, 2, '全站与订阅流两条遍历都必须在每页开头写快照')
+})
+// ── 断点续跑（全站遍历）────────────────────────────────────────────
+
+test('游标：存 storage.session，且只做「连续推进」', () => {
+    assert.match(pageSyncSource, /SYNC_CURSOR_KEY/, '游标键必须从 shared/storageKeys 取（不许在调用点拼字符串）')
+    const writeAt = pageSyncSource.indexOf('async function writeSyncCursor(')
+    assert.notEqual(writeAt, -1, '未找到 writeSyncCursor')
+    const body = pageSyncSource.slice(writeAt, pageSyncSource.indexOf('\n}\n', writeAt))
+    assert.match(body, /browser\.storage\.session\.set/, '游标必须存 session：落盘会让下次开浏览器从几天前的页码开始')
+    assert.doesNotMatch(body, /storage\.local/, '不得写 local（那是给用户看的进度快照，用途不同）')
+    // 连续推进：入参必须来自 advanceSyncCursor，不能是「当前页 + 1」这种按最大页推进的写法
+    assert.match(pageSyncSource, /const advanced = advanceSyncCursor\(contiguous, processed\)/, '必须用连续推进')
+    assert.match(pageSyncSource, /contiguous = advanced/, '推进结果必须写回 contiguous（否则下一轮又按旧的起点算）')
+    assert.doesNotMatch(pageSyncSource, /writeSyncCursor\(page \+ 1\)/, '不得按「当前页 + 1」推进（会把失败那一页永久漏掉）')
+})
+
+test('游标：自然收尾才删，被打断的那一轮必须留着', () => {
+    assert.match(pageSyncSource, /if \(unresolved\.length === 0\) await clearSyncCursor\(\)/, '一页不缺才删游标')
+    assert.match(pageSyncSource, /else await writeSyncCursor\(contiguous\)/, '还有缺页就把游标停在最早那一页，否则「N 页失败」的提示是空话')
+    // settleRun 是所有退出路径的收尾点：在那里清游标等于「永远不能续跑」
+    const settleAt = pageSyncSource.indexOf('async function settleRun(')
+    assert.notEqual(settleAt, -1, '未找到 settleRun')
+    const settleBody = pageSyncSource.slice(settleAt, pageSyncSource.indexOf('\n}\n', settleAt))
+    assert.doesNotMatch(settleBody, /clearSyncCursor/, '收尾函数不得清游标')
+})
+
+test('游标：「从头开始」必须在起跑之前删游标', () => {
+    const startAt = pageSyncSource.indexOf('export async function startSiteSync(')
+    assert.notEqual(startAt, -1, '未找到 startSiteSync')
+    const body = pageSyncSource.slice(startAt, pageSyncSource.indexOf('\n}\n', startAt))
+    const clearAt = body.indexOf("if (from === 'restart') await clearSyncCursor()")
+    const runAt = body.indexOf('void (kind ===')
+    assert.notEqual(clearAt, -1, 'restart 必须删游标')
+    assert.ok(clearAt < runAt, '删游标要排在起跑之前（否则本轮从第 0 页跑完、游标还指着旧位置）')
+    // 订阅流刻意不接游标（自动触发 + 5 分钟间隔，两套判据会互相打架）
+    assert.match(body, /if \(kind === 'all'\) \{/, '只有全站遍历读游标')
+})
+
+test('游标：页面必须订阅 session 快照，并由它派生「有断点」', () => {
+    assert.match(advancedSource, /useStorageSnapshot<SyncCursor>\(\{ area: 'session', key: SYNC_CURSOR_KEY/, '页面必须订阅断点游标')
+    assert.match(advancedSource, /parse: parseSyncCursorOrIdle/, '解析器必须永不返回 null（游标合法地可以不存在）')
+    assert.match(advancedSource, /const hasCursor = cursor\.nextPage > 0/, '「有断点」必须由游标派生')
+    assert.match(advancedSource, /hasCursor \? t\('advanced\.syncResume'/, '有断点时主按钮必须变成「继续」')
+    assert.match(advancedSource, /startSync\('all', 'restart'\)/, '必须保留显式「从头开始」入口（不许只做续跑）')
+})
+
+// ── 导出进度跨上下文（产物只能在文档里生成）──────────────────────────
+
+test('导出：运行态必须在 session 快照里，不能只放页面 state', () => {
+    assert.match(exportSource, /useStorageSnapshot<ExportRun>\(\{/, '必须用统一快照 hook')
+    assert.match(exportSource, /area: 'session'/, '导出运行态是会话级数据')
+    assert.match(exportSource, /browser\.storage\.session\.set/, '必须真的写快照（切页签重挂载才有东西可看）')
+    assert.doesNotMatch(exportSource, /useState<\{ store: LegacyStore; done: number/, '旧的本地进度 state 必须已删除')
+    assert.match(exportSource, /const running = localBusy !== null \|\| run\.status === 'running'/, '运行态 = 本地点击 ∪ 快照（重挂载后不能丢）')
+    assert.match(exportSource, /disabled=\{running\}/, '两个按钮都必须按 running 禁用，否则会跑出第二轮全表遍历')
+})
+
+test('导出：判活用「问一句」，不用心跳超时', () => {
+    assert.match(exportSource, /claimExportOwnership\(\)/, '生产者必须应答，否则另一个标签页会把它当残骸')
+    assert.match(exportSource, /await isExportOwnerAlive\(\)/, '挂载时必须问一句还有没有页面在跑')
+    assert.doesNotMatch(exportSource, /!await isExportOwnerAlive/, '反问分支不能写成永假条件')
+    assert.doesNotMatch(exportSource, /Date\.now\(\) - [A-Za-z.]*updatedAt/, '不得用「多久没更新」猜死活：慢导出会被误判成中断')
+    assert.match(exportSource, /releaseRef\.current = null/, '收尾必须关掉应答器（否则界面永远显示在跑）')
+})
+
+test('导出：成功写回 idle，不得删键', () => {
+    // hook 把「解析不出来」当「不可信、保留上一份」→ 删键会让进度条永不消失（实测过）
+    assert.doesNotMatch(exportSource, /storage\.session\.remove\(/, '不得删键')
+    assert.match(exportSource, /publish\(\{ status: 'idle' \}\)/, '成功必须写回 idle 终态')
 })

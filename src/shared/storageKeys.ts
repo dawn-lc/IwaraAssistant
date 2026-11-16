@@ -105,3 +105,29 @@ export const ARIA2_SCAN_MEMORY_KEY = 'aria2ScanMemory'
  * 不该因为浏览器重启就丢掉。成功或超过重试上限即删除，不会无限增长。
  */
 export const MEDIA_CENTER_PUSH_KEY = 'mediaCenterPushPending'
+
+/**
+ * 全站遍历的**断点游标**（`SyncCursor`：`{ nextPage, updatedAt }`）。
+ *
+ * **存 `storage.session` 而不是 `.local`**：游标的语义是「本次浏览器会话里这一轮遍历走到了哪」。
+ * 落盘会让用户下次开浏览器时从一个几天前的页码开始——那期间站点又发了几百页新投稿，
+ * 而那些页恰好是被跳过的那段。浏览器退出即清空，与这个语义正好一致。
+ *
+ * 与 `SYNC_PROGRESS_KEY` 的分工：那个是**展示**用的进度快照（面向用户、要让刷新后仍看得到结论），
+ * 这个是**执行**用的位置（只被后台读写，清理时机由「跑完」决定，不由「界面看到什么」决定）。
+ * 两者合并会立刻打架：终态快照要留着给用户看，而游标跑完就必须清掉。
+ */
+export const SYNC_CURSOR_KEY = 'syncCursor'
+
+/**
+ * 导出迁移包的运行快照（`ExportRun`）。
+ *
+ * **存 `storage.session`**：它是「这一轮导出跑到哪、产出了多少」的会话级事实，浏览器退出就没有意义了。
+ *
+ * 为什么需要它：导出的产物是 Blob / 一整份字符串，只能在**文档**里生成（MV3 的 SW 连
+ * `URL.createObjectURL` 都没有），所以生产者必然是选项页。而选项页切到别的页签会让
+ * `ExportSection` 卸载——本地 `useState` 归零、进度条消失、按钮变回可点，
+ * 再点一次就是**第二轮全表遍历 + 第二份文件**。把运行态放进 session 快照，
+ * 重挂载后才有东西可以「接着看」而不是「从头再来」。
+ */
+export const EXPORT_RUN_KEY = 'exportRun'

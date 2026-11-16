@@ -256,7 +256,8 @@ onMessage<Req>(async (req, sender) => {
             // **不 await 整轮遍历**：Chrome 对单次事件有 5 分钟上限，全站几十页到几千页
             // 远超这条线，到期 SW 被终止、页面那边的 promise 永远不 resolve。
             // 进度与结果走 storage.local 快照（页面订阅 onChanged）。见 pageSync 文件头。
-            return startSiteSync('all')
+            // 起点（续跑 / 从头）由后台按 session 游标决定，页面只说意图。
+            return startSiteSync('all', req.payload.from === 'restart' ? 'restart' : 'resume')
         case 'SYNC_SUBSCRIBED':
             return startSiteSync('subscribed')
         case 'AUTO_SYNC_SUBSCRIBED':

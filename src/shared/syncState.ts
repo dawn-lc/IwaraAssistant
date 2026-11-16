@@ -59,3 +59,55 @@ export function parseSyncState(raw: unknown): SyncState | null {
         updatedAt: isCount(record['updatedAt']) ? record['updatedAt'] : 0
     }
 }
+
+/**
+ * 全站遍历的**断点游标**（存 `storage.session`，见 `SYNC_CURSOR_KEY`）。
+ *
+ * 与 `SyncState` 是两件事：那个面向用户（进度条与结论），这个只描述「从哪一页接着跑」。
+ * 只有全站遍历有游标；订阅流**刻意不给**——它由到达 `/videos` 自动触发、最小间隔 5 分钟、
+ * 且追平当月就停，接一个游标进去只会让「自动触发」与「接着上次」两套判据互相打架。
+ */
+export interface SyncCursor {
+    /** 下一轮应当从这一页（0 基）开始 */
+    nextPage: number
+    updatedAt: number
+}
+
+/** 解析持久层里的游标（脏值返回 `null` = 「不可信」，调用方按「没有游标」处理） */
+export function parseSyncCursor(raw: unknown): SyncCursor | null {
+    if (typeof raw !== 'object' || raw === null) return null
+    const record = raw as Record<string, unknown>
+    if (!isCount(record['nextPage']) || record['nextPage'] < 0) return null
+    return {
+        nextPage: Math.floor(record['nextPage']),
+        updatedAt: isCount(record['updatedAt']) ? record['updatedAt'] : 0
+    }
+}
+
+/**
+ * 推进游标：只有**从当前位置连续**处理完的页才能把游标往后推。
+ *
+ * 为什么不做成「最大已处理页 + 1」：全站遍历某页失败后是 continue（源实现如此，把失败页
+ * 留给末尾的补跑轮），于是「第 9 页失败、第 10 页成功」时，按最大页推进会把游标推到第 11 页，
+ * 而第 9 页在进程被杀时**永久漏掉**——用户看不到任何提示，库里就是少了一段。
+ * 连续推进的代价只是「从最早那个失败页重新跑」，去重会把重复请求的结果吸收掉。
+ */
+export function advanceSyncCursor(nextPage: number, processed: ReadonlySet<number>): number {
+    let next = Math.max(0, Math.floor(nextPage))
+    while (processed.has(next)) next++
+    return next
+}
+
+/** 没有游标时的取值：`nextPage === 0` 表示「从头开始」，与「游标存在且指回第 0 页」在行为上等价 */
+export const IDLE_SYNC_CURSOR: SyncCursor = { nextPage: 0, updatedAt: 0 }
+
+/**
+ * 给 `useStorageSnapshot` 用的解析器：**永不返回 `null`**。
+ *
+ * 那个 hook 把 `null` 当「这份值不可信，保留上一份」，而游标**合法地可以不存在**
+ * （跑完就被删掉）。用 `parseSyncCursor` 直接接进去的话，遍历跑完、游标被删除时
+ * `onChanged` 会解析成 `null` 而被丢弃，界面就会一直显示「上次停在第 N 页」的过期提示。
+ */
+export function parseSyncCursorOrIdle(raw: unknown): SyncCursor {
+    return parseSyncCursor(raw) ?? IDLE_SYNC_CURSOR
+}

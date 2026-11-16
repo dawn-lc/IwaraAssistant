@@ -138,7 +138,16 @@ export type Req =
      * 进度与结果写 `storage.local.syncProgress` 快照，页面订阅 `storage.onChanged`；
      * 被进程终止打断的遍历由下次启动的残骸归一标为「已中断」。
      */
-    | { type: 'SYNC_ALL_VIDEOS'; payload: Record<string, never> }
+    | {
+          type: 'SYNC_ALL_VIDEOS'
+          /**
+           * `resume`（默认）接着断点游标，`restart` 删掉游标从第 0 页重来。
+           *
+           * 起点由后台决定，页面只表达意图：游标在 `storage.session`，页面无权也不该自己维护一份
+           * （两份位置信息必然漂移，而「从哪一页开始」这件事没有第二处判断依据）。
+           */
+          payload: { from?: 'resume' | 'restart' }
+      }
     /** 订阅页私有/不公开视频遍历入库（返回形状与 `SYNC_ALL_VIDEOS` 相同，理由同） */
     | { type: 'SYNC_SUBSCRIBED'; payload: Record<string, never> }
     /**

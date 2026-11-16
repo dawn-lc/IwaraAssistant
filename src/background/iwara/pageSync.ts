@@ -27,13 +27,28 @@
  * 因此需要 `settleInterruptedSync()` 在下次启动时把「存储说在跑、内存没任务」判为中断。
  * 这不是可以在代码里消除的：MV3 没有常驻后台，保活（`runtime/keepAlive.ts`）只能推迟
  * 空闲回收，不能阻止终止。
+ *
+ * ## 断点续跑：只给「全站遍历」，只用「连续完成」的页
+ *
+ * 全站遍历是小时级，被杀一次就从第 0 页重来等于把几十分钟的请求全部作废（几千页 × 0.5~1.5s）。
+ * 所以每成功处理一页就把**游标**写进 `storage.session`（浏览器退出即清空——跨会话的游标会
+ * 指向几天前的页码，那期间的新投稿恰好落在被跳过的那段）。三条纪律：
+ *
+ * 1. 游标只推进到**连续完成**的位置（`advanceSyncCursor`）：某页失败后循环会 `continue`
+ *    去跑下一页，按「最大已处理页 + 1」推进会把失败那页永久漏掉且用户毫无察觉。
+ * 2. 游标**只在自然收尾时**按「还有没有缺页」决定删或留；被打断的那一轮必须留着——
+ *    它正是下次续跑的起点。
+ * 3. `restart` 在开跑前删游标，否则这一轮从第 0 页跑完、游标还指着旧位置。
+ *
+ * 订阅流**不给游标**：它由到达 `/videos` 自动触发、最小间隔 5 分钟、追平当月就停，
+ * 接一个游标进去只会让「自动触发」与「接着上次」两套判据互相打架。
  */
 import { apiUrl } from '../../shared/site'
 import { i18n } from '../../shared/i18n'
-import { AUTO_SYNC_AT_KEY, RATING_KEY, SYNC_PROGRESS_KEY } from '../../shared/storageKeys'
+import { AUTO_SYNC_AT_KEY, RATING_KEY, SYNC_CURSOR_KEY, SYNC_PROGRESS_KEY } from '../../shared/storageKeys'
 import { isAutoSyncDue, shouldAutoSyncSubscribed } from '../../shared/autoSync'
-import { IDLE_SYNC_STATE, parseSyncState } from '../../shared/syncState'
-import type { SyncKind, SyncState } from '../../shared/syncState'
+import { advanceSyncCursor, IDLE_SYNC_CURSOR, IDLE_SYNC_STATE, parseSyncCursor, parseSyncState } from '../../shared/syncState'
+import type { SyncCursor, SyncKind, SyncState } from '../../shared/syncState'
 import { getAuth, isLoggedIn } from './auth'
 import { defaultWindow, getConfig, refreshCacheInjection } from '../storage/configStore'
 import { db } from '../storage/db'
@@ -74,12 +89,21 @@ export interface SyncStartResult {
 }
 
 /**
+ * 从哪开始。
+ *
+ * `resume`：接着断点游标（没有游标就等于从头）——这是默认值，因为「上次跑到一半被杀」
+ * 是这类小时级任务最常见的结局；`restart`：删掉游标、从第 0 页重来，供用户显式选择
+ * （例如想重扫一遍前几页的遗漏，或者站点结构变了他想从头对一遍）。
+ */
+export type SyncFrom = 'resume' | 'restart'
+
+/**
  * 启动一次遍历并**立即返回**（fire-and-forget）。
  *
  * `running` 必须在第一个 await 之前同步占位：连点两次按钮时第二次要能被立刻拒掉，
  * 否则两条循环同时翻页，同一页写两遍、进度还会互相覆盖。
  */
-export async function startSiteSync(kind: SyncKind): Promise<SyncStartResult> {
+export async function startSiteSync(kind: SyncKind, from: SyncFrom = 'resume'): Promise<SyncStartResult> {
     if (running) return { started: false, reason: 'already-running' }
     running = true
 
@@ -95,9 +119,18 @@ export async function startSiteSync(kind: SyncKind): Promise<SyncStartResult> {
         return { started: false, reason: 'not-logged-in' }
     }
 
+    // 起点在**真正开跑之前**确定：`restart` 要先把游标删掉，
+    // 否则这一轮从第 0 页跑、游标却还指着旧位置，下次「继续」又跳回去。
+    // 订阅流不接游标（理由见 shared/syncState.ts 的 SyncCursor）。
+    let startPage = 0
+    if (kind === 'all') {
+        if (from === 'restart') await clearSyncCursor()
+        else startPage = (await readSyncCursor()).nextPage
+    }
+
     // 不 await：见文件头的 5 分钟上限。异常只记日志——快照里已经写着停在哪一页、
     // 失败原因是什么，界面据此如实显示，比一个 reject 的消息更有用。
-    void (kind === 'all' ? runAllVideos() : runSubscribed()).catch((error: unknown) => {
+    void (kind === 'all' ? runAllVideos(startPage) : runSubscribed()).catch((error: unknown) => {
         console.error('[iwara-assistant] 遍历异常终止：', error instanceof Error ? error.message : error)
     })
     return { started: true }
@@ -128,11 +161,35 @@ export async function settleInterruptedSync(): Promise<void> {
     if (running) return
     const snapshot = parseSyncState((await browser.storage.local.get(SYNC_PROGRESS_KEY))[SYNC_PROGRESS_KEY])
     if (!snapshot || !snapshot.running) return
-    await report({ ...snapshot, running: false, kind: null, message: i18n.t('notify.syncInterrupted', { page: snapshot.page + 1, ok: snapshot.succeeded, failed: snapshot.failed }) })
+    // 中断位置全站遍历取**游标**（连续完成到哪一页），订阅流没有游标、只能报「跑到第几页」
+    const resumePage = snapshot.kind === 'all' ? (await readSyncCursor()).nextPage : snapshot.page
+    await report({ ...snapshot, running: false, kind: null, message: i18n.t('notify.syncInterrupted', { page: resumePage, ok: snapshot.succeeded, failed: snapshot.failed }) })
 }
 
 async function report(state: SyncState): Promise<void> {
     await browser.storage.local.set({ [SYNC_PROGRESS_KEY]: { ...state, updatedAt: Date.now() } })
+}
+
+/**
+ * 读断点游标。读不到、脏值、session 存储不可用 ⇒ 从第 0 页开始。
+ *
+ * 这里**吞掉异常**：游标只是「少翻几页」的优化，读它的失败绝不能让一次遍历起不来。
+ */
+async function readSyncCursor(): Promise<SyncCursor> {
+    try {
+        const stored = await browser.storage.session.get(SYNC_CURSOR_KEY)
+        return parseSyncCursor(stored[SYNC_CURSOR_KEY]) ?? IDLE_SYNC_CURSOR
+    } catch {
+        return IDLE_SYNC_CURSOR
+    }
+}
+
+async function writeSyncCursor(nextPage: number): Promise<void> {
+    await browser.storage.session.set({ [SYNC_CURSOR_KEY]: { nextPage, updatedAt: Date.now() } })
+}
+
+async function clearSyncCursor(): Promise<void> {
+    await browser.storage.session.remove(SYNC_CURSOR_KEY)
 }
 
 function sleep(ms: number): Promise<void> {
@@ -237,13 +294,17 @@ export async function ingestPageVideos(payload: { videos: unknown[]; window?: { 
  *
  * 进入前 `running` 已由 `startSiteSync` 置位，这里只负责跑完并在 finally 里收尾。
  */
-async function runAllVideos(): Promise<void> {
-    const state: SyncState = { running: true, kind: 'all', page: 0, succeeded: 0, failed: 0, message: i18n.t('notify.syncStart'), updatedAt: Date.now() }
+async function runAllVideos(startPage = 0): Promise<void> {
+    const state: SyncState = { running: true, kind: 'all', page: startPage, succeeded: 0, failed: 0, message: i18n.t('notify.syncStart'), updatedAt: Date.now() }
     /** 首轮失败的页号（源 `retryFailed`：全文跑完再重试，避免一页抽风就永久漏数据） */
     const retryFailed: number[] = []
+    /** 已经处理完的页（含补跑轮补上的）。游标只在它上面做**连续**推进 */
+    const processed = new Set<number>()
+    /** 游标当前指向的位置：连续完成的最后一页 + 1，理由见 `advanceSyncCursor` */
+    let contiguous = startPage
 
     try {
-        for (let page = 0; page < 100_000; page++) {
+        for (let page = startPage; page < 100_000; page++) {
             state.page = page
             state.message = i18n.t('notify.syncPage', { page, ok: state.succeeded, failed: state.failed })
             await report(state)
@@ -252,6 +313,13 @@ async function runAllVideos(): Promise<void> {
                 const data = await fetchVideoPage(page)
                 await upsertVideos(data.results ?? [])
                 state.succeeded++
+                // 每页成功就推进游标：进程被杀时少翻几千页，就是这个写法的全部收益
+                processed.add(page)
+                const advanced = advanceSyncCursor(contiguous, processed)
+                if (advanced !== contiguous) {
+                    contiguous = advanced
+                    await writeSyncCursor(contiguous)
+                }
                 if (data.results.length === 0 || data.page * data.limit >= data.count) {
                     state.message = i18n.t('notify.syncDone', { page: page + 1, failed: state.failed })
                     break
@@ -269,7 +337,15 @@ async function runAllVideos(): Promise<void> {
             await sleep(PAGE_INTERVAL_MS + Math.random() * 1000)
         }
 
-        if (retryFailed.length > 0) await retryFailedPages(retryFailed, state)
+        const unresolved = retryFailed.length > 0 ? await retryFailedPages(retryFailed, state, processed) : []
+        // 补跑轮可能把中间那几个洞补上，游标因此还能再往前推一段
+        contiguous = advanceSyncCursor(contiguous, processed)
+        // 收尾语义分两种，不能一律删游标：
+        // - 一页不缺 → 删掉，「继续」从头开始（此时没有断点可言）；
+        // - 还有没补上的页 → 把游标停在最早那一页，下次「继续」正好从缺失处开始。
+        //   否则「N 页失败」的提示会变成一句空话：用户再点一次又从第 0 页重翻几千页。
+        if (unresolved.length === 0) await clearSyncCursor()
+        else await writeSyncCursor(contiguous)
     } finally {
         await settleRun(state)
     }
@@ -281,7 +357,7 @@ async function runAllVideos(): Promise<void> {
  * 只重试真正报错的页，不做全网重跑；仍失败则记入 `state.failed` 并在最终文案里报数量。
  * 轮数上限 `MAX_PAGE_RETRIES`：后台跑在 alarm 里，不能像页面内那样为了几页卡十几分钟。
  */
-async function retryFailedPages(pages: number[], state: SyncState): Promise<void> {
+async function retryFailedPages(pages: number[], state: SyncState, processed: Set<number>): Promise<number[]> {
     let pending = [...pages]
     for (let round = 0; round < MAX_PAGE_RETRIES && pending.length > 0; round++) {
         const stillFailed: number[] = []
@@ -293,6 +369,7 @@ async function retryFailedPages(pages: number[], state: SyncState): Promise<void
                 await upsertVideos(data.results ?? [])
                 state.succeeded++
                 state.failed = Math.max(0, state.failed - 1)
+                processed.add(page)
             } catch {
                 stillFailed.push(page)
             }
@@ -301,6 +378,8 @@ async function retryFailedPages(pages: number[], state: SyncState): Promise<void
         pending = stillFailed
     }
     if (pending.length > 0) state.message = i18n.t('notify.syncRetryFailed', { count: pending.length })
+    /** 补跑轮结束后仍然失败的页：调用方据此决定游标删不删（见 runAllVideos 的收尾注释） */
+    return pending
 }
 
 /**

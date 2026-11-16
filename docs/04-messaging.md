@@ -66,7 +66,7 @@
 
 > 页内没有扫描接口：遍历入库（`SYNC_ALL_VIDEOS`/`SYNC_SUBSCRIBED`）、MediaCenter 同步、好友审批全部由后台完成，页内扫描没有存在意义；留着只会变成「有接口无实现」的死代码。
 >
-> `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` 只回 `{ started, reason? }`（`already-running` / `not-logged-in`），**不含遍历结果**。理由不是风格而是平台限制：Chrome 的终止条件里有「单个事件处理超过 5 分钟」（与 30 秒空闲回收相互独立，且**没有任何 API 能给它续期**），而全站遍历是小时量级——`await` 在消息处理器里到期就是 SW 被终止、页面 promise 永远不 resolve。改成 fire-and-forget 后循环靠每页的 `storage.set` 与 fetch 自续空闲计时，进度与结果仍走 `storage.local.syncProgress` 快照；被进程终止的那次由 `boot()` 的 `settleInterruptedSync()` 归一为「上次遍历被中断」。好友审批早就是这个形态（`APPROVE_FRIEND_REQUESTS` 只回 `{ started }`），两条路由现在语义一致。
+> `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` 只回 `{ started, reason? }`（`already-running` / `not-logged-in`），**不含遍历结果**。理由不是风格而是平台限制：Chrome 的终止条件里有「单个事件处理超过 5 分钟」（与 30 秒空闲回收相互独立，且**没有任何 API 能给它续期**），而全站遍历是小时量级——`await` 在消息处理器里到期就是 SW 被终止、页面 promise 永远不 resolve。改成 fire-and-forget 后循环靠每页的 `storage.set` 与 fetch 自续空闲计时，进度与结果仍走 `storage.local.syncProgress` 快照；被进程终止的那次由 `boot()` 的 `settleInterruptedSync()` 归一为「上次遍历被中断」。`SYNC_ALL_VIDEOS` 的 payload 带一个可选的 `from`（`resume` 默认 / `restart`）：页面只表达「继续还是重来」，起点由后台按 `storage.session.syncCursor` 决定——游标在会话内有效、跑完即删，页面无权也不该自己维护第二份位置信息。好友审批早就是这个形态（`APPROVE_FRIEND_REQUESTS` 只回 `{ started }`），两条路由现在语义一致。
 >
 > `GET_MEDIA_SYNC_STATE` / `GET_FRIEND_APPROVE_STATE` 只用于**挂载时的初值**，不用于推进：三处长任务（站点遍历、MediaCenter 同步、好友审批、旧库导入）的进度都由后台写快照、options 页订阅 `storage.onChanged`（`options/widgets.tsx` 的 `useStorageSnapshot`）。最初是 1s／2s 轮询消息，实测两个必然发生的故障：长任务期间的消息往返不受扩展控制（宿主可能排队/延迟派发），一旦被卡住条就停在旧值（阶段一全程显示「已读 0 条」）；而且 `catch` 之后不重建定时器 ⇒ 轮询**永久停止**，没有任何机制让它恢复。写 `storage.session` 而不是 `.local` 的理由同好友审批：运行状态不该落盘，否则崩溃后永久残留「正在同步」；而 session 里的 `running` 仍可能是残骸，所以读取侧用 `settleInterrupted` 按不变量归一（内存里没有任务 ⇒ 上次被中断）。
 >

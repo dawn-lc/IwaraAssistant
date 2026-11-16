@@ -25,9 +25,18 @@ import path from 'node:path'
 /** 仓库根（`test/` 的上一级） */
 export const repoRoot = path.resolve(import.meta.dirname, '..')
 
-/** 丢弃整行注释（行尾注释保留，理由见文件头） */
+/**
+ * 丢弃整行注释（行尾注释保留，理由见文件头）。
+ *
+ * **先归一换行**：本仓库的源码是 CRLF，而守卫里到处用 `indexOf('\n}\n')` 切函数体。
+ * 不归一时那条切片永远返回 -1，`slice(start, -1)` 于是退回「除最后一个字符外的整个文件」——
+ * 断言在整份源码上跑，`doesNotMatch` 必然被别处的同名标识符命中（假红），
+ * 而 `match` 则可能在注释外的任何位置凑巧满足（假绿）。归一之后切片才是真的那个函数体。
+ */
 export function stripComments(text: string): string {
     return text
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
         .split('\n')
         .filter((line) => !/^[ \t]*(\/\/|\/\*|\*)/.test(line))
         .join('\n')
