@@ -18,8 +18,8 @@
 | 下载      | `INIT_DOWNLOAD` / `DOWNLOAD` / `DOWNLOAD_METADATA` / `CHECK_LINK` / `BATCH_DOWNLOAD` / `FORCE_DOWNLOAD`                                         | 发起下载、链接预检、批量入队、跳过预检的显式强制下载                                                                                                              |
 | 查询/配置 | `GET_VIDEOS` / `GET_CONFIG` / `PAGE_READY` / `GET_CACHE_INJECTION` / `ENV_CHECK` / `GET_CARD_META` / `GET_BACKEND_STATS`                        | 视频库与配置查询、页面就绪、按页窗查询回填列表、环境自检、卡片角标、后端容量                                                                                      |
 | 队列      | `RETRY_TASK` / `REMOVE_TASK` / `CLEAR_FINISHED` / `RETRY_FAILED` / `SYNC_DOWNLOAD_TASKS`                                                        | 队列操作全部由后台执行；running 任务不可直接移除                                                                                                                  |
-| 同步      | `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` / `GET_SYNC_STATE` / `SYNC_MEDIA_CENTER` / `REMOVE_PLAYLIST_ITEMS`                                        | 全量/订阅遍历、MediaCenter 推送、播放列表移除                                                                                                                     |
-| 好友      | `APPROVE_FRIEND_REQUESTS` / `GET_FRIEND_APPROVE_STATE`                                                                                          | 审批只返回「已开始」，结果由快照轮询获取                                                                                                                          |
+| 同步      | `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` / `SYNC_MEDIA_CENTER` / `GET_MEDIA_SYNC_STATE` / `REMOVE_PLAYLIST_ITEMS`                                  | 全量/订阅遍历、MediaCenter 推送、播放列表移除（进度一律走快照，见下）                                                                                             |
+| 好友      | `APPROVE_FRIEND_REQUESTS` / `GET_FRIEND_APPROVE_STATE`                                                                                          | 审批只返回「已开始」，进度与结果由 `storage.session` 快照推送                                                                                                     |
 | 迁移/导出 | `LEGACY_DB_SCAN` / `IMPORT_LEGACY_DB` / `LEGACY_DB_PULL` / `LEGACY_DB_BATCH` / `LEGACY_DB_PROGRESS` / `DB_EXPORT_PAGE` / `DB_STORE_COUNTS`      | 旧库检测与显式导入、四表分页导出、进度与条数                                                                                                                      |
 | 钓鱼防护  | `GUARD_SYNC` / `GUARD_RELEASE`                                                                                                                  | 页面请求后台裁决；放行决定由后台记录                                                                                                                              |
 | 后台推送  | `DOWNLOAD_STATE` / `CONFIG_INVALIDATED` / `CONFIG_SYNC` / `CACHE_INJECTION_LIST` / `CACHE_INJECTION_RESULT` / `DOWNLOAD_TASK_SETTLED` / `HELLO` | 后台或 ISOLATED 应答通道发出；`CACHE_INJECTION_RESULT` 由 ISOLATED 按 `GET_CACHE_INJECTION` 的请求号回给 MAIN；`DOWNLOAD_TASK_SETTLED` 只发给发起批量下载的标签页 |
@@ -65,6 +65,12 @@
 命名纪律：请求动词/名词分明；`PUSH_*` 类只能由后台发出；所有 payload 可 `structuredClone`（跨 MAIN 世界通道序列化约束）。
 
 > 页内没有扫描接口：遍历入库（`SYNC_ALL_VIDEOS`/`SYNC_SUBSCRIBED`）、MediaCenter 同步、好友审批全部由后台完成，页内扫描没有存在意义；留着只会变成「有接口无实现」的死代码。
+>
+> `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` 只回 `{ started, reason? }`（`already-running` / `not-logged-in`），**不含遍历结果**。理由不是风格而是平台限制：Chrome 的终止条件里有「单个事件处理超过 5 分钟」（与 30 秒空闲回收相互独立，且**没有任何 API 能给它续期**），而全站遍历是小时量级——`await` 在消息处理器里到期就是 SW 被终止、页面 promise 永远不 resolve。改成 fire-and-forget 后循环靠每页的 `storage.set` 与 fetch 自续空闲计时，进度与结果仍走 `storage.local.syncProgress` 快照；被进程终止的那次由 `boot()` 的 `settleInterruptedSync()` 归一为「上次遍历被中断」。好友审批早就是这个形态（`APPROVE_FRIEND_REQUESTS` 只回 `{ started }`），两条路由现在语义一致。
+>
+> `GET_MEDIA_SYNC_STATE` / `GET_FRIEND_APPROVE_STATE` 只用于**挂载时的初值**，不用于推进：三处长任务（站点遍历、MediaCenter 同步、好友审批、旧库导入）的进度都由后台写快照、options 页订阅 `storage.onChanged`（`options/widgets.tsx` 的 `useStorageSnapshot`）。最初是 1s／2s 轮询消息，实测两个必然发生的故障：长任务期间的消息往返不受扩展控制（宿主可能排队/延迟派发），一旦被卡住条就停在旧值（阶段一全程显示「已读 0 条」）；而且 `catch` 之后不重建定时器 ⇒ 轮询**永久停止**，没有任何机制让它恢复。写 `storage.session` 而不是 `.local` 的理由同好友审批：运行状态不该落盘，否则崩溃后永久残留「正在同步」；而 session 里的 `running` 仍可能是残骸，所以读取侧用 `settleInterrupted` 按不变量归一（内存里没有任务 ⇒ 上次被中断）。
+>
+> 旧协议 `GET_SYNC_STATE` 已删除：遍历进度本来就走 `storage.local.syncProgress` 的 `onChanged` 推送，这条消息只是第二条读取路径，留着就会有人再接一遍轮询。遍历用 `.local`（而不是 `.session`）是因为它的 `message` 是**面向用户的最终结论**（「已遍历 N 页」），刷新后仍值得看到。
 >
 > `GET_CARD_META` 是页内 UI 的补充查询：关注表 / MediaCenter 映射 / 绝对上传时间都在后台的 IndexedDB 里，页内拿不到；批量一次问完，后台**只读本地库、不连外网**。
 >

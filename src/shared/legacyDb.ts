@@ -109,6 +109,14 @@ export interface LegacyDbInfo {
     importedAt?: number
     /** 导入进行中的进度（结束后清除） */
     progress?: LegacyImportProgress | null
+    /**
+     * 导入是否正在进行（后台写、结束后置 false）。
+     *
+     * 界面**不能**只用自己的 `busy` state 判断「在跑」：用户切到别的页签再回来时
+     * 组件会重挂载，`busy` 归零 —— 进度条消失、按钮变回可点，而导入还在跑几分钟，
+     * 再点一次就是两条并发的导入写同一张表。
+     */
+    importing?: boolean
 }
 
 /** 导入进度（页面读表时上报，后台落盘供 options 展示） */

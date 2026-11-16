@@ -360,7 +360,11 @@
         "syncing": "同期中…",
         "syncRecords": "ライブラリ内の完全なレコードをすべて同期",
         "mediaSynced": "全 {total} 件：成功 {pushed} / 失敗 {failed}",
-        "mediaSyncFailed": "MediaCenter の同期に失敗：{message}"
+        "mediaSyncFailed": "MediaCenter の同期に失敗：{message}",
+        "mediaSyncScan": "MediaCenter の一覧を読み込み中：{done} / {total}",
+        "mediaSyncScanUnknown": "MediaCenter の一覧を読み込み中：{done} 件読込済み",
+        "mediaSyncPush": "対応レコードを反映中：{done} / {total}",
+        "mediaSyncInterrupted": "前回の同期は中断されました（拡張機能の再読み込みまたはブラウザ終了）。完了していません。"
     },
     "guide": {
         "quickTitle": "クイックスタート",
@@ -466,6 +470,7 @@
         "syncPageFailed": "{page} ページで失敗：{message}",
         "syncRetry": "ページ {page} を再試行中（第 {round} ラウンド、今回 {total} ページ）",
         "syncRetryFailed": "再試行後も {count} ページが失敗しました。時間をおいて再度巡回してください",
+        "syncInterrupted": "前回の巡回は中断されました（{page} ページまで、成功 {ok} / 失敗 {failed}）。ブラウザを閉じたりバックグラウンドが停止すると巡回は止まります。必要ならもう一度実行してください",
         "browserDownloadNotPermitted": "ブラウザがこの拡張機能のダウンロードを許可していません（拡張機能の詳細ページでダウンロード権限を許可してください）",
         "browserDownloadNotSupported": "ブラウザがこのダウンロード URL に対応していません",
         "browserDownloadNotSucceeded": "ブラウザのダウンロードを完了できませんでした：{detail}",

@@ -360,7 +360,11 @@
         "syncing": "同步中…",
         "syncRecords": "同步库内全部完整记录",
         "mediaSynced": "共 {total} 条：成功 {pushed} / 失败 {failed}",
-        "mediaSyncFailed": "MediaCenter 同步失败：{message}"
+        "mediaSyncFailed": "MediaCenter 同步失败：{message}",
+        "mediaSyncScan": "正在读取 MediaCenter 列表：{done} / {total}",
+        "mediaSyncScanUnknown": "正在读取 MediaCenter 列表：已读 {done} 条",
+        "mediaSyncPush": "正在推送映射记录：{done} / {total}",
+        "mediaSyncInterrupted": "上次同步被中断（扩展被重载或浏览器关闭），没有跑完。"
     },
     "guide": {
         "quickTitle": "快速上手",
@@ -466,6 +470,7 @@
         "syncPageFailed": "第 {page} 页失败：{message}",
         "syncRetry": "重试第 {page} 页（第 {round} 轮，本轮 {total} 页）",
         "syncRetryFailed": "重试后仍有 {count} 页失败，可稍后重新遍历补入",
+        "syncInterrupted": "上次遍历被中断（已跑 {page} 页，成功 {ok} / 失败 {failed}）。浏览器关闭或后台被回收会中断遍历，需要时请重新点一次",
         "browserDownloadNotPermitted": "浏览器不允许扩展下载（请在扩展详情页允许下载权限）",
         "browserDownloadNotSupported": "浏览器不支持该下载地址",
         "browserDownloadNotSucceeded": "浏览器下载未能完成：{detail}",

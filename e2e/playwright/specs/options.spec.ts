@@ -480,6 +480,50 @@ test('高级页：关注扩展作者默认开启，且未登录时不写状态�
     expect(state).toBeUndefined()
 })
 
+test('高级页：遍历进度只认 storage.local 快照（消息响应已不再包含遍历结果）', async ({ sharedSession }) => {
+    const { page, extensionId } = sharedSession
+    await openExtensionPage(page, extensionId, 'options/index.html#advanced')
+    await expect(page.locator('nav.tabs')).toBeVisible()
+
+    const bar = page.locator('[data-testid="sync-progress"]')
+    const syncSection = page.locator('section.card').filter({ has: page.locator('h2', { hasText: '批量入库' }) })
+    const allButton = syncSection.locator('button', { hasText: '遍历全站视频列表' })
+    const subscribedButton = syncSection.locator('button', { hasText: '遍历订阅流' })
+
+    // 空闲：无进度条、两颗按钮可点
+    await expect(bar).toHaveCount(0)
+    await expect(allButton).toBeEnabled()
+
+    /**
+     * 直接写快照驱动界面（与后端 `report()` 写的是同一个键）。
+     *
+     * 不在 `reload()` 之后种：`boot()` 的 `settleInterruptedSync()` 会把「存储说在跑、
+     * 内存没任务」判成中断——那是**正确**行为，但会让这条用例变成和时间赛跑。
+     * 组件已挂载时写盘走 `onChanged`，不经过 boot，结果是确定的。
+     */
+    await page.evaluate(async () => {
+        await browser.storage.local.set({ syncProgress: { running: true, kind: 'all', page: 3, succeeded: 3, failed: 0, message: '', updatedAt: Date.now() } })
+    })
+    await expect(bar).toHaveCount(1)
+    await expect(bar).toHaveAttribute('aria-label', /正在遍历全站视频列表：第 4 页/)
+    // 运行中：两颗按钮都必须禁用（它们共用后台同一个状态机）
+    await expect(allButton).toBeDisabled()
+    await expect(subscribedButton).toBeDisabled()
+
+    // 终态：条收起，文案改成结论
+    await page.evaluate(async () => {
+        await browser.storage.local.set({ syncProgress: { running: false, kind: null, page: 3, succeeded: 3, failed: 0, message: '完成：共 4 页（失败 0 页）', updatedAt: Date.now() } })
+    })
+    await expect(bar).toHaveCount(0)
+    await expect(syncSection.locator('p.note', { hasText: '完成：共 4 页' })).toHaveCount(1)
+    await expect(allButton).toBeEnabled()
+
+    // 收尾：清掉快照，避免影响后续用例（遍历快照是 local，跨用例可见）
+    await page.evaluate(async () => {
+        await browser.storage.local.remove('syncProgress')
+    })
+})
+
 test('引导页：权限诊断（无授权按钮）+ 钓鱼防护说明', async ({ sharedSession }) => {
     const { page, extensionId } = sharedSession
     await openExtensionPage(page, extensionId, 'options/index.html#guide')

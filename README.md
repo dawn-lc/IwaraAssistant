@@ -219,6 +219,8 @@ npm run build:chrome   # → dist/chrome
 | [07-install-chromium.md](docs/07-install-chromium.md)       | Chromium 系手动安装：获取产物、加载、更新、数据保留与故障排查           |
 | [store-listing.md](docs/store-listing.md)                   | AMO 上架素材与文案、Chrome Web Store 拒绝记录                           |
 
+**参与开发前先读 [AGENTS.md](AGENTS.md)**：门禁清单、架构铁律、目录归位、代码约定，以及一批「平台事实」（Chrome 的终止条件、Firefox MV2 的能力边界、aria2 的不存在方法）。这些规则背后的事故与实测记录在 [docs/agent-notes.md](docs/agent-notes.md)——遇到「为什么不能这么写」的疑问，先在那里找答案，别按通用惯例改代码。
+
 常用命令（完整清单与测试分层见 [docs/06](docs/06-testing-and-release.md#开发命令)）：
 
 ```bash

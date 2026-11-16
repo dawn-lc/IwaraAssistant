@@ -72,8 +72,8 @@ test('接线：页面到达 /videos 时上报，后台独立判配置与间隔',
     const pageSync = readFileSync('src/background/iwara/pageSync.ts', 'utf8')
     // 时间戳必须在真正开跑之前写：失败也算一次尝试，否则掉登录会每次切页重打一轮
     const body = pageSync.slice(pageSync.indexOf('export async function autoSyncSubscribed'))
-    assert.ok(body.indexOf('AUTO_SYNC_AT_KEY]: Date.now()') < body.indexOf('await parseUnlistedAndPrivate()'), '先记时间戳再跑')
+    assert.ok(body.indexOf('AUTO_SYNC_AT_KEY]: Date.now()') < body.indexOf("await startSiteSync('subscribed')"), '先记时间戳再跑')
 
-    // 手动入口必须保留「无条件执行」语义：用户点了按钮就该跑
-    assert.match(background, /case 'SYNC_SUBSCRIBED':\s*\n\s*return parseUnlistedAndPrivate\(\)/)
+    // 手动入口必须保留「无条件执行」语义：用户点了按钮就该跑（不经过配置与间隔判据）
+    assert.match(background, /case 'SYNC_SUBSCRIBED':\s*\n\s*return startSiteSync\('subscribed'\)/)
 })

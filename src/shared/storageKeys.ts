@@ -27,6 +27,26 @@ export const PROMOTE_AUTHOR_STATE_KEY = 'promoteAuthorState'
 export const FRIEND_APPROVE_PROGRESS_KEY = 'friendApproveProgress'
 
 /**
+ * MediaCenter 批量同步的进度快照（`MediaSyncProgress`）。
+ *
+ * 与上面的好友审批同档：**存 `storage.session` 而不是 `.local`**。
+ * 但读取方式不同：好友审批是 options 轮询消息，这里改成**后台写、页面订阅
+ * `storage.onChanged`**——长任务期间的消息往返不受我们控制，一旦某次轮询被卡住，
+ * 进度就停在旧值（实测阶段一全程显示「已读 0 条」）。写入即推送，阶段切换立刻可见。
+ */
+export const MEDIA_SYNC_PROGRESS_KEY = 'mediaSyncProgress'
+
+/**
+ * 站点遍历（全站投稿 / 订阅流）的进度快照（`SyncState`）。
+ *
+ * 存 `storage.local`：`message` 是面向用户的最终结论（「已遍历 N 页」「N 页失败」），
+ * 刷新页面后仍值得看到。**不要**用它判断「是否在跑」之外的含义：
+ * SW 被杀后 `running:true` 会残留，所以界面拿它只做「显示进度条」，
+ * 而 `ProgressBar` 本身就在 `running` 为真时才渲染（残留值只会让条多留一会儿）。
+ */
+export const SYNC_PROGRESS_KEY = 'syncProgress'
+
+/**
  * 钓鱼防护的「已放行」记录（`Record<tabId, host>`）。
  *
  * 为什么存 `storage.session` 而不是内存：Chrome SW 空闲 ~30s 就挂起，只存内存的话

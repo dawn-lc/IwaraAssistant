@@ -91,6 +91,35 @@ export const IDLE_FRIEND_APPROVE_PROGRESS: FriendApproveProgress = {
 }
 
 /**
+ * 解析 `storage.session` 里的快照。脏值返回 `null`（调用方保留上一个快照）。
+ *
+ * 为什么不 `as FriendApproveProgress`：这份数据来自持久层，上一代字段、手工调试、
+ * 扩展被降级都可能留下形状不对的值；直接信任会让 `done / total` 变成 NaN，
+ * 或者把 `phase` 读成不存在的字符串、让界面永远停在「收集中」。
+ */
+export function parseFriendApproveProgress(raw: unknown): FriendApproveProgress | null {
+    if (typeof raw !== 'object' || raw === null) return null
+    const record = raw as Record<string, unknown>
+    if (typeof record['running'] !== 'boolean') return null
+    if (record['phase'] !== 'idle' && record['phase'] !== 'collecting' && record['phase'] !== 'deciding') return null
+    const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0)
+    return {
+        running: record['running'],
+        phase: record['phase'],
+        done: count(record['done']),
+        total: count(record['total']),
+        approved: count(record['approved']),
+        skipped: count(record['skipped']),
+        failed: count(record['failed']),
+        startedAt: count(record['startedAt']),
+        finishedAt: count(record['finishedAt']),
+        aborted: record['aborted'] === true ? true : undefined,
+        result: typeof record['result'] === 'object' && record['result'] !== null ? (record['result'] as FriendApproveResult) : undefined,
+        updatedAt: count(record['updatedAt'])
+    }
+}
+
+/**
  * 把「持久层说在跑、内存里却没任务」的记录归一为「已中断」。
  *
  * 返回 `null` 表示无需改写（要么本来没在跑，要么任务确实还活着）。

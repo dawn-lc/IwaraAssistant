@@ -71,30 +71,56 @@ export async function recordLegacyProgress(progress: LegacyImportProgress): Prom
 /**
  * 发起导入：让一个 iwara 标签页读取它的页面 IDB 并分批回传。
  *
- * 无论成败都要**清掉进度**，否则 UI 会卡在「导入中…」——那是最难自行恢复的
- * 假状态（用户不知道要刷新还是重试）。
+ * 无论成败都要**清掉进度与 `importing` 标记**，否则 UI 会卡在「导入中…」——
+ * 那是最难自行恢复的假状态（用户不知道要刷新还是重试）。
+ *
+ * `importing` 是**后台侧的运行真相**，界面不能只用自己的 `busy` state 判断：
+ * 用户切到别的页签再回来时组件会重挂载，`busy` 归零 —— 进度条消失、按钮变回可点，
+ * 而导入还在跑几分钟，再点一次就是两条并发的导入写同一张表。
  */
 export async function importLegacyDb(): Promise<LegacyImportSummary> {
     const tabs = await browser.tabs.query({ url: ['*://*.iwara.tv/*'] })
     const target = tabs.find((tab) => typeof tab.id === 'number')
     if (typeof target?.id !== 'number') throw new Error(i18n.t('notify.needIwaraTab'))
 
-    const response = (await browser.tabs.sendMessage(target.id, { type: 'LEGACY_DB_PULL', payload: {} } satisfies Push).catch(() => undefined)) as Res | undefined
+    // 先置标记再开跑：中间任何 await 都可能让界面重挂载，早一步写就少一个窗口
+    await markImporting(true)
+    let settled = false
+    try {
+        const response = (await browser.tabs.sendMessage(target.id, { type: 'LEGACY_DB_PULL', payload: {} } satisfies Push).catch(() => undefined)) as Res | undefined
 
-    if (!response?.ok) {
+        if (!response?.ok) throw new Error(response?.error ?? i18n.t('notify.legacyReadFailed'))
+
+        const summary = response.data as LegacyImportSummary
+        const info: LegacyDbInfo = {
+            found: true,
+            counts: { videos: summary.videos, follows: summary.follows, friends: summary.friends, idmap: summary.idmap },
+            scannedAt: Date.now(),
+            importedAt: Date.now(),
+            progress: null,
+            importing: false
+        }
+        await browser.storage.local.set({ [LEGACY_DB_INFO_KEY]: info, [LEGACY_DB_SCANNED_KEY]: true })
+        settled = true
+        return summary
+    } finally {
+        // 失败分支必须清：不清就永远停在「导入中」（最难受的假状态）。
+        // 成功分支已经写了完整 info（`importing: false`），这里不再重复写一次。
+        if (!settled) await markImporting(false)
+    }
+}
+
+/** 只改 `importing`（保留 `counts` / `importedAt` / `progress` 其余字段），失败静默 */
+async function markImporting(importing: boolean): Promise<void> {
+    try {
         const previous = await readInfo()
-        if (previous) await browser.storage.local.set({ [LEGACY_DB_INFO_KEY]: { ...previous, progress: null } satisfies LegacyDbInfo })
-        throw new Error(response?.error ?? i18n.t('notify.legacyReadFailed'))
+        if (!previous) {
+            // 从未扫描过就发起导入：先造一个最小的 info，否则界面读不到任何东西
+            await browser.storage.local.set({ [LEGACY_DB_INFO_KEY]: { found: true, counts: { videos: 0, follows: 0, friends: 0, idmap: 0 }, scannedAt: Date.now(), importing } satisfies LegacyDbInfo })
+            return
+        }
+        await browser.storage.local.set({ [LEGACY_DB_INFO_KEY]: { ...previous, importing } satisfies LegacyDbInfo })
+    } catch {
+        // 写失败只影响「切页签回来能不能看到在跑」，不能打断导入本身
     }
-
-    const summary = response.data as LegacyImportSummary
-    const info: LegacyDbInfo = {
-        found: true,
-        counts: { videos: summary.videos, follows: summary.follows, friends: summary.friends, idmap: summary.idmap },
-        scannedAt: Date.now(),
-        importedAt: Date.now(),
-        progress: null
-    }
-    await browser.storage.local.set({ [LEGACY_DB_INFO_KEY]: info, [LEGACY_DB_SCANNED_KEY]: true })
-    return summary
 }

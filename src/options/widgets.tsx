@@ -17,6 +17,7 @@ import type { TFunction } from 'i18next'
 import type { Config } from '../shared/configSchema'
 import type { LegacyStore } from '../shared/legacyDb'
 import { i18n } from '../shared/i18n'
+import { changedValue } from '../shared/storageChanges'
 import { saveConfig } from './appStore'
 
 /** 输入防抖：用户停止输入 400ms 后才提交（失焦/卸载时立即提交） */
@@ -151,6 +152,75 @@ export function useSaver(): { save: (patch: Partial<Config>) => void } {
         void saveConfig(patch)
     }, [])
     return { save }
+}
+
+export interface StorageSnapshotOptions<T> {
+    /** 读哪个存储区 */
+    area: 'local' | 'session'
+    /** 快照键 */
+    key: string
+    /** 脏值校验：返回 `null` 表示「不可信」，保留上一个快照 */
+    parse: (raw: unknown) => T | null
+    /** 初值（必须是**模块级常量**：它会进 effect 依赖，传字面量对象会每次渲染重订阅） */
+    initial: T
+    /** 初值来源；缺省直接读存储。需要后台先做归一（如残骸判定）时传消息请求 */
+    readInitial?: () => Promise<T>
+}
+
+/**
+ * 订阅 `storage` 里某个键的快照 —— 挂载取一次初值 + `onChanged` 推送。
+ *
+ * ## 为什么所有长任务进度都必须走这条路
+ *
+ * 项目里有四处长任务进度（站点遍历 / MediaCenter 同步 / 好友审批 / 旧库导入），
+ * 其中两处曾经是「每 1~2 秒发一条消息问一下」。实测（真实点击 + 采样进度条）暴露两个问题：
+ *
+ * 1. **长任务期间的消息往返不受扩展控制**：宿主可能排队、可能延迟派发，一旦某次
+ *    `sendMessage` 被卡住，进度就停在旧值——用户看到的正是「条一直不动」。
+ * 2. **`catch` 之后不重建定时器 ⇒ 轮询永久停止**：一次瞬时失败之后，进度再也不会更新，
+ *    而且没有任何机制让它恢复。
+ *
+ * 快照 + 订阅没有这两个问题：后台每次写入都会**主动推送**给所有订阅者，失败也不会让
+ * 「下一次更新」丢失（下一次写入照常到达）。
+ *
+ * ## 为什么 `parse` 返回 `null` 时保留旧值
+ *
+ * 回落到空闲态会让进度条「闪一下再出现」——比不更新更让人误解。而「不可信」只可能来自
+ * 上一代代码或手工调试留下的中途值，下一次正常写入就会覆盖掉。
+ */
+export function useStorageSnapshot<T>(options: StorageSnapshotOptions<T>): T {
+    const { area, key, initial } = options
+    // 回调存 ref：调用方通常直接写内联箭头函数，进依赖会让 effect 每次渲染都重订阅
+    const parseRef = useRef(options.parse)
+    const readInitialRef = useRef(options.readInitial)
+    parseRef.current = options.parse
+    readInitialRef.current = options.readInitial
+
+    const [snapshot, setSnapshot] = useState<T>(initial)
+
+    useEffect(() => {
+        let cancelled = false
+        const readInitial = readInitialRef.current
+        const load = readInitial ? readInitial() : (area === 'local' ? browser.storage.local : browser.storage.session).get(key).then((stored) => parseRef.current(stored[key]) ?? initial)
+        void load.then(
+            (next) => {
+                if (!cancelled) setSnapshot(next)
+            },
+            () => undefined // 读不到初值不影响订阅：第一次写入就会到位
+        )
+        const onChanged = (changes: Record<string, unknown>, areaName: string): void => {
+            if (areaName !== area) return
+            const next = parseRef.current(changedValue(changes, key))
+            if (next !== null) setSnapshot(next)
+        }
+        browser.storage.onChanged.addListener(onChanged)
+        return () => {
+            cancelled = true
+            browser.storage.onChanged.removeListener(onChanged)
+        }
+    }, [area, key, initial])
+
+    return snapshot
 }
 
 /** 状态徽章（替代各自的 perm-badge / ok-text 拼接，统一颜色语义） */

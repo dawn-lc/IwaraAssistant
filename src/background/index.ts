@@ -46,8 +46,8 @@ import { syncKeepAlive } from './runtime/keepAlive'
 import { startAria2Tracking, watchAria2Endpoint } from './backends/aria2/tracker'
 import { consumeNotificationTarget, notifyInfo } from './runtime/notify'
 import { readFriendApproveProgress, startFriendApproval } from './iwara/friendApprove'
-import { autoSyncSubscribed, parseUnlistedAndPrivate, readSyncState, syncAllVideosPages, ingestPageVideos } from './iwara/pageSync'
-import { syncCachedToMediaCenter } from './iwara/mediaCenter'
+import { autoSyncSubscribed, settleInterruptedSync, startSiteSync, ingestPageVideos } from './iwara/pageSync'
+import { readMediaSyncProgress, syncCachedToMediaCenter } from './iwara/mediaCenter'
 import { promoteAuthor } from './iwara/promoteAuthor'
 import { removePlaylistItems } from './iwara/playlists'
 import { checkLinkReachable } from './iwara/linkCheck'
@@ -158,6 +158,9 @@ async function boot(): Promise<void> {
     void syncIwaradlTasks()
     // 钓鱼防护的 session 规则会跨 SW 回收存活：醒来先清掉「标签页已经不在仿冒站」的残留
     await reconcileGuardRules()
+    // 上一代进程留下的「遍历中」快照同样是僵尸：任务与模块变量一起消失了，
+    // 不归一的话进度条会永远转圈（那条快照没有任何人会再改写它）。
+    await settleInterruptedSync()
     // 上一代进程可能留在「排队中」的浏览器任务（同时下载数上限）：内存快照已丢，
     // 泵会重新解析后启动它们。不跑这一步，这些任务会永远停在排队中。
     void pumpBrowserQueue()
@@ -250,17 +253,20 @@ onMessage<Req>(async (req, sender) => {
         case 'GET_FRIEND_APPROVE_STATE':
             return readFriendApproveProgress()
         case 'SYNC_ALL_VIDEOS':
-            return syncAllVideosPages()
+            // **不 await 整轮遍历**：Chrome 对单次事件有 5 分钟上限，全站几十页到几千页
+            // 远超这条线，到期 SW 被终止、页面那边的 promise 永远不 resolve。
+            // 进度与结果走 storage.local 快照（页面订阅 onChanged）。见 pageSync 文件头。
+            return startSiteSync('all')
         case 'SYNC_SUBSCRIBED':
-            return parseUnlistedAndPrivate()
+            return startSiteSync('subscribed')
         case 'AUTO_SYNC_SUBSCRIBED':
             // 页面到达 /videos 时的自动遍历（源 menu.pageChange() 同款时机）；
             // 与手动路径分开：这里按配置 + 最小间隔 + 登录态自己决定跑不跑
             return autoSyncSubscribed()
-        case 'GET_SYNC_STATE':
-            return readSyncState()
         case 'SYNC_MEDIA_CENTER':
             return syncCachedToMediaCenter()
+        case 'GET_MEDIA_SYNC_STATE':
+            return readMediaSyncProgress()
         case 'REMOVE_PLAYLIST_ITEMS': {
             const result = await removePlaylistItems(req.payload.playlistId, req.payload.videoIds)
             if (result.error) throw new Error(result.error)

@@ -123,11 +123,23 @@ export type Req =
      * 单事件上限（Chrome 5 分钟），结果经 `GET_FRIEND_APPROVE_STATE` 的快照送达。
      */
     | { type: 'APPROVE_FRIEND_REQUESTS'; payload: Record<string, never> }
-    /** 读取好友审批快照（options 好友页轮询；含运行进度与上次终态结果） */
+    /**
+     * 读取好友审批快照的**初值**（options 好友页挂载时取一次）。
+     *
+     * 进度推进不靠轮询：后台写 `storage.session` 快照，页面订阅 `storage.onChanged`。
+     * 这条消息只负责给出初值 + 残骸归一（上次审批被中断 → interrupted）。
+     */
     | { type: 'GET_FRIEND_APPROVE_STATE'; payload: Record<string, never> }
-    /** 全站视频列表遍历入库 */
+    /**
+     * 全站视频列表遍历入库。
+     *
+     * 只回 `{ started, reason? }`：全站遍历是小时量级，而 Chrome 对**单次事件**有
+     * 5 分钟上限（到期直接终止 service worker，页面那边的 promise 永远不会 resolve）。
+     * 进度与结果写 `storage.local.syncProgress` 快照，页面订阅 `storage.onChanged`；
+     * 被进程终止打断的遍历由下次启动的残骸归一标为「已中断」。
+     */
     | { type: 'SYNC_ALL_VIDEOS'; payload: Record<string, never> }
-    /** 订阅页私有/不公开视频遍历入库 */
+    /** 订阅页私有/不公开视频遍历入库（返回形状与 `SYNC_ALL_VIDEOS` 相同，理由同） */
     | { type: 'SYNC_SUBSCRIBED'; payload: Record<string, never> }
     /**
      * 页面到达 `/videos` 时请求**自动**遍历订阅流（源项目 `menu.pageChange()` 的同款时机）。
@@ -136,10 +148,21 @@ export type Req =
      * 这条只是「报到达」，是否真的跑由后台按配置、最小间隔与登录态决定。
      */
     | { type: 'AUTO_SYNC_SUBSCRIBED'; payload: Record<string, never> }
-    /** 读取批量遍历进度（options 任务页轮询） */
-    | { type: 'GET_SYNC_STATE'; payload: Record<string, never> }
-    /** MediaCenter 批量同步（库内 full 记录） */
+    /**
+     * MediaCenter 批量同步（库内 full 记录）。
+     *
+     * 进度推进不靠轮询：后台写 `storage.session` 快照，页面订阅 `storage.onChanged`。
+     */
     | { type: 'SYNC_MEDIA_CENTER'; payload: Record<string, never> }
+    /**
+     * 读取 MediaCenter 同步进度的**初值**（options 高级页挂载时取一次）。
+     *
+     * 进度推进**不靠轮询**：后台写 `storage.session` 的快照，页面订阅 `storage.onChanged`。
+     * 长任务期间的消息往返不受扩展控制（可能排队/延迟派发），轮询一旦被卡住，
+     * 条就停在旧值；而写入即推送，阶段切换也能立刻反映。
+     * 这条消息只负责两件事：给出初值 + 残骸归一（上次同步被中断 → interrupted）。
+     */
+    | { type: 'GET_MEDIA_SYNC_STATE'; payload: Record<string, never> }
     /** 从播放列表移除选中视频（页内菜单；仅列表所有者可执行） */
     | { type: 'REMOVE_PLAYLIST_ITEMS'; payload: { playlistId: string; videoIds: string[] } }
     /**

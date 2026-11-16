@@ -10,16 +10,18 @@
  *   上限，而审批可能更久）；结果也从快照里读。
  * - `running` 只在真在跑时为 true（后台以内存任务对象为唯一真相），
  *   所以不存在「切走再回来看到一个假的转圈」。
- * - 轮询只在运行中继续；空闲时一次请求都不发，不额外唤醒后台。
+ * - 进度靠**订阅 `storage.session` 快照**（不是轮询）：后台每次写入都会推送过来，
+ *   发送时机与长任务的消息往返无关，也不会因一次失败就永久停更。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactElement } from 'react'
 import type { Config } from '../../shared/configSchema'
 import { BUILTIN_APPROVAL_CONDITIONS, approvalConditionParams } from '../../shared/approvalConditions'
-import { friendApproveView, type FriendApproveProgress } from '../../shared/approvalProgress'
+import { friendApproveView, IDLE_FRIEND_APPROVE_PROGRESS, parseFriendApproveProgress, type FriendApproveProgress } from '../../shared/approvalProgress'
+import { FRIEND_APPROVE_PROGRESS_KEY } from '../../shared/storageKeys'
 import { useTranslation } from 'react-i18next'
 import { send } from '../../messaging/hub'
-import { Badge, CheckRow, ProgressBar, Row, Section, SelectField, TextField, useSaver } from '../widgets'
+import { Badge, CheckRow, ProgressBar, Row, Section, SelectField, TextField, useSaver, useStorageSnapshot } from '../widgets'
 
 /** 启动接口的返回。**不是**审批结果（理由见文件头） */
 interface StartResult {
@@ -30,10 +32,24 @@ interface StartResult {
 export function FriendsTab({ config }: { config: Config }): ReactElement {
     const { save } = useSaver()
     const { t } = useTranslation()
-    const [snapshot, setSnapshot] = useState<FriendApproveProgress | null>(null)
     const [starting, setStarting] = useState(false)
-    /** 递增即触发一次重新拉取：点完按钮立即拿到新快照，不用等下一拍 */
-    const [kick, setKick] = useState(0)
+
+    /**
+     * 审批快照：**订阅 `storage.session`**（后台每次 `saveRecord` 都会推送过来）。
+     *
+     * 原来是每 1s 发一条 `GET_FRIEND_APPROVE_STATE`：长任务期间的消息往返不受扩展控制，
+     * 一次被卡住进度就停；而且 `catch` 之后不重建定时器 ⇒ 轮询**永久停止**。
+     * 初值走消息：后台在 `readFriendApproveProgress()` 里做残骸归一（进程被杀 → aborted）。
+     */
+    const snapshot = useStorageSnapshot<FriendApproveProgress>({
+        area: 'session',
+        key: FRIEND_APPROVE_PROGRESS_KEY,
+        parse: parseFriendApproveProgress,
+        initial: IDLE_FRIEND_APPROVE_PROGRESS,
+        readInitial: async () => await send<FriendApproveProgress>({ type: 'GET_FRIEND_APPROVE_STATE', payload: {} })
+    })
+    /** 本地合成的「启动被拒」错误：快照属于后台，前端自己拼一份会与它打架 */
+    const [localError, setLocalError] = useState<string | null>(null)
 
     const enabled = new Set(config.friendRequestApprovalConditions)
 
@@ -42,57 +58,23 @@ export function FriendsTab({ config }: { config: Config }): ReactElement {
         save({ friendRequestApprovalConditions: next })
     }
 
-    /** 本地合成一条终态快照（只用于「启动被拒」这种不需要后台落盘的即时错误） */
-    const localFailure = (message: string): void => {
-        setSnapshot((previous) => ({
-            ...(previous ?? { running: false, phase: 'idle', done: 0, total: 0, approved: 0, skipped: 0, failed: 0, startedAt: 0, finishedAt: Date.now(), updatedAt: Date.now() }),
-            running: false,
-            phase: 'idle',
-            result: { total: 0, approved: 0, failed: 0, skipped: 0, lines: [], error: message }
-        }))
-    }
-
     const runApprove = async (): Promise<void> => {
         setStarting(true)
+        setLocalError(null)
         try {
             const response = await send<StartResult>({ type: 'APPROVE_FRIEND_REQUESTS', payload: {} })
-            // 「已经在跑」这类拒绝直接提示，不必让用户等一拍轮询才知道
-            if (!response.started && response.error) localFailure(response.error)
+            // 「已经在跑」这类拒绝直接提示，不必让用户等一拍才看到
+            if (!response.started && response.error) setLocalError(response.error)
         } catch (error) {
-            localFailure(error instanceof Error ? error.message : String(error))
+            setLocalError(error instanceof Error ? error.message : String(error))
         } finally {
             setStarting(false)
-            setKick((value) => value + 1)
         }
     }
-
-    /**
-     * 轮询快照。运行中才续下一拍（后台在审批期间本来就醒着，这里没有额外的唤醒成本）；
-     * 空闲时一次都不发。
-     */
-    useEffect(() => {
-        let timer: number | undefined
-        let cancelled = false
-        const loop = async (): Promise<void> => {
-            try {
-                const state = await send<FriendApproveProgress>({ type: 'GET_FRIEND_APPROVE_STATE', payload: {} })
-                if (cancelled) return
-                setSnapshot(state)
-                if (state.running) timer = window.setTimeout(() => void loop(), 1000)
-            } catch {
-                // 后台暂不可用：停止轮询，不要刷屏
-            }
-        }
-        void loop()
-        return () => {
-            cancelled = true
-            if (timer !== undefined) window.clearTimeout(timer)
-        }
-    }, [kick])
 
     const needsEvidence = enabled.has('commentedForumThread')
     const { running, aborted, ratio, result } = friendApproveView(snapshot)
-    const progressLabel = snapshot?.phase === 'deciding' ? t('friends.progressLabel', { done: snapshot.done, total: snapshot.total, approved: snapshot.approved, skipped: snapshot.skipped, failed: snapshot.failed }) : t('friends.collecting')
+    const progressLabel = snapshot.phase === 'deciding' ? t('friends.progressLabel', { done: snapshot.done, total: snapshot.total, approved: snapshot.approved, skipped: snapshot.skipped, failed: snapshot.failed }) : t('friends.collecting')
 
     return (
         <>
@@ -140,6 +122,8 @@ export function FriendsTab({ config }: { config: Config }): ReactElement {
                 {running ? <p className="note">{progressLabel}</p> : null}
                 {/* 上一次跑到一半进程就没了：必须说出来，否则用户会把「停在 X/Y」当成自己的错觉 */}
                 {aborted ? <p className="note">{t('friends.aborted')}</p> : null}
+                {/* 启动被拒（已在跑 / 未选条件）：单独一行，不与后台结果混在一起 */}
+                {localError ? <p className="error-text">✗ {localError}</p> : null}
                 {result ? (
                     <div className={`result-box ${result.error ? 'warn' : 'ok'}`} data-testid="friend-approve-result">
                         {result.error ? <p className="error-text">✗ {result.error}</p> : null}

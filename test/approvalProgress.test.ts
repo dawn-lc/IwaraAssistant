@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { IDLE_FRIEND_APPROVE_PROGRESS, friendApproveRatio, friendApproveView, settleInterrupted, type FriendApproveProgress } from '../src/shared/approvalProgress'
+import { IDLE_FRIEND_APPROVE_PROGRESS, friendApproveRatio, friendApproveView, parseFriendApproveProgress, settleInterrupted, type FriendApproveProgress } from '../src/shared/approvalProgress'
 
 function progress(overrides: Partial<FriendApproveProgress>): FriendApproveProgress {
     return { ...IDLE_FRIEND_APPROVE_PROGRESS, running: true, phase: 'deciding', total: 10, ...overrides }
@@ -116,4 +116,38 @@ test('界面派生：正常结束 → 显示终态结果', () => {
 test('界面派生：无快照（后台还没响应）= 什么都不显示，而不是空转', () => {
     const view = friendApproveView(null)
     assert.deepEqual(view, { running: false, aborted: false, ratio: undefined, result: undefined })
+})
+
+// ── 快照解析：页面订阅 onChanged 后拿到的就是存储里的原始值 ──────────────
+
+test('解析：非对象 / 缺 running 一律不可信（返回 null，而不是伪造空闲态）', () => {
+    assert.equal(parseFriendApproveProgress(undefined), null)
+    assert.equal(parseFriendApproveProgress(null), null)
+    assert.equal(parseFriendApproveProgress('deciding'), null)
+    assert.equal(parseFriendApproveProgress(42), null)
+    // 缺 running：无法判断「在跑还是残骸」，交给调用方保留上一份快照
+    assert.equal(parseFriendApproveProgress({ phase: 'deciding', done: 1 }), null)
+})
+
+test('解析：未知 phase 直接拒绝（否则界面永远停在「收集中」）', () => {
+    assert.equal(parseFriendApproveProgress({ ...progress({}), phase: 'approving' }), null)
+    assert.equal(parseFriendApproveProgress({ ...progress({}), phase: undefined }), null)
+    assert.equal(parseFriendApproveProgress({ ...progress({}), phase: 'idle' })?.phase, 'idle')
+})
+
+test('解析：脏计数回 0、负数夹 0，不产生 NaN', () => {
+    const parsed = parseFriendApproveProgress({ ...progress({}), done: 'x', total: -3, approved: NaN, skipped: Infinity, failed: null, startedAt: 'y', finishedAt: 1e999, updatedAt: undefined })
+    assert.ok(parsed)
+    assert.deepEqual({ done: parsed.done, total: parsed.total, approved: parsed.approved, skipped: parsed.skipped, failed: parsed.failed, startedAt: parsed.startedAt, updatedAt: parsed.updatedAt }, { done: 0, total: 0, approved: 0, skipped: 0, failed: 0, startedAt: 0, updatedAt: 0 })
+})
+
+test('解析：aborted 只认 true；result 只接受对象', () => {
+    const parsed = parseFriendApproveProgress({ ...progress({}), aborted: 'yes', result: 'nope' })
+    assert.ok(parsed)
+    assert.equal(parsed.aborted, undefined)
+    assert.equal(parsed.result, undefined)
+    const withResult = parseFriendApproveProgress({ ...progress({}), aborted: true, result: SAMPLE_RESULT })
+    assert.ok(withResult)
+    assert.equal(withResult.aborted, true)
+    assert.deepEqual(withResult.result, SAMPLE_RESULT)
 })

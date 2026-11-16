@@ -2,36 +2,45 @@
  * 列表入库与批量遍历 —— 从页面缓存与站内 API 两条路把视频记录写进本地库
  *
  * - ingestPageVideos：页面缓存列表入库（列表页上报的当前页 RAW）+ 回填列表重算
- * - syncAllVideosPages：全站视频列表逐页遍历（sort=date）
- * - parseUnlistedAndPrivate：订阅流逐页遍历，收集本月的私有/不公开视频；命中当月库内已有
+ * - startSiteSync：启动一次遍历并**立即返回**（fire-and-forget，见下文）
+ * - runAllVideos：全站视频列表逐页遍历（sort=date）
+ * - runSubscribed：订阅流逐页遍历，收集本月的私有/不公开视频；命中当月库内已有
  *   私有视频后提前结束（原版终止语义）
  *
  * 三条路共用 `upsertVideos`（partial 不降级 full），差异只在数据来源。
  * 与原版的差异：跨页互斥锁/心跳删除（后台是唯一执行者，用模块级 running 防重入）；
  * 进度写 storage.local（options 任务页可读），每页一次写入同时充当 SW 保活活动。
+ *
+ * ## 遍历为什么不能挂在消息响应里（Chrome 的 5 分钟单事件上限）
+ *
+ * 全站遍历是「几千页 × 0.5~1.5s 间隔」，一小时量级。Chrome 对**单个事件**有 5 分钟上限
+ * （它与「30 秒空闲回收」是两条独立的终止条件：空闲回收可以被任何一次扩展 API 调用重置，
+ * 5 分钟则是硬上限），到期直接终止 service worker——任务连同模块变量一起消失，
+ * 而页面那边 `await send()` 的 promise 永远不会 resolve。
+ *
+ * 所以 `startSiteSync()` **只占位并立即返回**，遍历在后台自己跑；`SYNC_ALL_VIDEOS` /
+ * `SYNC_SUBSCRIBED` 的返回值因此是 `{ started, reason? }` 而不是遍历结果。
+ * 任务跑起来之后就不再受那条上限约束：每页 `report()`（扩展 API 调用）与 fetch 都重置
+ * 30 秒空闲计时器，而实际间隔最长也只有失败退避的 5~6 秒。
+ *
+ * 代价是「进程被杀」不再由消息链路兜底（浏览器关闭 / 扩展更新 / 系统休眠都会杀），
+ * 因此需要 `settleInterruptedSync()` 在下次启动时把「存储说在跑、内存没任务」判为中断。
+ * 这不是可以在代码里消除的：MV3 没有常驻后台，保活（`runtime/keepAlive.ts`）只能推迟
+ * 空闲回收，不能阻止终止。
  */
 import { apiUrl } from '../../shared/site'
 import { i18n } from '../../shared/i18n'
-import { AUTO_SYNC_AT_KEY, RATING_KEY } from '../../shared/storageKeys'
+import { AUTO_SYNC_AT_KEY, RATING_KEY, SYNC_PROGRESS_KEY } from '../../shared/storageKeys'
 import { isAutoSyncDue, shouldAutoSyncSubscribed } from '../../shared/autoSync'
+import { IDLE_SYNC_STATE, parseSyncState } from '../../shared/syncState'
+import type { SyncKind, SyncState } from '../../shared/syncState'
 import { getAuth, isLoggedIn } from './auth'
 import { defaultWindow, getConfig, refreshCacheInjection } from '../storage/configStore'
 import { db } from '../storage/db'
 import { parseCacheVideo } from '../storage/parse'
 
-export type SyncKind = 'all' | 'subscribed'
+export type { SyncKind, SyncState }
 
-export interface SyncState {
-    running: boolean
-    kind: SyncKind | null
-    page: number
-    succeeded: number
-    failed: number
-    message: string
-    updatedAt: number
-}
-
-const SYNC_STATE_KEY = 'syncProgress'
 /** 每页条数（源 `data/site.json` 的 `pageLimit`） */
 const PAGE_LIMIT = 50
 /** 订阅流最多向前找多少页（源 `maxFindPages`） */
@@ -52,25 +61,78 @@ const MONTH_MS = 30 * 24 * 60 * 60 * 1000
 /** 失败页重试轮数（源就一遍：首轮全跑完再逐页补一次，不循环重试） */
 const MAX_PAGE_RETRIES = 1
 
+/**
+ * 内存里的遍历任务。**这是「是否真在跑」的唯一真相**：任务与它的运行状态死在同一个进程里
+ * （SW 被回收 / 浏览器关闭），所以持久层里的 `running: true` 只可能是残骸。
+ */
 let running = false
 
-const IDLE_STATE: SyncState = {
-    running: false,
-    kind: null,
-    page: 0,
-    succeeded: 0,
-    failed: 0,
-    message: '',
-    updatedAt: 0
+/** 启动遍历的结果。**不含遍历结果**——那是快照的职责（理由见文件头）。 */
+export interface SyncStartResult {
+    started: boolean
+    reason?: 'already-running' | 'not-logged-in'
 }
 
-export async function readSyncState(): Promise<SyncState> {
-    const stored = (await browser.storage.local.get(SYNC_STATE_KEY))[SYNC_STATE_KEY] as SyncState | undefined
-    return stored ?? IDLE_STATE
+/**
+ * 启动一次遍历并**立即返回**（fire-and-forget）。
+ *
+ * `running` 必须在第一个 await 之前同步占位：连点两次按钮时第二次要能被立刻拒掉，
+ * 否则两条循环同时翻页，同一页写两遍、进度还会互相覆盖。
+ */
+export async function startSiteSync(kind: SyncKind): Promise<SyncStartResult> {
+    if (running) return { started: false, reason: 'already-running' }
+    running = true
+
+    let loggedIn = false
+    try {
+        loggedIn = await isLoggedIn()
+    } catch {
+        loggedIn = false
+    }
+    if (!loggedIn) {
+        running = false
+        await report({ ...IDLE_SYNC_STATE, message: i18n.t('notify.notLoggedIn') })
+        return { started: false, reason: 'not-logged-in' }
+    }
+
+    // 不 await：见文件头的 5 分钟上限。异常只记日志——快照里已经写着停在哪一页、
+    // 失败原因是什么，界面据此如实显示，比一个 reject 的消息更有用。
+    void (kind === 'all' ? runAllVideos() : runSubscribed()).catch((error: unknown) => {
+        console.error('[iwara-assistant] 遍历异常终止：', error instanceof Error ? error.message : error)
+    })
+    return { started: true }
+}
+
+/**
+ * 收尾：**先把终态写进快照，再释放内存标记**。
+ *
+ * 顺序反了会有一个「内存已空、存储仍写 running」的窗口，下一次 boot 的残骸归一会把
+ * 刚跑完的那次判成「被中断」（与 MediaCenter 同步同一条不变量）。
+ */
+async function settleRun(state: SyncState): Promise<void> {
+    state.running = false
+    state.kind = null
+    await report(state)
+    running = false
+}
+
+/**
+ * 残骸归一：存储说在跑、而本进程没有任务 ⇒ 上一次遍历被进程终止打断。
+ *
+ * 只在 `boot()` 里调用（每次 SW 冷启动恰好一次）。判定靠**不变量**而不是心跳超时：
+ * 遍历期间每页都有写入，用「N 秒没更新算死」永远分不清「在跑但页面慢」与「已经死了」。
+ * 与好友审批 / MediaCenter 同一条判据，只是这里没有消息通道可问，只能靠 boot 的时机。
+ */
+export async function settleInterruptedSync(): Promise<void> {
+    // 消息可能先于 boot 的后半段到达并已经起了一条遍历，那不是残骸
+    if (running) return
+    const snapshot = parseSyncState((await browser.storage.local.get(SYNC_PROGRESS_KEY))[SYNC_PROGRESS_KEY])
+    if (!snapshot || !snapshot.running) return
+    await report({ ...snapshot, running: false, kind: null, message: i18n.t('notify.syncInterrupted', { page: snapshot.page + 1, ok: snapshot.succeeded, failed: snapshot.failed }) })
 }
 
 async function report(state: SyncState): Promise<void> {
-    await browser.storage.local.set({ [SYNC_STATE_KEY]: { ...state, updatedAt: Date.now() } })
+    await browser.storage.local.set({ [SYNC_PROGRESS_KEY]: { ...state, updatedAt: Date.now() } })
 }
 
 function sleep(ms: number): Promise<void> {
@@ -156,7 +218,7 @@ async function upsertVideos(raws: Iwara.Video[]): Promise<IngestResult> {
 /**
  * 页面缓存列表入库（原 handleVideosResponse 的解析入库段）+ 回填列表重算。
  *
- * 与 `syncAllVideosPages` 共用 `upsertVideos`：两条路都是「列表页 RAW → partial → 不降级 full」，
+ * 与全站遍历共用 `upsertVideos`：两条路都是「列表页 RAW → partial → 不降级 full」，
  * 区别只在于数据是从页面消息来还是从站内 API 拉。
  */
 export async function ingestPageVideos(payload: { videos: unknown[]; window?: { start: number; end: number } }): Promise<IngestResult> {
@@ -172,16 +234,10 @@ export async function ingestPageVideos(payload: { videos: unknown[]; window?: { 
 /**
  * 全站视频列表遍历（原 syncAllVideosPages）。
  * 终止：本页 page*limit >= count（原实现同）；单页失败记录后继续。
+ *
+ * 进入前 `running` 已由 `startSiteSync` 置位，这里只负责跑完并在 finally 里收尾。
  */
-export async function syncAllVideosPages(): Promise<SyncState> {
-    if (running) return readSyncState()
-    if (!(await isLoggedIn())) {
-        const state: SyncState = { ...IDLE_STATE, message: i18n.t('notify.notLoggedIn') }
-        await report(state)
-        return state
-    }
-
-    running = true
+async function runAllVideos(): Promise<void> {
     const state: SyncState = { running: true, kind: 'all', page: 0, succeeded: 0, failed: 0, message: i18n.t('notify.syncStart'), updatedAt: Date.now() }
     /** 首轮失败的页号（源 `retryFailed`：全文跑完再重试，避免一页抽风就永久漏数据） */
     const retryFailed: number[] = []
@@ -215,12 +271,8 @@ export async function syncAllVideosPages(): Promise<SyncState> {
 
         if (retryFailed.length > 0) await retryFailedPages(retryFailed, state)
     } finally {
-        state.running = false
-        state.kind = null
-        await report(state)
-        running = false
+        await settleRun(state)
     }
-    return state
 }
 
 /**
@@ -254,16 +306,10 @@ async function retryFailedPages(pages: number[], state: SyncState): Promise<void
 /**
  * 订阅页私有/不公开视频遍历（原 parseUnlistedAndPrivate）。
  * 终止：本页含私有视频且该视频在"当月库内私有视频集合"中（说明已追平），或达到页数上限。
+ *
+ * 进入前 `running` 已由 `startSiteSync` 置位（含登录态检查），这里只负责跑完并收尾。
  */
-export async function parseUnlistedAndPrivate(): Promise<SyncState> {
-    if (running) return readSyncState()
-    if (!(await isLoggedIn())) {
-        const state: SyncState = { ...IDLE_STATE, message: i18n.t('notify.notLoggedIn') }
-        await report(state)
-        return state
-    }
-
-    running = true
+async function runSubscribed(): Promise<void> {
     const state: SyncState = { running: true, kind: 'subscribed', page: 0, succeeded: 0, failed: 0, message: i18n.t('notify.subscribedStart'), updatedAt: Date.now() }
 
     try {
@@ -313,12 +359,8 @@ export async function parseUnlistedAndPrivate(): Promise<SyncState> {
         const written = (await upsertVideos(collected)).written
         state.message = i18n.t('notify.subscribedDone', { collected: collected.length, written, ok: state.succeeded, failed: state.failed })
     } finally {
-        state.running = false
-        state.kind = null
-        await report(state)
-        running = false
+        await settleRun(state)
     }
-    return state
 }
 
 /** 自动遍历被跳过的原因（供页面标记与日志定位，不面向用户） */
@@ -327,7 +369,6 @@ export type AutoSyncSkipReason = 'config' | 'running' | 'interval' | 'not-logged
 export interface AutoSyncResult {
     started: boolean
     reason?: AutoSyncSkipReason
-    state?: SyncState
 }
 
 /**
@@ -354,7 +395,9 @@ export async function autoSyncSubscribed(): Promise<AutoSyncResult> {
 
     await browser.storage.local.set({ [AUTO_SYNC_AT_KEY]: Date.now() })
     console.info('[iwara-assistant] 自动遍历订阅流（到达 /videos 触发）')
-    // await 而不是 fire-and-forget：整轮里持续有扩展 API / fetch 调用，SW 不会被中途回收；
-    // 与手动 `SYNC_SUBSCRIBED` 走同一条等待语义，两条路径不会出现「谁更容易被打断」的差异。
-    return { started: true, state: await parseUnlistedAndPrivate() }
+    // 与手动入口走**同一条** fire-and-forget 路径：页面发的这条消息本来就是
+    // `void sendMessage(...).catch(...)`，等整轮跑完只会让内容脚本的消息端口
+    // 挂着一个几分钟的请求（失败页退避 × 64 页足够超过 5 分钟）。
+    const result = await startSiteSync('subscribed')
+    return { started: result.started, reason: result.reason === 'already-running' ? 'running' : result.reason }
 }

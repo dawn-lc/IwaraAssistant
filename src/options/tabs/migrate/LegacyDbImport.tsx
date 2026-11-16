@@ -41,8 +41,16 @@ export function LegacyDbImport(): ReactElement {
     const counts = info?.counts ?? EMPTY_LEGACY_COUNTS
     const total = counts.videos + counts.follows + counts.friends + counts.idmap
     const progress = info?.progress ?? null
+    /**
+     * 「在跑」= 本次点击 **或** 后台的 `importing` 标记。
+     *
+     * 加后者是必需的：`busy` 只是本组件的 state，用户切到别的页签再回来（重挂载）就归零，
+     * 而导入可能还要跑几分钟 —— 那时进度条消失、按钮变回可点，再点一次就是两条并发的
+     * 导入写同一张表。与好友审批/MediaCenter 的 `running ∩ 快照` 是同一套判据。
+     */
+    const running = busy || info?.importing === true
     /** 进度文案与进度条共用同一份：分开算两遍必然在 total=0 这类边界上漂移 */
-    const progressText = busy ? (progress ? tr('migrate.legacyProgress', { store: storeLabel(progress.store, tr), done: progress.done, total: progress.total || '?' }) : tr('migrate.importing')) : null
+    const progressText = running ? (progress ? tr('migrate.legacyProgress', { store: storeLabel(progress.store, tr), done: progress.done, total: progress.total || '?' }) : tr('migrate.importing')) : null
     const progressValue = progress && progress.total > 0 ? progress.done / progress.total : undefined
 
     const run = async (): Promise<void> => {
@@ -87,8 +95,8 @@ export function LegacyDbImport(): ReactElement {
                 </>
             ) : null}
             <div className="action-row">
-                <button type="button" className="primary" disabled={busy} onClick={() => void run()}>
-                    {busy ? tr('migrate.importing') : info?.found && total > 0 ? tr('migrate.importCount', { n: total }) : tr('migrate.importStart')}
+                <button type="button" className="primary" disabled={running} onClick={() => void run()}>
+                    {running ? tr('migrate.importing') : info?.found && total > 0 ? tr('migrate.importCount', { n: total }) : tr('migrate.importStart')}
                 </button>
             </div>
             <p className="note">{tr('migrate.legacyFootnote')}</p>

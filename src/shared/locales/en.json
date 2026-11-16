@@ -360,7 +360,11 @@
         "syncing": "Syncing…",
         "syncRecords": "Sync all complete records",
         "mediaSynced": "{total} records: {pushed} succeeded / {failed} failed",
-        "mediaSyncFailed": "MediaCenter sync failed: {message}"
+        "mediaSyncFailed": "MediaCenter sync failed: {message}",
+        "mediaSyncScan": "Reading MediaCenter list: {done} / {total}",
+        "mediaSyncScanUnknown": "Reading MediaCenter list: {done} read",
+        "mediaSyncPush": "Pushing mapped records: {done} / {total}",
+        "mediaSyncInterrupted": "The previous sync was interrupted (extension reloaded or browser closed) and did not finish."
     },
     "guide": {
         "quickTitle": "Quick start",
@@ -466,6 +470,7 @@
         "syncPageFailed": "Page {page} failed: {message}",
         "syncRetry": "Retrying page {page} (round {round}, {total} pages this round)",
         "syncRetryFailed": "{count} page(s) still failed after retries; run the sync again later to fill them in",
+        "syncInterrupted": "The previous sync was interrupted after {page} page(s) (ok {ok} / failed {failed}). Closing the browser or recycling the background stops a sync; run it again if needed",
         "browserDownloadNotPermitted": "The browser does not allow this extension to download files (grant the downloads permission on the extensions page)",
         "browserDownloadNotSupported": "The browser does not support this download URL",
         "browserDownloadNotSucceeded": "The browser download did not complete: {detail}",

@@ -595,6 +595,58 @@ describe('Iwara Assistant 扩展（双浏览器同构）', () => {
         await browser.waitUntil(async () => (await $$('table.tasks tbody tr')).length === 0, { timeout: 10_000 })
     })
 
+    /**
+     * `storage.session` 快照变更必须能被 `onChanged` 收到（双宿主）。
+     *
+     * MediaCenter 同步的进度条完全建立在这条通道上：后台写 `storage.session`，
+     * options 页订阅 `onChanged` 渲染。任何一侧不广播/不触发，界面就会永远停在
+     * 「已读 0 条」——而且**只在真实浏览器里才能发现**（单测里的假 storage 是我们自己写的，
+     * 它当然会触发）。Chrome 与 Firefox 对这个区的支持不同，所以必须双宿主各验一次。
+     *
+     * 注意：Firefox 的 MV2 后台是持久页，`storage.session` 在 MV2 下也实测可用；
+     * 这条用例同时锁住「不要某个宿主上线后悄悄退化成不支持」。
+     */
+    it('storage.session 变更经 onChanged 广播（进度条依赖它，双宿主）', async () => {
+        await openPage('options/index.html#advanced')
+        await $('nav.tabs').waitForDisplayed({ timeout: 15_000 })
+
+        // 扩展页里 `browser` / `chrome` 的最小形状（只覆盖本用例用到的 storage.session）。
+        // 类型在编译期擦除，不会随脚本送进浏览器。
+        type SessionProbeApi = {
+            storage: {
+                onChanged: { addListener: (listener: (changes: Record<string, { newValue?: unknown }>, area: string) => void) => void }
+                session: { set: (items: Record<string, unknown>) => Promise<void>; remove: (key: string) => Promise<void> }
+            }
+        }
+
+        // 注册监听（匿名内联函数：BiDi 下把函数赋给变量会因 keepNames 的 __name 报错）
+        await browser.execute(() => {
+            const scope = globalThis as unknown as Record<string, unknown>
+            const api = (scope['browser'] ?? scope['chrome']) as SessionProbeApi
+            scope['__e2eSessionEvents'] = []
+            api.storage.onChanged.addListener(function (changes: Record<string, { newValue?: unknown }>, area: string) {
+                if (area === 'session' && changes['e2eSessionProbe']) (scope['__e2eSessionEvents'] as unknown[]).push(changes['e2eSessionProbe']?.newValue)
+            })
+        })
+
+        await browser.execute(async () => {
+            const scope = globalThis as unknown as Record<string, unknown>
+            const api = (scope['browser'] ?? scope['chrome']) as SessionProbeApi
+            await api.storage.session.set({ e2eSessionProbe: { running: true, stage: 'list', done: 1, total: 2 } })
+        })
+
+        const readEvents = async (): Promise<unknown[]> => (await browser.execute(() => ((globalThis as unknown as Record<string, unknown>)['__e2eSessionEvents'] as unknown[] | undefined) ?? [])) as unknown[]
+
+        await browser.waitUntil(async () => (await readEvents()).length > 0, { timeout: 10_000, interval: 100, timeoutMsg: 'storage.session 变更没有经 onChanged 广播（进度条会永远不动）' })
+        expect((await readEvents())[0]).toMatchObject({ running: true, stage: 'list', done: 1, total: 2 })
+
+        await browser.execute(async () => {
+            const scope = globalThis as unknown as Record<string, unknown>
+            const api = (scope['browser'] ?? scope['chrome']) as SessionProbeApi
+            await api.storage.session.remove('e2eSessionProbe')
+        })
+    })
+
     /** 引导页权限行的徽章文案（textContent 轮询，避免淡入元素读到空串） */
     async function guidePermissionBadge(): Promise<string> {
         return (await browser.execute(() => document.querySelector('.status-line .badge')?.textContent ?? '')) as string
