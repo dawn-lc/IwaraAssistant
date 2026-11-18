@@ -135,7 +135,7 @@ sequenceDiagram
     Q->>T: cancelTaskDownload(task)
     T->>Q: 先摘掉 kindRef（此刻它已不再代表「在下」）
     T->>A: aria2.remove(gid)
-    T->>A: removeDownloadResult(gid) 重试直到结果入表
+    T->>A: removeDownloadResult(gid)：查不到 gid 即算清干净，查得到才继续等
     alt 清不掉（结果始终没入表）
         T->>T: console.warn，下一轮扫描兜底
     end
@@ -144,7 +144,7 @@ sequenceDiagram
 
 先摘 `kindRef` 的原因是：`remove` 会触发事件，如果队列还指着这个 gid，刚被取消的任务会被当成一次失败、甚至触发一次恢复重建——用户点了取消，转头又冒出一条新任务。
 
-`removeDownloadResult` 之所以要重试：`remove` 只置 halt 位，结果要等下一个事件循环才进 `downloadResults_`；早先「remove 紧跟 removeDownloadResult + 空 catch」的写法基本必然失败，留下的 `removed` 记录下一轮会被扫成外部残留、收编成 failed。
+`removeDownloadResult` 之所以要带回退判断：`remove` 只置 halt 位，结果要等下一个事件循环才进 `downloadResults_`；早先「remove 紧跟 removeDownloadResult + 空 catch」的写法会静默失败。真机实测（2026-11-18）还发现另一种情况：取消 **waiting** 任务时 gid 会彻底消失、根本不产生结果记录——所以「`GID ... is not found`」必须再问一次 `tellStatus` 才能区分「结果还没入表」与「已经清干净」。
 
 ## 7. 看到这些现象时，先别怀疑这条链路
 
