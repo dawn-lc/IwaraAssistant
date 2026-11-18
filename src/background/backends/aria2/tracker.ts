@@ -315,11 +315,11 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
             if (!plan) continue
             const winner = plan.winner
             for (const loser of plan.liveLosers) {
-                // ⚠️ 先把队列指向赢家，再 remove：`aria2.remove` 会触发 WS
-                // `onDownloadError`（errorCode 1 “Download aborted.”）。如果这时
-                // 任务还指着 loser 的 gid，`handleDownloadError` 会把这条**本来
-                // 正在正常下载**的记录标成 failed——用户看到的就是我们自己的去重
-                // 把下载「弄失败」了。先改 kindRef，事件到达时就找不到 loser 了。
+                // ⚠️ 先把队列指向赢家，再 remove。真机实测（proposal §9.3-2）：`aria2.remove`
+                // 发的是 `onDownloadStop`，不是 `onDownloadError`；但这里仍要保守：
+                // ① 事件与 5 分钟后的扫描可能同时到达，扫描会按 loser 的 `removed` 终态同步；
+                // ② 换实现/换版本时事件语义可能不同，先摘 kindRef 是零成本的。
+                // 反过来做（先 remove 后摘）会让自己的去重把一条**正在正常下载**的记录弄成失败。
                 if (queuedTask?.kindRef === loser.gid) await patchTask(queuedTask.id, { kindRef: winner.gid })
                 await stopLiveCopy(loser)
                 stopped++

@@ -5,6 +5,7 @@
 import { among, isEmpty, isNullOrUndefined } from '../../../shared/strings'
 import { analyzePath } from '../../../shared/analyzePath'
 import { aria2AuthParams } from '../../../shared/aria2Rpc'
+import { isAria2GidMissingError } from '../../../shared/aria2Recover'
 import { getConfig } from '../../storage/configStore'
 import { isWsOpen, serializeRpc, wsCall, Aria2RpcError } from './ws'
 
@@ -117,11 +118,37 @@ export async function aria2TellStatus(gid: string): Promise<Aria2Status | undefi
  * 用户取消掉的任务会以「失败」的身份重新出现在任务面板里。
  *
  * 所以：结果还没入表就等一个 tick 再来，试满仍然失败就打日志（不再静默）。
+ *
+ * ## 「GID ... is not found」有两种含义，必须分开（真机实测）
+ *
+ * | 场景 | remove 后立刻 removeDownloadResult | tellStopped 里有没有记录 |
+ * | --- | --- | --- |
+ * | 取消 **active** 任务 | **成功** | 有，但我们当场删掉 |
+ * | 取消 **waiting** 任务 | `GID ... is not found` | **从头到尾都没有** |
+ *
+ * 后者是「这条任务压根不会产生结果记录」，清理早就完成了；把它当失败去重试，
+ * 会让每次取消排队任务白等 1 秒并打一条假警告。用 tellStatus 复查即可区分：
+ * 只有它还在（`exists === true`）才说明结果尚未入表、值得再等。
  */
 export async function aria2RemoveResult(gid: string, attempts = 20): Promise<boolean> {
     for (let i = 0; i < attempts; i++) {
-        const res = await aria2API('aria2.removeDownloadResult', [gid]).catch(() => undefined)
-        if (res !== undefined && res.error === undefined) return true
+        let removed = false
+        try {
+            const res = await aria2API('aria2.removeDownloadResult', [gid])
+            removed = res.error === undefined
+        } catch {
+            removed = false
+        }
+        if (removed) return true
+        let exists: boolean | undefined
+        try {
+            const probe = await aria2API<{ gid: string }>('aria2.tellStatus', [gid, ['gid']])
+            exists = probe.error === undefined ? true : isAria2GidMissingError(probe.error) ? false : undefined
+        } catch {
+            exists = undefined
+        }
+        // 查不到 = gid 已经彻底不存在 = 没有记录可清 = 目标达成
+        if (exists === false) return true
         await new Promise((resolve) => setTimeout(resolve, 50))
     }
     console.warn(`[iwara-assistant] aria2 结果记录清理失败 gid=${gid}（下轮扫描可能把它当残留收编）`)

@@ -388,6 +388,8 @@ test('清结果必须走会等的 helper：remove 之后结果还没入表，直
     assert.match(body, /aria2\.removeDownloadResult/, 'helper 内部必须真的清结果')
     assert.match(body, /for \(let i = 0; i < attempts; i\+\+\)/, '必须重试等待结果入表，而不是打一次就放弃')
     assert.doesNotMatch(body, /catch \{\s*\}/, '清理失败不能静默：至少留一行日志')
+    assert.match(body, /isAria2GidMissingError/, '「GID is not found」有两种含义：结果未入表（要等）与任务压根不留记录（已清干净）。实测取消 waiting 任务属于后者，不区分会白等 1 秒并打假警告')
+    assert.match(body, /if \(exists === false\) return true/, '查到 gid 已彻底不存在时必须直接判成功，否则取消排队任务会空转重试')
 })
 
 test('接线：liveLosers 的处置既 remove 也清结果（只 remove 会留下 stopped 记录，下轮又被收编）', () => {
