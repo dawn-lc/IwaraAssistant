@@ -86,10 +86,46 @@ export async function aria2API<T = unknown>(method: string, params: unknown[]): 
     return (await response.json()) as Aria2RpcResult<T>
 }
 
+/**
+ * 「要一份完整状态」的字段集——**唯一来源**。
+ *
+ * ⚠️ 这里曾经是三份手抄的字段表（本文件、`tracker` 的扫描、`tracker` 的僵尸查询），
+ * 结果漂移出一个必然的 bug：`aria2TellStatus` 的列表里**没有 `errorCode`**，
+ * 而 `handleDownloadError` 读它 → 失败原因永远落到「未知错误码」，
+ * `isFileConflictErrorCode` 在事件路径上也永远为假。
+ *
+ * aria2 只返回被请求的键，漏一个键就是一条静默失效的判断，所以别再就地手写数组。
+ */
+export const ARIA2_STATUS_FIELDS = ['gid', 'status', 'errorCode', 'errorMessage', 'files', 'bittorrent', 'totalLength', 'completedLength', 'downloadSpeed'] as const
+
 /** aria2 任务状态（原 aria2.tellStatus 封装） */
 export async function aria2TellStatus(gid: string): Promise<Aria2Status | undefined> {
-    const res = await aria2API<Aria2Status>('aria2.tellStatus', [gid, ['gid', 'status', 'files', 'bittorrent', 'errorMessage', 'downloadSpeed']])
+    const res = await aria2API<Aria2Status>('aria2.tellStatus', [gid, [...ARIA2_STATUS_FIELDS]])
     return res.result
+}
+
+/**
+ * 清掉一条结果记录（`removeDownloadResult`），会等它真正入表。
+ *
+ * ## 为什么必须等
+ *
+ * `aria2.remove` 只置 halt 请求位，RequestGroup 的结果要等下一个事件循环才进
+ * `downloadResults_`；而 `removeDownloadResult` 只查那张表，查不到就抛
+ * `Could not remove download result`。旧写法是「remove 紧接着 removeDownloadResult + 空 catch」，
+ * 于是清理**大概率失败且无声无息**，`removed` 记录留在 tellStopped 里，
+ * 下一轮扫描按 `planResidualAdoption` 的规则把它当外部任务**收编成 failed** ——
+ * 用户取消掉的任务会以「失败」的身份重新出现在任务面板里。
+ *
+ * 所以：结果还没入表就等一个 tick 再来，试满仍然失败就打日志（不再静默）。
+ */
+export async function aria2RemoveResult(gid: string, attempts = 20): Promise<boolean> {
+    for (let i = 0; i < attempts; i++) {
+        const res = await aria2API('aria2.removeDownloadResult', [gid]).catch(() => undefined)
+        if (res !== undefined && res.error === undefined) return true
+        await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    console.warn(`[iwara-assistant] aria2 结果记录清理失败 gid=${gid}（下轮扫描可能把它当残留收编）`)
+    return false
 }
 
 /** http(s) rpc 地址 → ws(s) 通知地址 */

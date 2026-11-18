@@ -380,16 +380,62 @@ function trackerBody(name: string): string {
     return source.slice(start, end)
 }
 
+test('清结果必须走会等的 helper：remove 之后结果还没入表，直接 removeDownloadResult 只会静默失败', () => {
+    const client = readFileSync('src/background/backends/aria2/client.ts', 'utf8')
+    const start = client.indexOf('export async function aria2RemoveResult(')
+    assert.ok(start > 0, 'aria2RemoveResult 应存在')
+    const body = client.slice(start, client.indexOf('\n}', start) + 2)
+    assert.match(body, /aria2\.removeDownloadResult/, 'helper 内部必须真的清结果')
+    assert.match(body, /for \(let i = 0; i < attempts; i\+\+\)/, '必须重试等待结果入表，而不是打一次就放弃')
+    assert.doesNotMatch(body, /catch \{\s*\}/, '清理失败不能静默：至少留一行日志')
+})
+
 test('接线：liveLosers 的处置既 remove 也清结果（只 remove 会留下 stopped 记录，下轮又被收编）', () => {
     const body = trackerBody('stopLiveCopy')
     assert.match(body, /aria2\.remove'/, '必须真的停掉在跑的那份')
-    assert.match(body, /aria2\.removeDownloadResult/, '只 remove 会留下记录，下轮扫描把它当另一个同源任务再收编 → 死循环')
+    assert.match(body, /aria2RemoveResult\(/, '只 remove 会留下记录，下轮扫描把它当另一个同源任务再收编 → 死循环')
 })
 
 test('接线：garbageLosers 的处置只清结果，不 remove（error/removed 已经不在活动队列里）', () => {
     const body = trackerBody('discardGarbageCopy')
-    assert.match(body, /aria2\.removeDownloadResult/)
+    assert.match(body, /aria2RemoveResult\(/)
     assert.doesNotMatch(body, /aria2\.remove'/, '对已死任务发 remove 只会换回一个错误')
+})
+
+test('取消路径：先摘掉 kindRef 再 remove（否则 error 事件会把刚取消的任务当失败，甚至触发恢复重建）', () => {
+    const source = readFileSync('src/background/download/cancel.ts', 'utf8')
+    const start = source.indexOf('async function removeAria2Task(')
+    assert.ok(start > 0, 'removeAria2Task 应存在')
+    const body = source.slice(start, source.indexOf('\n}', start) + 2)
+    const patchAt = body.indexOf('kindRef: undefined')
+    const removeAt = body.indexOf("aria2.remove'")
+    assert.ok(patchAt > 0, '必须先摘关联')
+    assert.ok(removeAt > patchAt, '摘关联必须在 remove 之前')
+    assert.match(body, /aria2RemoveResult\(/, '清结果要等它入表')
+})
+
+test('扫描必须拉三张表：waiting/paused 只在 tellWaiting 里，漏了就是死分支', () => {
+    const body = trackerBody('scanAria2TasksAndEnqueue')
+    assert.match(body, /aria2\.tellActive/, 'active 一路')
+    assert.match(body, /aria2\.tellStopped/, 'stopped 一路')
+    assert.match(body, /aria2\.tellWaiting/, 'waiting/paused 只在 tellWaiting 里：漏了它，排队中的任务会一直显示「下载中」')
+    // 去重判据只认 active：排队副本没在传，把它的 gid 算进 liveGids 会让去重误留一条空转的
+    assert.match(body, /const liveGids = new Set\(activeTasks\.map/, 'liveGids 必须只由 active 构成')
+})
+
+test('失败事件必须先分类再决定（否则 WS 报失败、5 分钟后扫描又「恢复」同一个 gid）', () => {
+    const body = trackerBody('handleDownloadError')
+    assert.match(body, /isFileConflictErrorCode\(/, '文件冲突类错误重建也只会再撞一次，要单独报')
+    assert.match(body, /tryRecover\(/, '其余错误应当场就地修，而不是留一条假失败等 5 分钟')
+    assert.match(body, /aria2FileConflict/, '冲突文案要如实说明，不能落成「未知错误码」')
+    // 冲突分支在 tryRecover 之前也会写 failed，所以拿「最后那次」比：那是兜底的失败落库
+    assert.ok(body.indexOf('tryRecover(') < body.lastIndexOf("task.status = 'failed'"), '先尝试恢复，失败才落 failed')
+})
+
+test('字段表只有一份，且必须包含 errorCode', () => {
+    const client = readFileSync('src/background/backends/aria2/client.ts', 'utf8')
+    assert.match(client, /export const ARIA2_STATUS_FIELDS = \[[^\]]*'errorCode'/, 'errorCode 漏了 → 失败原因恒为「未知错误码」，文件冲突判定永远为假')
+    assert.match(client, /'aria2\.tellStatus', \[gid, \[\.\.\.ARIA2_STATUS_FIELDS\]\]/, 'tellStatus 必须用统一字段表，不许就地手写数组')
 })
 
 test('接线：完成历史（historyLosers）不得触发任何 RPC', () => {

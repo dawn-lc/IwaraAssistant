@@ -31,7 +31,7 @@ import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
 import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
-import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
+import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
 import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverResult } from './recover'
@@ -182,11 +182,33 @@ async function handleDownloadComplete(gid: string): Promise<void> {
     if (videoId) await markDone(videoId)
 }
 
-/** 下载失败：队列命中 → failed（aria2 errorMessage）；未命中 → 记日志 */
-async function handleDownloadError(gid: string): Promise<void> {
+/**
+ * 下载失败：**先分类，再决定「报失败」还是「就地修」**。
+ *
+ * 旧实现一收到 WS 事件就写 failed + 弹通知，而 5 分钟后的扫描会对同一条 error 调
+ * `tryRecover` 再发一条「已恢复」——同一个视频十分钟内先「失败」再「已恢复」。
+ * 恢复逻辑本来就该在事件这一刻跑：链接过期是 iwara 直链的常态（几小时必失效），
+ * 让用户先看一条假失败、等五分钟再自愈，比不修还糟。
+ *
+ * 分类依据是 `errorCode`（必须真的取到：见 `ARIA2_STATUS_FIELDS`）：
+ * 11/13 这类「文件已存在/被占用」重建也只会再撞一次，直接如实报出来。
+ *
+ * `recoverable=false` 供扫描路径使用：那边已经先试过 `tryRecover` 了，别再试第二遍。
+ */
+async function handleDownloadError(gid: string, recoverable = true): Promise<void> {
     const task = findTask({ kindRef: gid, kind: 'aria2' })
     if (!task) return
+    // 幂等：重复事件（WS 与扫描都会走到这里）不再刷第二条通知
+    if (task.status === 'failed' || task.status === 'complete') return
     const status = await aria2TellStatus(gid)
+    if (status && isFileConflictErrorCode(status.errorCode)) {
+        task.status = 'failed'
+        task.detail = i18n.t('notify.aria2FileConflict', { id: task.videoId })
+        await syncTask(task)
+        await notifyTask(task)
+        return
+    }
+    if (recoverable && status && (await tryRecover(task.videoId, status, task))) return
     task.status = 'failed'
     task.detail = status?.errorMessage ?? i18n.t('notify.aria2Failed', { detail: status?.errorCode ?? i18n.t('notify.aria2UnknownCode') })
     await syncTask(task)
@@ -213,11 +235,9 @@ async function stopLiveCopy(task: Aria2Status): Promise<void> {
     } catch {
         // 可能已被移除
     }
-    try {
-        await aria2API('aria2.removeDownloadResult', [task.gid])
-    } catch {
-        // 结果条目可能已被清
-    }
+    // 必须等结果真正入表再清（见 client.ts 的 aria2RemoveResult）：清不掉的
+    // `removed` 记录会在下一轮被当作外部任务收编成 failed。
+    await aria2RemoveResult(task.gid)
 }
 
 /**
@@ -227,11 +247,7 @@ async function stopLiveCopy(task: Aria2Status): Promise<void> {
  * 清掉的目的是避免下轮扫描把我们自己重建留下的错误记录反复拾回来。
  */
 async function discardGarbageCopy(task: Aria2Status): Promise<void> {
-    try {
-        await aria2API('aria2.removeDownloadResult', [task.gid])
-    } catch {
-        // 结果条目可能已清
-    }
+    await aria2RemoveResult(task.gid)
 }
 
 /** 扫描 aria2 现有任务对账（原 scanAria2TasksAndEnqueue 精简移植） */
@@ -250,13 +266,26 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
     // 计数必须跨轮累计（Chrome SW 空闲 30s 就回收，扫描 5min 一次 → 每次都是新实例）
     await loadScanMemory()
     try {
-        const [actRes, stopRes] = await Promise.all([aria2API<Aria2Status[]>('aria2.tellActive', [PROGRESS_FIELDS]), aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, PROGRESS_FIELDS])])
-        const allTasks = [...(actRes.result ?? []), ...(stopRes.result ?? [])].filter((task) => isNullOrUndefined(task.bittorrent))
+        // 三张表，不是一张：`tellActive` 只含 active，`tellStopped` 只含 complete/error/removed，
+        // **waiting 与 paused 只在 `tellWaiting` 里**（aria2 的 reservedGroups）。
+        // 少了这一路，`statusOfAria2` 的 waiting/paused 分支就是永远走不到的死代码：
+        // aria2 因并发上限排队的任务在队列里一直显示「下载中」，而没有任何路径能纠正它。
+        const [actRes, waitRes, stopRes] = await Promise.all([
+            aria2API<Aria2Status[]>('aria2.tellActive', [PROGRESS_FIELDS]),
+            // 这一路只要 ID 字段：用途是「别把排队任务当成 running / 当成不存在」，不需要速度与进度。
+            // 空表时回包不到 100 字节；失败也只当空表（少一路不影响其余对账）。
+            aria2API<Aria2Status[]>('aria2.tellWaiting', [0, 500, EXTRACT_VIDEO_ID_FIELDS]).catch(() => ({ id: 'waiting', jsonrpc: '2.0', result: [] as Aria2Status[] })),
+            aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, PROGRESS_FIELDS])
+        ])
+        const activeTasks = (actRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent))
+        const queuedTasks = (waitRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent) && (task.status === 'waiting' || task.status === 'paused'))
+        const allTasks = [...activeTasks, ...queuedTasks, ...(stopRes.result ?? [])].filter((task) => isNullOrUndefined(task.bittorrent))
 
         // 队列内去重：同一视频的多条活跃记录只留一条。
         // 用 `tellActive` 的 gid 作判据 —— 「真正在下的那条」应该被保留，
         // 而不是靠 timeStamp 猜（一条 queued 可能比真正在下的 running 更新）。
-        const liveGids = new Set((actRes.result ?? []).map((task) => task.gid))
+        // ⚠️ 只算 active：排队中的副本没在传，把它的 gid 放进 liveGids 会让去重误留一条空转的。
+        const liveGids = new Set(activeTasks.map((task) => task.gid))
         await collapseDuplicateLiveTasks(liveGids)
 
         // 按 videoId 分组（同一视频可能存在多个 gid：重复下载/重建残留）
@@ -341,7 +370,7 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
                 // 而这是 5 分钟一次的对账的唯一职责。
                 const nextStatus = statusOfAria2(winner.status)
                 if (nextStatus === 'complete' && queuedTask.status !== 'complete') await handleDownloadComplete(winner.gid)
-                else if (nextStatus === 'failed' && queuedTask.status !== 'failed') await handleDownloadError(winner.gid)
+                else if (nextStatus === 'failed' && queuedTask.status !== 'failed') await handleDownloadError(winner.gid, false)
                 else await syncLiveState(queuedTask, winner, nextStatus)
                 continue
             }

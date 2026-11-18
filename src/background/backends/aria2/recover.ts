@@ -40,7 +40,7 @@ import type { AnalyzedPath } from '../../../shared/analyzePath'
 import { buildChangeUriParams, canRebuildFromOldUris } from '../../../shared/aria2Recover'
 import type { FullVideoInfo } from '../../../shared/videoInfo'
 import { stringify } from '../../../shared/strings'
-import { aria2API, aria2TellStatus, type Aria2Status } from './client'
+import { aria2API, aria2RemoveResult, aria2TellStatus, type Aria2Status } from './client'
 import { getPageCookie } from '../../iwara/auth'
 import { getDownloadPath, buildDownloadUrl } from '../../download/downloadPath'
 import { aria2AddUriParams } from '../../download/downloaders'
@@ -80,11 +80,9 @@ async function replaceUris(gid: string, status: Aria2Status, oldUris: string[], 
 
 /** 旧任务的结果记录清理（失败不抛出：可能已被别的方式清掉） */
 async function discardResult(gid: string): Promise<void> {
-    try {
-        await aria2API('aria2.removeDownloadResult', [gid])
-    } catch {
-        // 忽略
-    }
+    // 会等结果真正入表再清（见 client.ts 的 aria2RemoveResult）：
+    // 静默失败的清理会留下一条 removed 记录，下轮扫描把它当外部任务收编成 failed。
+    await aria2RemoveResult(gid)
 }
 
 /**

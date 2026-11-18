@@ -30,7 +30,7 @@ import { checkIsHaveDownloadLink } from '../iwara/linkCheck'
 import { notifyWarn } from '../runtime/notify'
 import { db } from '../storage/db'
 import { syncIwaradlAlarm } from '../backends/iwaradl/client'
-import { aria2API, aria2TellStatus } from '../backends/aria2/client'
+import { aria2API, aria2RemoveResult, aria2TellStatus } from '../backends/aria2/client'
 import { syncAria2ProbeAlarm } from '../backends/aria2/tracker'
 import { isLiveAria2Status } from '../../shared/aria2Recover'
 import type { PageType } from '../../shared/pageType'
@@ -370,7 +370,8 @@ async function discardPreviousAria2Task(task: QueueTask): Promise<'proceed' | 'c
             return 'completed'
         }
         if (isLiveAria2Status(status.status)) await aria2API('aria2.remove', [gid]).catch(() => undefined)
-        await aria2API('aria2.removeDownloadResult', [gid]).catch(() => undefined)
+        // 等结果入表再清：清不掉的 removed 记录下轮会被当外部任务收编成 failed
+        await aria2RemoveResult(gid)
     } catch (error) {
         // 清理失败不该阻止重试：最坏情况只是回到旧行为（扫描会兜底处理残留）
         console.warn(`[iwara-assistant] 清理 ${task.videoId} 的上一轮 aria2 任务失败:`, stringify(error))

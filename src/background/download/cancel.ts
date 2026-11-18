@@ -14,7 +14,8 @@
  */
 import { i18n } from '../../shared/i18n'
 import { cancelStrategyOf, type QueueTask } from '../../shared/task'
-import { aria2API, aria2TellStatus, isAria2Configured } from '../backends/aria2/client'
+import { aria2API, aria2RemoveResult, aria2TellStatus, isAria2Configured } from '../backends/aria2/client'
+import { patchTask } from '../storage/queue'
 import { iwaradlDeleteTask, isIwaradlConfigured } from '../backends/iwaradl/client'
 
 export type CancelOutcome = 'cancelled' | 'unsupported'
@@ -27,7 +28,7 @@ export async function cancelTaskDownload(task: QueueTask): Promise<CancelOutcome
             await cancelBrowserDownload(task.kindRef!)
             return 'cancelled'
         case 'aria2-remove':
-            await removeAria2Task(task.kindRef!)
+            await removeAria2Task(task)
             return 'cancelled'
         case 'iwaradl-delete':
             return cancelIwaradlTask(task.kindRef!)
@@ -58,9 +59,17 @@ async function cancelBrowserDownload(kindRef: string): Promise<void> {
  * 5 分钟后的扫描仍能看见它，于是当成外部任务重新收编 —— 用户看到「删了又回来」。
  * 两个调用都容错（任务可能已完成/已被删除），真正的判据是最后那次 `tellStatus`。
  */
-async function removeAria2Task(gid: string): Promise<void> {
+async function removeAria2Task(task: QueueTask): Promise<void> {
+    const gid = task.kindRef
+    if (!gid) return
+    // 先摘掉关联再 remove：remove 会触发事件，此时队列里这条任务已经不该再被当成
+    // 「正在下载」。否则 error 事件会把刚被用户取消的任务当成一次失败，甚至触发一次
+    // 恢复重建——用户点了取消，转头又冒出一条新任务。
+    await patchTask(task.id, { kindRef: undefined }).catch(() => undefined)
     await aria2API('aria2.remove', [gid]).catch(() => undefined)
-    await aria2API('aria2.removeDownloadResult', [gid]).catch(() => undefined)
+    // 等结果真正入表再清（见 aria2RemoveResult）：清不掉会留下一条 removed 记录，
+    // 下一轮扫描把它当外部任务收编，任务面板上就冒出「删了又回来」的失败行。
+    await aria2RemoveResult(gid)
     const status = await aria2TellStatus(gid).catch(() => undefined)
     if (status && (status.status === 'active' || status.status === 'waiting' || status.status === 'paused')) {
         throw new Error(i18n.t('tasks.cancelStillRunning'))
