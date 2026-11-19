@@ -15,7 +15,7 @@
 import { RETRY_BATCH_LIMIT, RETRY_MAX_ATTEMPTS } from '../../shared/constants'
 import { keepAliveWs } from '../backends/aria2/ws'
 import { retryTask } from '../download/dispatch'
-import { getTasks } from '../storage/queue'
+import { getTasks, patchTask } from '../storage/queue'
 import { ARIA2_PROBE_ALARM, probeAria2SlowTasks, scanAria2TasksAndEnqueue } from '../backends/aria2/tracker'
 import { syncIwaradlTasks } from '../backends/iwaradl/tracker'
 import { IWARADL_SCAN_ALARM } from '../backends/iwaradl/client'
@@ -57,8 +57,15 @@ async function retryFailedTasks(): Promise<void> {
         })
         .slice(0, RETRY_BATCH_LIMIT)
     for (const task of candidates) {
-        task.attempts = (task.attempts ?? 0) + 1
-        await retryTask(task)
+        // **先落盘再重试**，而且只在这里记账。理由是两个真事故：
+        // 1. retryTask 在「正在投递 / 已有同源活跃任务 / 正在重试」三处早退，早退时
+        //    内存对象上那个 +1 从来不会写回；而 Chrome MV3 的 SW 每 30 秒可能被回收
+        //    ⇒ attempts 永远停在 0 ⇒ 永久失败（私有视频 / 外部 embed / errorCode 13）
+        //    被每 30 分钟重打一次，永不停止，还长期霸占 RETRY_BATCH_LIMIT 的名额。
+        // 2. dispatch 的失败分支也 +1 过一次，自动重试一轮就记两次 → 上限提前一半用完。
+        const attempts = (task.attempts ?? 0) + 1
+        await patchTask(task.id, { attempts })
+        await retryTask({ ...task, attempts })
     }
     if (candidates.length > 0) console.info(`[iwara-assistant] 自动重试 ${candidates.length} 条失败任务（每轮上限 ${RETRY_BATCH_LIMIT}）`)
 }
