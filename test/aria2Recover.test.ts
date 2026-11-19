@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { ARIA2_STOPPED_PAGE, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
 import { readSource } from './sourceGuard'
@@ -568,4 +568,47 @@ test('接线：停滞判定在恢复链里，且慢速采样只有 probe 一个�
     assert.doesNotMatch(tracker, /tryRecover\(videoId, winner, queuedTask, true\)/, '扫描（5 分钟）也记账会把「连续 2 次」的含义搅成 2 分钟和 10 分钟两种')
     assert.match(tracker, /if \(scanInFlight\) return scanInFlight/, '扫描必须单飞（12 MB 的 tellStopped 不能并发两份）')
     assert.match(tracker, /if \(probeInFlight\) return probeInFlight/, '探测也必须单飞')
+})
+
+// ── P1-1：tellStopped 的增量窗口（每 5 分钟要不要传 12 MB）──────────────────────
+
+test('增量窗口：计数没变就一条都不拉（每轮 12 MB 变 0）', () => {
+    assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: 100, lastTotal: 100, fullSweepDue: false }), { num: 0, restarted: false })
+    assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: 103, lastTotal: 100, fullSweepDue: false }), { num: 11, restarted: false }, '计数涨 3 就只拉 3 + 8 条余量')
+    assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: 5000, lastTotal: 100, fullSweepDue: false }), { num: ARIA2_STOPPED_PAGE, restarted: false }, '暴涨也只拉一页')
+})
+
+test('增量窗口：没有基线 / 计数不可信 / 到点全量，都退回全量', () => {
+    assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: 100, lastTotal: -1, fullSweepDue: false }), { num: ARIA2_STOPPED_PAGE, restarted: false })
+    assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: Number.NaN, lastTotal: 100, fullSweepDue: false }), { num: ARIA2_STOPPED_PAGE, restarted: false })
+    assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: 100, lastTotal: 100, fullSweepDue: true, fullSize: 1000 }), { num: 1000, restarted: false })
+    assert.deepEqual(planStoppedWindow({ sessionChanged: true, currentTotal: 100, lastTotal: 100, fullSweepDue: false, fullSize: 64 }), { num: 64, restarted: true }, 'aria2 重启过：必须全量，且调用方要清空采样')
+})
+
+test('扫描记忆：增量窗口与网络退避都能跨 SW 回收保留（脏值丢弃）', () => {
+    const memory = parseScanMemory({ stoppedTotal: 42, sessionId: 'abc', scanRound: 7, networkBreakerUntil: 123456, networkFailures: { ok: { count: 2, lastAt: 100, nextAt: 200 }, zero: { count: 0, lastAt: 1, nextAt: 2 }, broken: 'x' } })
+    assert.equal(memory.stoppedTotal, 42)
+    assert.equal(memory.sessionId, 'abc')
+    assert.equal(memory.scanRound, 7)
+    assert.equal(memory.networkBreakerUntil, 123456)
+    assert.deepEqual(Object.keys(memory.networkFailures), ['ok'])
+    const blank = parseScanMemory(undefined)
+    assert.equal(blank.stoppedTotal, -1, '没有基线必须能被识别出来')
+    assert.equal(blank.sessionId, '')
+    assert.equal(blank.networkBreakerUntil, 0)
+})
+
+test('接线：扫描先问计数（P1-1）、恢复链区分网络失败、attempts 先落盘', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /planStoppedWindow\(\{/)
+    assert.match(tracker, /window\.num === 0 \? Promise\.resolve/, '计数没变就不许请求 tellStopped')
+    assert.match(tracker, /classifyAria2Failure\(winner\.errorCode, winner\.errorMessage\) === 'network'/, '网络层失败必须与链接过期分开')
+    assert.match(tracker, /scanMemory\.networkBreakerUntil > now/, '熔断期间一个动作都不做')
+    const alarms = readSource('src/background/runtime/alarms.ts')
+    assert.match(alarms, /await patchTask\(task\.id, \{ attempts \}\)/, 'attempts 必须先落盘再重试')
+    assert.doesNotMatch(alarms, /^\s*task\.attempts = /m, '只改内存对象会在 SW 回收后归零')
+    const dispatch = readSource('src/background/download/dispatch.ts')
+    assert.doesNotMatch(dispatch, /task\.attempts = \(task\.attempts \?\? 0\) \+ 1/, '失败分支与自动重试不能各记一次')
+    const downloaders = readSource('src/background/download/downloaders.ts')
+    assert.match(downloaders, /aria2TuningParams\(options, \{ maxConnections: config\.aria2MaxConnections/, '连接数/分段必须显式投递（上游默认单连接）')
 })

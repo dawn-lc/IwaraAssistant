@@ -17,6 +17,7 @@
  * alarm 调度精度、电脑是否休眠、系统时钟是否被调整。次数没有这些假设。
  */
 import { RETRY_MAX_ATTEMPTS } from './constants'
+import type { Aria2NetworkBackoff } from './aria2Network'
 import { uriExpiresAt } from './url'
 
 /** 任务状态的最小结构（`Aria2Status` 结构化兼容，避免 shared 反向依赖 background） */
@@ -431,6 +432,40 @@ export function shouldRestartForStall(status: Pick<Aria2StatusLike, 'status' | '
 }
 
 /**
+ * 本轮 `tellStopped` 要请求多少条（P1-1）。
+ *
+ * 为什么不是「固定拉全量」：实测 1134 条结果的完整回包是 **12,815,311 B / 289 ms**，
+ * 而只问计数（`getGlobalStat`）是 **153 B**。5 分钟一轮 ⇒ 每台机器每天约 3.5 GB 的
+ * 本地回包与 JSON 解析，全花在「有没有新完成的任务」这件事上。
+ *
+ * 为什么不能简单调小：老条目会被漏掉（收编外部任务、判定 gid 是否已被清理都靠它）。
+ * 所以用 aria2 自己的单调计数器做增量，再每 `ARIA2_FULL_SWEEP_ROUNDS` 轮做一次全量兜底。
+ */
+export interface Aria2StoppedWindow {
+    /** 本轮请求条数；0 = 这一轮可以不请求 */
+    num: number
+    /** aria2 重启过：必须全量，且调用方要清空采样（旧 gid 全失效） */
+    restarted: boolean
+}
+
+/** 单次增量拉取的上限（一条约 11 KB，256 条 ≈ 2.8 MB，仍远小于全量） */
+export const ARIA2_STOPPED_PAGE = 256
+/** 每多少轮做一次全量，保证外部任务收编与 gid 清理判定不会饿死（12 轮 ≈ 1 小时） */
+export const ARIA2_FULL_SWEEP_ROUNDS = 12
+
+export function planStoppedWindow(input: { sessionChanged: boolean; currentTotal: number; lastTotal: number; fullSweepDue: boolean; fullSize?: number }): Aria2StoppedWindow {
+    const fullSize = input.fullSize ?? ARIA2_STOPPED_PAGE
+    if (input.sessionChanged) return { num: fullSize, restarted: true }
+    if (input.fullSweepDue) return { num: fullSize, restarted: false }
+    // 计数不可信（aria2 太老 / 回包缺字段 / 还没有基线）⇒ 全量，宁可多传一次
+    if (!Number.isFinite(input.currentTotal) || !Number.isFinite(input.lastTotal) || input.lastTotal < 0) return { num: fullSize, restarted: false }
+    const delta = Math.max(0, input.currentTotal - input.lastTotal)
+    if (delta === 0) return { num: 0, restarted: false }
+    // +8 余量：计数与结果入表之间有一瞬的竞态，宁可多拉几条
+    return { num: Math.min(ARIA2_STOPPED_PAGE, delta + 8), restarted: false }
+}
+
+/**
  * 扫描期间需要跨 SW 回收保留的计数表。
  *
  * ⚠️ 必须持久化：Chrome MV3 的 service worker 空闲约 30 秒就被回收，而扫描是
@@ -442,17 +477,28 @@ export function shouldRestartForStall(status: Pick<Aria2StatusLike, 'status' | '
  * 浏览器退出即清空，不会把上一次会话的陈旧计数带进来（任务早换了）。
  */
 export interface Aria2ScanMemory {
+    // 详见各字段注释（顺序保持与 `emptyScanMemory` 一致，便于人眼对照）
     /** videoId → 累计连续低速采样次数 */
     slowPolls: Record<string, number>
     /** videoId → 连续恢复失败次数（达到 `MAX_RECOVER_ATTEMPTS` 才放弃） */
     recoverAttempts: Record<string, number>
     /** videoId → 停滞采样（见 `nextStallSample`） */
     stallSamples: Record<string, Aria2StallSample>
+    /** videoId → 网络层失败退避（见 `shared/aria2Network.ts`） */
+    networkFailures: Record<string, Aria2NetworkBackoff>
+    /** 上次看到的 `numStoppedTotal`；-1 = 还没有基线（首次必须全量） */
+    stoppedTotal: number
+    /** aria2 会话 id：变了说明 aria2 重启过，旧 gid 与所有采样都失效 */
+    sessionId: string
+    /** 已完成的扫描轮数（决定什么时候做一次全量） */
+    scanRound: number
+    /** 网络熔断的解除时间戳（0 = 未熔断） */
+    networkBreakerUntil: number
 }
 
 /** 空白的扫描记忆 */
 export function emptyScanMemory(): Aria2ScanMemory {
-    return { slowPolls: {}, recoverAttempts: {}, stallSamples: {} }
+    return { slowPolls: {}, recoverAttempts: {}, stallSamples: {}, networkFailures: {}, stoppedTotal: -1, sessionId: '', scanRound: 0, networkBreakerUntil: 0 }
 }
 
 /**
@@ -482,6 +528,21 @@ export function parseScanMemory(raw: unknown): Aria2ScanMemory {
             if (typeof sample.polls !== 'number' || !Number.isFinite(sample.polls) || sample.polls <= 0 || sample.polls > 10_000) continue
             if (typeof sample.at !== 'number' || !Number.isFinite(sample.at) || sample.at <= 0) continue
             result.stallSamples[videoId] = { signature: sample.signature, polls: sample.polls, at: sample.at }
+        }
+    }
+    const source2 = raw as { stoppedTotal?: unknown; sessionId?: unknown; scanRound?: unknown; networkBreakerUntil?: unknown; networkFailures?: unknown }
+    if (typeof source2.stoppedTotal === 'number' && Number.isFinite(source2.stoppedTotal) && source2.stoppedTotal >= 0) result.stoppedTotal = Math.floor(source2.stoppedTotal)
+    if (typeof source2.sessionId === 'string') result.sessionId = source2.sessionId
+    if (typeof source2.scanRound === 'number' && Number.isFinite(source2.scanRound) && source2.scanRound >= 0) result.scanRound = Math.floor(source2.scanRound)
+    if (typeof source2.networkBreakerUntil === 'number' && Number.isFinite(source2.networkBreakerUntil) && source2.networkBreakerUntil > 0) result.networkBreakerUntil = source2.networkBreakerUntil
+    if (source2.networkFailures && typeof source2.networkFailures === 'object') {
+        for (const [videoId, value] of Object.entries(source2.networkFailures as Record<string, unknown>)) {
+            if (!value || typeof value !== 'object') continue
+            const entry = value as { count?: unknown; lastAt?: unknown; nextAt?: unknown }
+            if (typeof entry.count !== 'number' || !Number.isFinite(entry.count) || entry.count <= 0 || entry.count > 10_000) continue
+            if (typeof entry.lastAt !== 'number' || !Number.isFinite(entry.lastAt) || entry.lastAt <= 0) continue
+            if (typeof entry.nextAt !== 'number' || !Number.isFinite(entry.nextAt) || entry.nextAt <= 0) continue
+            result.networkFailures[videoId] = { count: entry.count, lastAt: entry.lastAt, nextAt: entry.nextAt }
         }
     }
     return result
