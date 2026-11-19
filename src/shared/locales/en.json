@@ -222,6 +222,7 @@
         "staleInterrupted": "Download was interrupted (state found after the extension restarted)",
         "staleMissing": "This download is gone from the browser (cancelled or deleted)",
         "staleAria2": "aria2 is not configured, so this task can no longer be tracked",
+        "staleAria2Gone": "This task is no longer in aria2 (results were cleared, or aria2 restarted). Use \"Rebuild\" to deliver it again",
         "staleNeverDelivered": "The extension restarted while dispatching; delivery could not be confirmed"
     },
     "friends": {

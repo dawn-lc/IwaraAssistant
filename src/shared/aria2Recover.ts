@@ -607,3 +607,21 @@ export function isAria2GidMissingError(error: unknown): boolean {
     const message = (error as { message?: unknown }).message
     return typeof message === 'string' && /GID .* is not found/i.test(message)
 }
+
+/**
+ * 一轮扫描最多对多少条「没在 aria2 任何列表里出现」的任务做逐条确认。
+ *
+ * 这些任务通常是残骸：gid 被 aria2 清掉（`tellStopped` 窗口滚出 / 用户清空结果 / aria2 重启），
+ * 而队列里还写着 `running`。不对它们逐条 `tellStatus`，界面上的「下载中」就会永远比
+ * aria2 的真实数量多（实测：界面 115 条 running，aria2 `numActive` 只有 1）。
+ * 限 20 条是为了把这一轮的 RPC 与时长兜住；剩下的下一轮继续。
+ */
+export const ARIA2_UNSEEN_SETTLE_LIMIT = 20
+
+/** 队列里该逐条确认的残骸：活状态 + 已绑定 gid + 本轮三个列表都没出现 */
+export function pickUnseenQueueTasks<T extends { status: string; kind: string; kindRef?: string; createdAt?: number; updatedAt?: number }>(tasks: readonly T[], seenGids: ReadonlySet<string>, limit: number = ARIA2_UNSEEN_SETTLE_LIMIT): T[] {
+    const stale = tasks.filter((task) => (task.status === 'running' || task.status === 'queued') && task.kind === 'aria2' && task.kindRef !== undefined && task.kindRef !== '' && !seenGids.has(task.kindRef))
+    // 老的先处理：新任务可能只是还没进下一份列表（投递与扫描撞车），别急着判它死
+    stale.sort((a, b) => (a.updatedAt ?? a.createdAt ?? 0) - (b.updatedAt ?? b.createdAt ?? 0))
+    return stale.slice(0, Math.max(0, limit))
+}

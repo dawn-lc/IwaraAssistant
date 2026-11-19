@@ -222,6 +222,7 @@
         "staleInterrupted": "下载已中断（扩展重启后核对到的状态）",
         "staleMissing": "浏览器里已找不到这条下载（可能被取消或删除）",
         "staleAria2": "没有配置 aria2，无法再追踪这条任务",
+        "staleAria2Gone": "aria2 里已经找不到这个任务了（可能被清空结果，或 aria2 重启过）。需要的话点「重建」重新投递",
         "staleNeverDelivered": "扩展在投递途中重启，无法确认是否已交出"
     },
     "friends": {

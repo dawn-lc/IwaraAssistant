@@ -28,7 +28,7 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { ARIA2_FULL_SWEEP_ROUNDS, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
+import { ARIA2_FULL_SWEEP_ROUNDS, pickUnseenQueueTasks, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, removeTask, syncTask, collapseDuplicateLiveTasks, collapseDuplicateVideoTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2SessionId, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
@@ -249,6 +249,59 @@ async function handleDownloadError(gid: string, recoverable = true): Promise<voi
     await notifyTask(task)
 }
 
+/**
+ * 把「aria2 里已经没有」的任务从 running 收敛掉。
+ *
+ * 为什么必须有这一步：扫描只会处理**在 aria2 列表里出现**的任务；gid 被清掉的那些
+ * （记录滚出 `tellStopped` 窗口、用户清空结果、aria2 重启）永远不会进任何分组，
+ * 于是队列里一直写着「下载中」。实测一台机器上界面显示 115 条下载中，aria2 的
+ * `numActive` 只有 1——抽查 20 条 gid：6 条 `not found`，其余是 error 13 / error 2 /
+ * error 22 / complete，**没有一条真的在跑**。
+ *
+ * 判据只认 `tellStatus` 的一次回答：
+ * - gid 不存在 ⇒ 如实标失败（`tasks.staleAria2Gone`），用户可以重建或移除；
+ * - complete ⇒ 收敛成完成（进度 1）；
+ * - error / removed ⇒ 走正常分类与恢复链（链接过期重解析、文件冲突先去重）；
+ * - active / waiting / paused ⇒ 下一轮扫描自然会看到它，这一轮不动。
+ *
+ * 每轮最多 20 条（`pickUnseenQueueTasks`）：这些是残骸，不值得为它们把一轮扫描拖长。
+ */
+async function settleUnseenQueueTasks(seenGids: ReadonlySet<string>): Promise<number> {
+    const stale = pickUnseenQueueTasks(getTasks(), seenGids)
+    if (stale.length === 0) return 0
+    let settled = 0
+    for (const task of stale) {
+        const gid = task.kindRef
+        if (gid === undefined || gid === '') continue
+        let status: Aria2Status | undefined
+        try {
+            status = await aria2TellStatus(gid)
+        } catch {
+            // 传输失败：证据不足，下一轮再说（绝不因为查不到就当它死了）
+            continue
+        }
+        if (status === undefined) {
+            await patchTask(task.id, { status: 'failed', detail: i18n.t('tasks.staleAria2Gone') })
+            console.warn(`[iwara-assistant] ${task.videoId} 的 aria2 任务 ${gid} 已经不存在，标记失败`)
+            settled++
+            continue
+        }
+        if (status.status === 'complete') {
+            await patchTask(task.id, { status: 'complete', progress: 1, detail: undefined })
+            settled++
+            continue
+        }
+        if (status.status === 'error' || status.status === 'removed') {
+            // 已中断的链接交给恢复链：过期就重解析，网络失败就退避，文件冲突先判是不是重复投递
+            if (await tryRecover(task.videoId, status, task)) continue
+            await patchTask(task.id, { status: 'failed', detail: status.errorMessage ?? i18n.t('notify.aria2Failed', { detail: status.errorCode ?? i18n.t('notify.aria2UnknownCode') }) })
+            settled++
+        }
+    }
+    if (settled > 0) console.info(`[iwara-assistant] 收敛了 ${settled} 条「aria2 里已不存在」的任务（本轮检查 ${stale.length} 条）`)
+    return settled
+}
+
 /** 下载启动：队列在跑的任务维持 running（对账语义，无 UI 动作） */
 function handleDownloadStart(gid: string): void {
     const task = findTask({ kindRef: gid, kind: 'aria2' })
@@ -369,6 +422,9 @@ async function runAria2Scan(): Promise<Aria2ScanOutcome> {
         scanMemory.scanRound += 1
         if (Number.isFinite(currentTotal) && currentTotal >= 0) scanMemory.stoppedTotal = currentTotal
         if (sessionId !== '') scanMemory.sessionId = sessionId
+        // 这三个列表里没出现过的任务要逐条确认：否则 gid 被清掉的那些会永远停在「下载中」
+        const listedGids = new Set([...(actRes.result ?? []), ...(waitRes.result ?? []), ...(stopRes.result ?? [])].map((item) => item.gid))
+        await settleUnseenQueueTasks(listedGids)
         const activeTasks = (actRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent))
         const queuedTasks = (waitRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent) && (task.status === 'waiting' || task.status === 'paused'))
         const allTasks = [...activeTasks, ...queuedTasks, ...(stopRes.result ?? [])].filter((task) => isNullOrUndefined(task.bittorrent))

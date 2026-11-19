@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { ARIA2_STOPPED_PAGE, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
 import { readSource } from './sourceGuard'
@@ -621,4 +621,36 @@ test('接线：扫描先问计数（P1-1）、恢复链区分网络失败、atte
     assert.doesNotMatch(dispatch, /task\.attempts = \(task\.attempts \?\? 0\) \+ 1/, '失败分支与自动重试不能各记一次')
     const downloaders = readSource('src/background/download/downloaders.ts')
     assert.match(downloaders, /aria2TuningParams\(options, \{ maxConnections: config\.aria2MaxConnections/, '连接数/分段必须显式投递（上游默认单连接）')
+})
+
+// ── 「aria2 里已经没有」的任务要收敛掉（界面「下载中」必须等于 aria2 的真实数量）──
+
+test('残骸筛选：只挑活状态 + 已绑定 gid + 三个列表都没出现的', () => {
+    const tasks = [
+        { id: 'a', status: 'running', kind: 'aria2', kindRef: 'g1', updatedAt: 2 },
+        { id: 'b', status: 'running', kind: 'aria2', kindRef: 'g1', updatedAt: 1 },
+        { id: 'c', status: 'complete', kind: 'aria2', kindRef: 'g2' },
+        { id: 'd', status: 'running', kind: 'browser', kindRef: 'g3' },
+        { id: 'e', status: 'queued', kind: 'aria2' }
+    ]
+    const picked = pickUnseenQueueTasks(tasks, new Set(['g2']))
+    assert.deepEqual(
+        picked.map((item) => item.id),
+        ['b', 'a'],
+        '只留没出现在 aria2 列表里的；旧的先处理'
+    )
+})
+
+test('残骸筛选：每轮有上限，剩下的下一轮继续', () => {
+    const tasks = Array.from({ length: 50 }, (_, index) => ({ id: `t${index}`, status: 'running', kind: 'aria2', kindRef: `g${index}`, updatedAt: index }))
+    assert.equal(pickUnseenQueueTasks(tasks, new Set()).length, ARIA2_UNSEEN_SETTLE_LIMIT)
+    assert.equal(pickUnseenQueueTasks(tasks, new Set(), 3).length, 3)
+})
+
+test('接线：扫描必须对不在三份列表里的任务逐条 tellStatus 收敛', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /await settleUnseenQueueTasks\(listedGids\)/, '不调用这一步，gid 被清掉的任务会永远停在「下载中」（实测界面 115 条 vs aria2 numActive 1）')
+    assert.match(tracker, /pickUnseenQueueTasks\(getTasks\(\), seenGids\)/, '残骸的筛选判据必须在 shared 里（已单测）')
+    assert.match(tracker, /if \(status === undefined\) \{/, '查不到 gid（not found）必须单独处理，不能混进「传输失败」')
+    assert.match(tracker, /i18n\.t\('tasks\.staleAria2Gone'\)/, '如实告诉用户：aria2 里已经没有这条任务')
 })
