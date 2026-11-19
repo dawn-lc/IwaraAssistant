@@ -112,7 +112,7 @@ export async function aria2API<T = unknown>(method: string, params: unknown[]): 
  *
  * aria2 只返回被请求的键，漏一个键就是一条静默失效的判断，所以别再就地手写数组。
  */
-export const ARIA2_STATUS_FIELDS = ['gid', 'status', 'errorCode', 'errorMessage', 'files', 'bittorrent', 'totalLength', 'completedLength', 'downloadSpeed'] as const
+export const ARIA2_STATUS_FIELDS = ['gid', 'status', 'errorCode', 'errorMessage', 'files', 'bittorrent', 'totalLength', 'completedLength', 'downloadSpeed', 'connections'] as const
 
 // ── 活任务索引：投递前先查「同一个视频是不是已经在下了」────────────────
 

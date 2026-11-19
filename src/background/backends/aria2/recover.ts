@@ -150,7 +150,10 @@ export async function restartAria2Task(gid: string, videoId: string, status?: Ar
  * `error` / `removed` 直接 `removeDownloadResult` + `addUri`（`aria2.restart` 不存在，见文件头）；
  * 其余状态先试 `changeUri` + `unpause`，失败才新建。
  */
-export async function rebuildAria2Task(gid: string, videoId: string, status: Aria2Status): Promise<RecoverResult | RecoverBlocked | undefined> {
+export async function rebuildAria2Task(gid: string, videoId: string, status: Aria2Status, options?: { recreate?: boolean }): Promise<RecoverResult | RecoverBlocked | undefined> {
+    // `recreate` = 这个 gid 已经「僵尸 active」（见 shared/aria2Recover 的 isIdleAria2Status）：
+    // `changeUri` 只往 URI 池里塞地址，不会重新驱动引擎，所以必须移除后重新 addUri。
+    const recreate = options?.recreate === true
     const oldUris = uriListOf(status)
     const fresh = await reparse(videoId)
     // 站点已经明确说了「这个视频不可用」：任何一个地址都过不去，别再造 gid
@@ -173,7 +176,7 @@ export async function rebuildAria2Task(gid: string, videoId: string, status: Ari
     //    error 状态**不能**走这条路：`changeUri` 会接受（换地址成功）、`unpause` 对 error 任务
     //    不报错也不改状态，任务会永远停在 error 形成假成功循环。而「restart 拿新 gid」在
     //    aria2 上不存在（见文件头），所以 error 直接落到下面的 addUri。
-    if (status.status !== 'removed' && status.status !== 'error') {
+    if (!recreate && status.status !== 'removed' && status.status !== 'error') {
         try {
             await replaceUris(gid, status, oldUris, urls)
             return { gid, ...(fresh ? { videoInfo: fresh.videoInfo } : {}), uriUpdated: true }
@@ -183,6 +186,10 @@ export async function rebuildAria2Task(gid: string, videoId: string, status: Ari
     }
 
     // ② 兜底：新建任务。参数必须与首次投递同源（`aria2AddUriParams`），否则路径/代理会漂移
+    if (recreate) {
+        await aria2API('aria2.remove', [gid]).catch(() => undefined)
+        await discardResult(gid)
+    }
     try {
         const cookie = await getPageCookie()
         const localPath = fresh ? getDownloadPath(fresh.videoInfo) : pathFromStatus(status, videoId)

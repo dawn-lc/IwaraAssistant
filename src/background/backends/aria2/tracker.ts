@@ -28,7 +28,7 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { ARIA2_FULL_SWEEP_ROUNDS, pickUnseenQueueTasks, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, recoverCooldownRemaining, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
+import { ARIA2_FULL_SWEEP_ROUNDS, pickUnseenQueueTasks, emptyScanMemory, isFileConflictErrorCode, isIdleAria2Status, parseScanMemory, planAria2Group, recoverCooldownRemaining, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, removeTask, syncTask, collapseDuplicateLiveTasks, collapseDuplicateVideoTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2SessionId, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
@@ -941,8 +941,12 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         await failUnrecoverableVideo(videoId, queuedTask, blocked.blocked)
         return true
     }
+    // 「僵尸 active」：状态 active 却 0 连接、0 字节、URI 全停在 waiting。
+    // 这种任务 changeUri 只会往池子里塞地址（引擎不会重新驱动），必须重建一个新 RequestGroup。
+    const idle = isIdleAria2Status(winner)
+    if (idle) console.warn(`[iwara-assistant] ${videoId} 的 aria2 任务空转（active 但 0 连接、URI 未尝试），改为重建`)
     if (needsRebuild) {
-        const rebuilt = await rebuildAria2Task(winner.gid, videoId, winner)
+        const rebuilt = await rebuildAria2Task(winner.gid, videoId, winner, { recreate: idle })
         if (rebuilt && 'blocked' in rebuilt) return await settleBlocked(rebuilt)
         result = rebuilt
     } else {
@@ -950,7 +954,7 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         if (outcome.kind === 'ok') result = outcome.result
         else if (outcome.kind === 'uri-change-failed') {
             console.warn(`[iwara-assistant] ${videoId} 原地恢复失败，降级为重建任务`)
-            const rebuilt = await rebuildAria2Task(winner.gid, videoId, winner)
+            const rebuilt = await rebuildAria2Task(winner.gid, videoId, winner, { recreate: idle })
             if (rebuilt && 'blocked' in rebuilt) return await settleBlocked(rebuilt)
             result = rebuilt
         } else {

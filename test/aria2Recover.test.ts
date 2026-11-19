@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverCooldownRemaining, ARIA2_RECOVER_MIN_INTERVAL_MS, isUnrecoverableParseFailure, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isIdleAria2Status, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverCooldownRemaining, ARIA2_RECOVER_MIN_INTERVAL_MS, isUnrecoverableParseFailure, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
 import { readSource } from './sourceGuard'
@@ -492,7 +492,7 @@ test('接线：文件冲突错误必须在重建之前拦下（否则白跑 8 �
     const source = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
     const guard = source.indexOf('isFileConflictErrorCode(winner.errorCode)')
     assert.ok(guard > 0, 'recoverCore 必须识别文件冲突错误')
-    const rebuild = source.indexOf('await rebuildAria2Task(winner.gid, videoId, winner)', guard)
+    const rebuild = source.indexOf('await rebuildAria2Task(winner.gid, videoId, winner, { recreate: idle })', guard)
     assert.ok(rebuild > guard, '判据必须排在 rebuild 之前')
 })
 
@@ -683,6 +683,32 @@ test('接线：队列说 running、aria2 已报错的行必须收敛', () => {
     assert.match(body, /record\.status === 'error' \|\| record\.status === 'removed'/, '只处理真正结束的记录')
     assert.match(body, /isFileConflictErrorCode\(record\.errorCode\)/, '冲突类要给用户「强制覆盖」入口（打 conflict 标记）')
     assert.match(body, /await tryRecover\(task\.videoId, record, task\)/, '非冲突类仍要走自动恢复，不能一律标失败')
+})
+
+test('僵尸 active：active + 0 连接 + 0 字节 + URI 全 waiting 才成立', () => {
+    const idle = { status: 'active', completedLength: '0', downloadSpeed: '0', connections: '0', files: [{ uris: [{ uri: 'https://x', status: 'waiting' }] }] }
+    assert.equal(isIdleAria2Status(idle), true)
+    assert.equal(isIdleAria2Status({ ...idle, status: 'waiting' }), false, '排队中不是僵尸')
+    assert.equal(isIdleAria2Status({ ...idle, completedLength: '1024' }), false, '下过字节就不算')
+    assert.equal(isIdleAria2Status({ ...idle, downloadSpeed: '4096' }), false)
+    assert.equal(isIdleAria2Status({ ...idle, connections: '2' }), false, '有连接说明真的在跑')
+    assert.equal(isIdleAria2Status({ ...idle, files: [{ uris: [{ uri: 'https://x', status: 'used' }] }] }), false, 'URI 已被尝试过就不是「引擎没动」')
+    assert.equal(isIdleAria2Status({ ...idle, files: [] }), true, 'URI 列表为空同样是空转')
+})
+
+test('接线：僵尸 active 必须重建（changeUri 不会重新驱动引擎）', () => {
+    const recover = readSource('src/background/backends/aria2/recover.ts')
+    assert.match(recover, /const recreate = options\?\.recreate === true/, '要有显式重建开关')
+    assert.match(recover, /if \(!recreate && status\.status !== 'removed' && status\.status !== 'error'\)/, 'recreate 时不能再走 changeUri 那条路')
+    // 收窄到 recreate 块：`aria2.remove` 别处也可能出现，不切片等于永真
+    const recreateStart = recover.indexOf('if (recreate) {')
+    assert.ok(recreateStart > 0, 'recreate 分支必须存在')
+    const recreateBody = recover.slice(recreateStart, recreateStart + 260)
+    assert.match(recreateBody, /aria2\.remove', \[gid\]\)/, '旧 gid 必须先移除，否则新 addUri 会撞同一输出路径（真机：僵尸 active 的 gid 不清掉，重建也起不来）')
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /const idle = isIdleAria2Status\(winner\)/, '判定要基于真实 status')
+    // 两条调用点（直接重建 + 降级重建）都要带 recreate：只带一处 = 另一条路径还在空转
+    assert.equal((tracker.match(/rebuildAria2Task\(winner\.gid, videoId, winner, \{ recreate: idle \}\)/g) ?? []).length, 2, '空转任务必须带 recreate 重建（真机：p5YImxUBVZ6GTE 卡了几小时，URL 本身 206 正常）')
 })
 
 test('自动恢复节流：同一视频两次尝试之间至少隔一分钟', () => {

@@ -27,8 +27,9 @@ export interface Aria2StatusLike {
     totalLength?: string
     completedLength?: string
     downloadSpeed?: string
+    connections?: string
     errorCode?: string
-    files?: Array<{ path?: string; uris?: Array<{ uri: string }> }>
+    files?: Array<{ path?: string; uris?: Array<{ uri: string; status?: string }> }>
 }
 
 // ── 「这个文件已经在系统里了」类错误（重建救不了，别白烧 8 轮）─────────
@@ -87,6 +88,28 @@ export function isFileConflictErrorCode(code: string | number | undefined): bool
     if (code === undefined) return false
     const value = Number(code)
     return value === ARIA2_ERROR_FILE_ALREADY_EXISTS || value === ARIA2_ERROR_DUPLICATE_DOWNLOAD || value === ARIA2_ERROR_LOCAL_FILE_LARGER
+}
+
+/**
+ * aria2 的「僵尸 active」：状态是 active，但一个连接都没有、一个字节都没下、所有 URI 还停留在
+ * `waiting`（即引擎从未真正发起过请求）。
+ *
+ * 真机取证（2026-11-21，`p5YImxUBVZ6GTE` / gid `e4aed50d79232b5e`）：任务卡了几个小时，
+ * `status=active totalLength=0 completedLength=0 connections=0`，`uris[0].status="waiting"`，
+ * 而同一个 URL 从本机 `curl -r 0-0` 直接拿到 `206 Partial Content`——
+ * 链接是好的，是 aria2 那个 RequestGroup 被我们的 `changeUri` 换址动作留在了「空转」状态。
+ *
+ * 对这种任务 `changeUri` 没用（它只往 URI 池里塞地址，不会重新驱动引擎），必须
+ * **移除旧 gid 再 addUri**（见 `rebuildAria2Task` 的 `recreate`）。判定还需要叠加
+ * 停滞采样（连续 2 次），否则「刚创建、正在解析域名」的瞬间也会被误判。
+ */
+export function isIdleAria2Status(status: { status?: string; completedLength?: string; downloadSpeed?: string; connections?: string; files?: Array<{ uris?: Array<{ uri: string; status?: string }> }> }): boolean {
+    if (status.status !== 'active') return false
+    if (Number(status.completedLength ?? 0) > 0) return false
+    if (Number(status.downloadSpeed ?? 0) > 0) return false
+    if (Number(status.connections ?? 0) > 0) return false
+    const uris = status.files?.[0]?.uris ?? []
+    return uris.length === 0 || uris.every((entry) => entry.status === 'waiting')
 }
 
 /** 下载速度过慢阈值（字节/秒，16 KiB/s）——源 `ARIA2_SLOW_SPEED_THRESHOLD` */
