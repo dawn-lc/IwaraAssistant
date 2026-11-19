@@ -37,7 +37,7 @@
  */
 import { analyzePath } from '../../../shared/analyzePath'
 import type { AnalyzedPath } from '../../../shared/analyzePath'
-import { buildChangeUriParams, canRebuildFromOldUris } from '../../../shared/aria2Recover'
+import { buildChangeUriParams, canRebuildFromOldUris, isUnrecoverableParseFailure } from '../../../shared/aria2Recover'
 import type { FullVideoInfo } from '../../../shared/videoInfo'
 import { stringify } from '../../../shared/strings'
 import { aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2TellStatus, type Aria2Status } from './client'
@@ -45,6 +45,14 @@ import { getPageCookie } from '../../iwara/auth'
 import { getDownloadPath, buildDownloadUrl } from '../../download/downloadPath'
 import { aria2AddUriParams } from '../../download/downloaders'
 import { parseVideoFull } from '../../iwara/videoApi'
+
+/**
+ * 恢复被站点语义挡住（视频被删 / 仅好友可见 / 被禁）：调用方应如实标失败并给出下一步，
+ * 而不是继续重建。
+ */
+export interface RecoverBlocked {
+    blocked: string
+}
 
 /** 单次恢复的结果；`gid` 与原来不同时调用方必须更新队列的 `kindRef` */
 export interface RecoverResult {
@@ -89,13 +97,22 @@ async function discardResult(gid: string): Promise<void> {
  * 重新解析视频，拿到最新下载地址。解析失败时返回 `undefined`，
  * 调用方回退用任务现有 URI（源实现同款：**绝不因解析失败而放弃恢复**）。
  */
-async function reparse(videoId: string): Promise<{ videoInfo: FullVideoInfo; url: string } | undefined> {
+export type ReparseOutcome = { videoInfo: FullVideoInfo; url: string } | { blocked: string }
+
+async function reparse(videoId: string): Promise<ReparseOutcome | undefined> {
     try {
         const videoInfo = await parseVideoFull(videoId)
         const url = buildDownloadUrl(videoInfo, getDownloadPath(videoInfo)).href
         return { videoInfo, url }
     } catch (error) {
-        console.warn(`[iwara-assistant] ${videoId} 重新解析失败，回退用现有链接:`, stringify(error))
+        const message = stringify(error)
+        // 「视频没了 / 仅好友可见」不是网络抖动：旧直链重建只会 403，还会在 aria2 里留下一条
+        // 0 B 的 error 记录。把它交给调用方去写一条可行动的失败说明，而不是继续制造残骸。
+        if (isUnrecoverableParseFailure(message)) {
+            console.warn(`[iwara-assistant] ${videoId} 解析结果说明视频不可用（${message}），不再用旧地址重建`)
+            return { blocked: message }
+        }
+        console.warn(`[iwara-assistant] ${videoId} 重新解析失败，回退用现有链接:`, message)
         return undefined
     }
 }
@@ -114,7 +131,7 @@ export type RestartOutcome = { kind: 'ok'; result: RecoverResult } | { kind: 're
 
 export async function restartAria2Task(gid: string, videoId: string, status?: Aria2Status): Promise<RestartOutcome> {
     const fresh = await reparse(videoId)
-    if (!fresh) return { kind: 'reparse-failed' }
+    if (!fresh || 'blocked' in fresh) return { kind: 'reparse-failed' }
     const current = status ?? (await aria2TellStatus(gid))
     if (!current) return { kind: 'uri-change-failed' }
     const oldUris = uriListOf(current)
@@ -133,9 +150,11 @@ export async function restartAria2Task(gid: string, videoId: string, status?: Ar
  * `error` / `removed` 直接 `removeDownloadResult` + `addUri`（`aria2.restart` 不存在，见文件头）；
  * 其余状态先试 `changeUri` + `unpause`，失败才新建。
  */
-export async function rebuildAria2Task(gid: string, videoId: string, status: Aria2Status): Promise<RecoverResult | undefined> {
+export async function rebuildAria2Task(gid: string, videoId: string, status: Aria2Status): Promise<RecoverResult | RecoverBlocked | undefined> {
     const oldUris = uriListOf(status)
     const fresh = await reparse(videoId)
+    // 站点已经明确说了「这个视频不可用」：任何一个地址都过不去，别再造 gid
+    if (fresh && 'blocked' in fresh) return { blocked: fresh.blocked }
     // ⚠️ 没有新地址时**不能**无条件回退用旧地址：只有已死的任务才能这么兜底，
     // 还活着的任务用同一批旧地址重建 = 制造第二个同源任务抢写同一文件 + 丢掉已下字节。
     // 这条门是 2026-10-21 事故的直接修复（87 个正在运行的任务被 addUri 复制）。
@@ -143,7 +162,7 @@ export async function rebuildAria2Task(gid: string, videoId: string, status: Ari
         console.warn(`[iwara-assistant] ${videoId} 重新解析失败且任务仍在 ${status.status}，放弃本轮重建（用旧地址新建只会产生重复任务）`)
         return undefined
     }
-    // 解析失败（此时必然是 error/removed）：回退用任务现有地址，不放弃恢复
+    // 解析失败（此时必然是 error/removed，且不是「视频没了」那类）：回退用任务现有地址，不放弃恢复
     const urls = fresh ? [fresh.url] : oldUris
     if (urls.length === 0) {
         console.warn(`[iwara-assistant] ${videoId} 既无新地址也无旧地址，无法重建`)

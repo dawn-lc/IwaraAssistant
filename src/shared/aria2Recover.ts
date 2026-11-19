@@ -487,6 +487,8 @@ export interface Aria2ScanMemory {
     recoverAttempts: Record<string, number>
     /** videoId → 停滞采样（见 `nextStallSample`） */
     stallSamples: Record<string, Aria2StallSample>
+    /** videoId → 上一次自动恢复的时间戳（见 `recoverCooldownRemaining`） */
+    recoverAt: Record<string, number>
     /** videoId → 网络层失败退避（见 `shared/aria2Network.ts`） */
     networkFailures: Record<string, Aria2NetworkBackoff>
     /** 上次看到的 `numStoppedTotal`；-1 = 还没有基线（首次必须全量） */
@@ -501,7 +503,7 @@ export interface Aria2ScanMemory {
 
 /** 空白的扫描记忆 */
 export function emptyScanMemory(): Aria2ScanMemory {
-    return { slowPolls: {}, recoverAttempts: {}, stallSamples: {}, networkFailures: {}, stoppedTotal: -1, sessionId: '', scanRound: 0, networkBreakerUntil: 0 }
+    return { slowPolls: {}, recoverAttempts: {}, recoverAt: {}, stallSamples: {}, networkFailures: {}, stoppedTotal: -1, sessionId: '', scanRound: 0, networkBreakerUntil: 0 }
 }
 
 /**
@@ -520,6 +522,17 @@ export function parseScanMemory(raw: unknown): Aria2ScanMemory {
         for (const [videoId, value] of Object.entries(table as Record<string, unknown>)) {
             if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 10_000) continue
             result[key][videoId] = value
+        }
+    }
+    // 时间戳不能套用上面「计数 ≤ 10000」的判据（毫秒时间戳必然超出）。只接受「像样的时间戳」：
+    // 早于 2020 年 或 比现在还晚一小时以上的一律丢弃——后者会算出几天的冷却，等于把任务锁死。
+    const recoverAtTable = (raw as { recoverAt?: unknown }).recoverAt
+    if (recoverAtTable && typeof recoverAtTable === 'object') {
+        const now = Date.now()
+        for (const [videoId, value] of Object.entries(recoverAtTable as Record<string, unknown>)) {
+            if (typeof value !== 'number' || !Number.isFinite(value)) continue
+            if (value < 1_600_000_000_000 || value > now + 3_600_000) continue
+            result.recoverAt[videoId] = value
         }
     }
     const stalls = (raw as { stallSamples?: unknown }).stallSamples
@@ -554,6 +567,39 @@ export function parseScanMemory(raw: unknown): Aria2ScanMemory {
 /** 重建/重启次数是否已用尽（源 `nextRebuildAttempt` 的上限判定） */
 export function recoverExhausted(attempts: number): boolean {
     return attempts >= MAX_RECOVER_ATTEMPTS
+}
+
+/**
+ * 同一个视频两次**自动**恢复之间的最小间隔。
+ *
+ * 为什么必须有：WS 的 `onDownloadError` 是事件驱动的——重建出来的新 gid 若在 1 秒内又 403，
+ * 事件立刻再触发一次恢复。真机实测：8 轮上限在 **13 秒**内烧完，每一轮都是「重新解析 +
+ * addUri」→ aria2 的 stopped 列表里留下 8 条同一视频的 `error` 残骸，而 iwara 那边挨了 8 次解析。
+ * 自动恢复是兜底手段，不是重试风暴，因此按分钟级节流；用户手动「重建」走
+ * `resetAria2RecoveryState`，不受这个冷却约束。
+ */
+export const ARIA2_RECOVER_MIN_INTERVAL_MS = 60_000
+
+/**
+ * 解析失败里「再怎么重试都不会好」的那一类。
+ *
+ * 这三条都是**站点语义**层面的结论，不是网络抖动：
+ * - `errors.notFound`：视频被删 / 被作者下架 / 链接失效；
+ * - `errors.privateVideo`：仅作者好友可见（真机日志里 /video 与 API 都只回这一句）；
+ * - `errors.forbidden`：站点直接拒绝。
+ *
+ * 对这类视频用**旧直链**重建（旧实现的做法）只会得到 403：既救不回来，又在 aria2 的
+ * stopped 列表里留下一条 `0 B error`。真机实测：一个私有视频每 40 秒左右重建一次新 gid。
+ */
+export function isUnrecoverableParseFailure(message: string): boolean {
+    return /errors\.(notFound|privateVideo|forbidden)/.test(message)
+}
+
+/** 距允许下一次自动恢复还有多久（0 = 现在就可以） */
+export function recoverCooldownRemaining(lastAt: number | undefined, now: number): number {
+    if (lastAt === undefined || !Number.isFinite(lastAt) || lastAt <= 0) return 0
+    const remaining = lastAt + ARIA2_RECOVER_MIN_INTERVAL_MS - now
+    return remaining > 0 ? remaining : 0
 }
 
 /**

@@ -28,7 +28,7 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { ARIA2_FULL_SWEEP_ROUNDS, pickUnseenQueueTasks, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
+import { ARIA2_FULL_SWEEP_ROUNDS, pickUnseenQueueTasks, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, recoverCooldownRemaining, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, removeTask, syncTask, collapseDuplicateLiveTasks, collapseDuplicateVideoTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2SessionId, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
@@ -37,7 +37,8 @@ import { aria2StoppedQueryLimit } from '../../../shared/aria2Options'
 import { NETWORK_BREAKER_COOLDOWN_MS, classifyAria2Failure, networkBackoffDue, networkBackoffRemaining, nextNetworkBackoff, shouldOpenNetworkBreaker } from '../../../shared/aria2Network'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
-import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverResult } from './recover'
+import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverBlocked, type RecoverResult } from './recover'
+import { describeParseFailure } from '../../download/parseFailure'
 import { notifyInfo, notifyWarn } from '../../runtime/notify'
 
 /**
@@ -787,6 +788,11 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
     const needsRestart = winner.status === 'paused' || (winner.status === 'active' && (shouldRestartForSlowSpeed(winner, slowPolls) || shouldRestartForStall(winner, stallSample)))
     if (!needsRebuild && !needsRestart) return false
 
+    // 自动恢复的整体节流：WS 的错误事件是秒级触发的，重建出来的新 gid 若立刻又 403，
+    // 会在十几秒内把 8 轮上限烧完（真机实测 13 秒 / 8 次），每轮都在 aria2 里留一条 error 残骸。
+    // 冷却期内直接跳过本轮（返回 true = 已处理，别当终态上报）。
+    if (recoverCooldownRemaining(scanMemory.recoverAt[videoId], Date.now()) > 0) return true
+
     // 恢复失败上限：超了就放弃（源弹「继续重试/取消」询问；后台没有页内交互，
     // 改为写 failed + 通知，用户可在任务面板手动重试——重试会清零计数）
     const attempts = scanMemory.recoverAttempts[videoId] ?? 0
@@ -887,14 +893,25 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
     // 重新解析失败时绝不能降级：那会走「用旧地址 addUri」→ 给正在跑的任务再造一个副本，
     // 抢写同一文件并丢掉已下字节（2026-10-21 实测：87 个真实任务被这样复制）。
     let result: RecoverResult | undefined
+    // 记下本次尝试的时间：哪怕下面失败也要等 1 分钟再试，避免 WS 事件把我们拖进重试风暴
+    scanMemory.recoverAt[videoId] = Date.now()
+    /** 站点说这个视频不可用（被删 / 仅好友可见 / 被禁）：如实标失败，别再重建 */
+    const settleBlocked = async (blocked: RecoverBlocked): Promise<true> => {
+        await failUnrecoverableVideo(videoId, queuedTask, blocked.blocked)
+        return true
+    }
     if (needsRebuild) {
-        result = await rebuildAria2Task(winner.gid, videoId, winner)
+        const rebuilt = await rebuildAria2Task(winner.gid, videoId, winner)
+        if (rebuilt && 'blocked' in rebuilt) return await settleBlocked(rebuilt)
+        result = rebuilt
     } else {
         const outcome = await restartAria2Task(winner.gid, videoId, winner)
         if (outcome.kind === 'ok') result = outcome.result
         else if (outcome.kind === 'uri-change-failed') {
             console.warn(`[iwara-assistant] ${videoId} 原地恢复失败，降级为重建任务`)
-            result = await rebuildAria2Task(winner.gid, videoId, winner)
+            const rebuilt = await rebuildAria2Task(winner.gid, videoId, winner)
+            if (rebuilt && 'blocked' in rebuilt) return await settleBlocked(rebuilt)
+            result = rebuilt
         } else {
             // 解析失败 ≠ 恢复失败：不该计入重试上限，否则未登录时 8 轮（约 40 分钟）后
             // 所有慢速任务都会被标成 failed——而它们其实还在慢慢下。
@@ -920,12 +937,45 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
     delete scanMemory.slowPolls[videoId]
     delete scanMemory.stallSamples[videoId]
     delete scanMemory.networkFailures[videoId]
+    // 换 gid 之后，**旧记录要立刻从 aria2 里清掉**：否则每次自动恢复都在 stopped 列表里
+    // 留一条同一视频的 error（真机：13 秒内 5 条），AriaNg 的「已完成 / 已停止」看起来就是
+    // 重复失败任务在堆积。这不是「清别人的历史」——gid 是我们自己刚放弃的那条。
+    if (result.gid !== winner.gid) await aria2RemoveResult(winner.gid)
     // gid 可能变了（error/removed 走 addUri 重建）：不同步到队列，后续通知就全对不上
     if (queuedTask) await patchTask(queuedTask.id, { kindRef: result.gid, status: 'running' })
     else await addTask({ id: crypto.randomUUID(), videoId, kind: 'aria2', status: 'running', kindRef: result.gid })
     notifyInfo('aria2-recovered', i18n.t('notify.aria2Recovered', { id: videoId }), { kind: 'options', tab: 'tasks' })
     console.info(`[iwara-assistant] ${videoId} 已恢复下载 (${winner.status} → gid=${result.gid}，第 ${attempts + 1} 次尝试)`)
     return true
+}
+
+/**
+ * 站点已判定「这个视频不可用」时的收尾：如实标失败 + 给下一步，**不再重建**。
+ *
+ * 为什么单独一条路径：私有视频（`errors.privateVideo`）与被删视频（`errors.notFound`）每次
+ * 重解析都只会得到同一句话，用它反推出的旧直链必然 403。旧实现每轮都重建一次新 gid——
+ * 真机实测：8 轮上限 13 秒烧完、AriaNg 的「已停止」里同一视频堆了 5 条 `0 B error`。
+ * 这里改成一次说清楚：视频没了就说没了，仅好友可见就引导去作者主页加好友（可点，不是死路）。
+ */
+async function failUnrecoverableVideo(videoId: string, queuedTask: QueueTask | undefined, message: string): Promise<void> {
+    delete scanMemory.recoverAttempts[videoId]
+    delete scanMemory.recoverAt[videoId]
+    delete scanMemory.slowPolls[videoId]
+    delete scanMemory.stallSamples[videoId]
+    delete scanMemory.networkFailures[videoId]
+    const outcome = await describeParseFailure(videoId, message)
+    const detail = i18n.t('error.retryParseFailed', { message: outcome.reason })
+    // 旧 gid 的结果记录也一并清掉：它已经是一条注定失败的残骸（清不掉也无所谓，下轮扫描会再清）
+    const oldGid = queuedTask?.kindRef
+    if (oldGid !== undefined && oldGid !== '') await aria2RemoveResult(oldGid)
+    if (queuedTask) {
+        await patchTask(queuedTask.id, { status: 'failed', detail, ...(outcome.followUpUrl === undefined ? {} : { followUpUrl: outcome.followUpUrl, followUpKind: outcome.followUpKind }) })
+        const failed = findTask({ id: queuedTask.id })
+        if (failed) await notifyTask(failed)
+    } else {
+        await addTask({ id: crypto.randomUUID(), videoId, kind: 'aria2', status: 'failed', detail })
+    }
+    console.warn(`[iwara-assistant] ${videoId} 站点判定不可用（${message}），已标失败并给出下一步，不再自动重建`)
 }
 
 /**
@@ -970,6 +1020,7 @@ export async function resetAria2RecoveryState(videoId: string): Promise<void> {
     await loadScanMemory()
     delete scanMemory.networkFailures[videoId]
     delete scanMemory.recoverAttempts[videoId]
+    delete scanMemory.recoverAt[videoId]
     delete scanMemory.slowPolls[videoId]
     delete scanMemory.stallSamples[videoId]
     await saveScanMemory()

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverCooldownRemaining, ARIA2_RECOVER_MIN_INTERVAL_MS, isUnrecoverableParseFailure, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
 import { readSource } from './sourceGuard'
@@ -665,4 +665,51 @@ test('接线：扫描要清掉我们自己的失败记录（stopped 列表不被
     assert.match(body, /task\.status === 'failed'/, '只清队列里已记为 failed 的（已完成的历史要留作去重证据）')
     assert.match(body, /record\.status !== 'error' && record\.status !== 'removed'/, 'complete 一律不删')
     assert.match(body, /aria2RemoveResult\(record\.gid\)/, '清的是本轮 stopped 里那条记录')
+})
+
+test('自动恢复节流：同一视频两次尝试之间至少隔一分钟', () => {
+    const now = 1_000_000_000
+    assert.equal(recoverCooldownRemaining(undefined, now), 0, '没试过就该立刻能试（否则新失败永远不恢复）')
+    assert.equal(recoverCooldownRemaining(0, now), 0)
+    assert.equal(recoverCooldownRemaining(Number.NaN, now), 0, '脏值不能把任务永久锁住')
+    assert.equal(recoverCooldownRemaining(now, now), ARIA2_RECOVER_MIN_INTERVAL_MS)
+    assert.equal(recoverCooldownRemaining(now - 30_000, now), 30_000)
+    assert.equal(recoverCooldownRemaining(now - ARIA2_RECOVER_MIN_INTERVAL_MS, now), 0, '正好到期就该放行')
+    assert.equal(recoverCooldownRemaining(now - 10 * ARIA2_RECOVER_MIN_INTERVAL_MS, now), 0)
+})
+
+test('不可恢复的解析失败：视频没了 / 仅好友可见 / 被禁，其余照旧', () => {
+    assert.equal(isUnrecoverableParseFailure('errors.notFound'), true)
+    assert.equal(isUnrecoverableParseFailure('{"message":"errors.privateVideo"}'), true)
+    assert.equal(isUnrecoverableParseFailure('errors.forbidden'), true)
+    assert.equal(isUnrecoverableParseFailure('TypeError: Failed to fetch'), false, '网络失败必须继续按网络路径退避')
+    assert.equal(isUnrecoverableParseFailure('errors.invalidRequest'), false)
+})
+
+test('接线：站点说视频不可用时，不许再用旧直链重建', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    // 两条调用点都要拦：needsRebuild 直连重建、以及「原地换地址失败后降级重建」
+    assert.equal((tracker.match(/if \(rebuilt && 'blocked' in rebuilt\) return await settleBlocked\(rebuilt\)/g) ?? []).length, 2, '被站点挡住的视频继续重建＝每轮留一条 0 B error（真机：私有视频每 40 秒一条）')
+    assert.match(tracker, /async function failUnrecoverableVideo/, '要如实标失败并给出下一步')
+    assert.match(tracker, /await describeParseFailure\(videoId, message\)/, '私有视频必须给出「去作者主页加好友」的入口，而不是一句 API 报文')
+    const recover = readSource('src/background/backends/aria2/recover.ts')
+    assert.match(recover, /if \(fresh && 'blocked' in fresh\) return \{ blocked: fresh\.blocked \}/, 'rebuild 的入口就要拦住，不能等 addUri 之后才发现')
+})
+
+test('扫描记忆：recoverAt 只收有限正数（脏值不锁死恢复）', () => {
+    const parsed = parseScanMemory({ recoverAt: { ok: 1700000000000, bad: 'x', neg: -5, zero: 0, huge: Number.POSITIVE_INFINITY } })
+    assert.deepEqual(parsed.recoverAt, { ok: 1700000000000 })
+    assert.deepEqual(emptyScanMemory().recoverAt, {})
+})
+
+test('接线：恢复换 gid 必须清掉旧记录，且手动重建不受节流影响', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /recoverCooldownRemaining\(scanMemory\.recoverAt\[videoId\], Date\.now\(\)\)/, '没有冷却闸门，WS 错误事件会在十几秒内烧完 8 轮（真机实测 13 秒 / 8 次）')
+    assert.match(tracker, /scanMemory\.recoverAt\[videoId\] = Date\.now\(\)/, '尝试时间必须记账，否则冷却无从判断')
+    assert.match(tracker, /if \(result\.gid !== winner\.gid\) await aria2RemoveResult\(winner\.gid\)/, '换 gid 不清旧记录：每轮恢复都在 aria2 的 stopped 里留一条 error 残骸')
+    // 收窄到 reset 函数体：手动「重建」必须能把节流一起清掉
+    const start = tracker.indexOf('export async function resetAria2RecoveryState')
+    assert.ok(start > 0)
+    const body = tracker.slice(start, start + 900)
+    assert.match(body, /delete scanMemory\.recoverAt\[videoId\]/, '手动重建不能被自动节流挡住')
 })
