@@ -29,7 +29,7 @@ import { loadQueue, findTask, notifyTask, syncTask, updateBadge, queueReady, col
 import { pageReadySnapshot } from './storage/pageReady'
 import { computeCacheList } from './storage/cacheList'
 import { importLegacyDb, recordLegacyProgress, recordLegacyScan, storeLegacyBatch } from './storage/legacyImport'
-import { clearFinishedTasks, removeTaskById, retryAllFailed, retryTaskById, syncDownloadTasks } from './download/queueActions'
+import { clearFinishedTasks, rebuildTaskById, removeTaskById, retryAllFailed, retryTaskById, syncDownloadTasks } from './download/queueActions'
 import { readBackendStats } from './download/backendStats'
 import { reconcileStaleRunningTasks } from './storage/queueReconcile'
 import { runDownload } from './download/dispatch'
@@ -295,6 +295,8 @@ onMessage<Req>(async (req, sender) => {
             return getCardMeta(req.payload)
         case 'RETRY_TASK':
             return retryTaskById(req.payload.taskId)
+        case 'REBUILD_TASK':
+            return rebuildTaskById(req.payload.taskId)
         case 'REMOVE_TASK':
             return removeTaskById(req.payload.taskId)
         case 'CLEAR_FINISHED':

@@ -850,6 +850,20 @@ function trackSlowObservation(videoId: string, status: Aria2Status, record = tru
 }
 
 /**
+ * 清掉某个视频的**自动**恢复闸门（网络退避 / 熔断 / 恢复次数 / 慢速与停滞采样）。
+ *
+ * 用户手动「重建」时必须先调这个：这些状态都只是自动路径的节流阀。用户已经处理好外部条件
+ * 并明确要求重建，再让他等 30 分钟退避是荒谬的。
+ */
+export async function resetAria2RecoveryState(videoId: string): Promise<void> {
+    await loadScanMemory()
+    delete scanMemory.networkFailures[videoId]
+    delete scanMemory.recoverAttempts[videoId]
+    delete scanMemory.slowPolls[videoId]
+    delete scanMemory.stallSamples[videoId]
+    await saveScanMemory()
+}
+/**
  * 停滞采样记账：把本轮的「进展签名」记进 `scanMemory.stallSamples`，返回最新采样
  * （`undefined` = 已清零，不该再按停滞处理）。判据本身在 `shared/aria2Recover`。
  */

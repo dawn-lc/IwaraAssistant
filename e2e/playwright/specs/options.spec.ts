@@ -702,12 +702,16 @@ test('任务页签：私有视频给「打开作者主页」+「重试」，视�
     await expect(row).toHaveCount(1, { timeout: 10_000 })
 
     const buttons = row.locator('button')
-    await expect(buttons).toHaveCount(3)
+    // 主操作 + 重建 + 次操作 + 移除：`failed` 行一律给「重建」（与失败归因无关，判据 taskRebuildable）
+    await expect(buttons).toHaveCount(4)
     // 文案必须是「打开作者主页」：标成「打开原始地址」等于把用户送到错的地方
     await expect(buttons.nth(0)).toHaveText('打开作者主页')
+    // 重建：处理完网络/好友等外部条件后的明确出口，不能只藏在「重试」里
+    await expect(buttons.nth(1)).toHaveText('重建')
     // 关注只是前置条件，重试必须留在旁边（只给跳转等于把重试入口藏起来）
-    await expect(buttons.nth(1)).toHaveText('重试')
-    await expect(buttons.nth(2)).toHaveText('移除')
+    await expect(buttons.nth(2)).toHaveText('重试')
+    // 契约：操作列最后一个按钮永远是「移除」（其它用例按 button:last-child 点它）
+    await expect(buttons.nth(3)).toHaveText('移除')
 
     // 详情是给人看的文案，不能是 API 原文（旧实现就是一句「重试解析失败: errors.privateVideo」）
     await expect(row).toContainText('私有视频')

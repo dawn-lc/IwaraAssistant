@@ -9,7 +9,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, followUpOpenSettles } from '../src/shared/taskView'
+import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskRebuildable, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, followUpOpenSettles } from '../src/shared/taskView'
+import { readSource } from './sourceGuard'
 import type { QueueTask } from '../src/shared/task'
 
 function task(overrides: Partial<QueueTask> & Pick<QueueTask, 'status'>): QueueTask {
@@ -192,4 +193,50 @@ test('状态文案：每个状态 × 通道都有专属键，不会退化成显�
     assert.equal(taskStatusKey(task({ status: 'running', kind: 'iwaradl' })), 'runningIwaradl')
     assert.equal(taskStatusKey(task({ status: 'queued', kind: 'iwaradl' })), 'queuedIwaradl')
     assert.equal(taskStatusKey(task({ status: 'queued', kind: 'browser' })), 'queued')
+})
+
+// ── 重建入口：每一种失败归因都要有它 ────────────────────────────────────────
+
+function failedTask(detail: string, extra: Partial<QueueTask> = {}): QueueTask {
+    return { id: 't1', videoId: 'abc', kind: 'aria2', status: 'failed', detail, attempts: 3, ...extra }
+}
+
+test('重建按钮：不看失败归因，failed 行一律给', () => {
+    // 这四种正是自动路径会「刻意不动」的：网络被阻断 / 磁盘满 / 文件已存在 / 链接过期
+    assert.equal(taskRebuildable(failedTask('网络连接失败（可能被 DNS 污染/连接重置阻断）')), true)
+    assert.equal(taskRebuildable(failedTask('磁盘空间不足，请处理后手动重试')), true)
+    assert.equal(taskRebuildable(failedTask('目标文件已存在或正被其他任务占用')), true)
+    assert.equal(taskRebuildable(failedTask('aria2 恢复失败（多次重试后仍无法重新获取地址）')), true)
+    assert.equal(taskRebuildable(failedTask('无法识别的错误码 99')), true)
+})
+
+test('重建按钮：私有视频/外部嵌入也要给（加完好友、处理完外部源后还得再来一次）', () => {
+    const privateVideo = failedTask('此视频仅好友可见', { followUpUrl: 'https://www.iwara.tv/profile/someone', followUpKind: 'author' })
+    assert.equal(taskRebuildable(privateVideo), true)
+    assert.equal(taskPrimaryActionOf(privateVideo).kind, 'open', '主操作仍是「去加好友」，重建只是并列的第二个入口')
+})
+
+test('重建按钮：其它状态不给（各有各的正路）', () => {
+    const base: QueueTask = { id: 't2', videoId: 'abc', kind: 'aria2', status: 'running' }
+    assert.equal(taskRebuildable({ ...base, status: 'running' }), false, '运行中重建会造出第二个同源任务')
+    assert.equal(taskRebuildable({ ...base, status: 'queued' }), false)
+    assert.equal(taskRebuildable({ ...base, status: 'skipped' }), false, '跳过的正路是强制下载（重建会被链接检查原样拦回）')
+    assert.equal(taskRebuildable({ ...base, status: 'complete' }), false)
+    assert.equal(taskRebuildable({ ...base, status: 'handed-off' }), false)
+})
+
+test('接线：重建走独立消息且必须先清自动恢复闸门，按钮排在「移除」之前', () => {
+    const queueActions = readSource('src/background/download/queueActions.ts')
+    const rebuildStart = queueActions.indexOf('export async function rebuildTaskById')
+    assert.ok(rebuildStart > 0, '必须存在 rebuildTaskById')
+    const rebuildBody = queueActions.slice(rebuildStart, queueActions.indexOf('/** 单条移除', rebuildStart))
+    assert.match(rebuildBody, /await resetAria2RecoveryState\(task\.videoId\)/, '先清退避/熔断，否则用户点重建也会被挡回去')
+    assert.ok(rebuildBody.indexOf('resetAria2RecoveryState') < rebuildBody.indexOf('retryTask('), '清闸门必须早于重投递')
+    assert.match(rebuildBody, /task\.attempts = 0/, '手动重建要清零自动重试计数')
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /export async function resetAria2RecoveryState/, '清闸门的入口必须由 tracker 提供')
+    assert.match(tracker, /scanMemory\.networkBreakerUntil = 0/, '熔断也要一起解除')
+    const tab = readSource('src/options/tabs/TasksTab.tsx')
+    assert.match(tab, /type: 'REBUILD_TASK'/, '界面必须发独立消息，不能复用 RETRY_TASK')
+    assert.ok(tab.indexOf('rebuildOne(task)') < tab.indexOf('removeOne(task)'), '「移除」永远是操作列最后一个按钮（e2e 契约）')
 })

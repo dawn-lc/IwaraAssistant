@@ -107,6 +107,19 @@ export function taskPrimaryActionOf(task: QueueTask): TaskPrimaryAction {
 }
 
 /**
+ * 这一行是否该给「重建」按钮。
+ *
+ * 判据故意**只看状态、不看失败归因**：网络被阻断、磁盘满、文件已存在、链接过期、未知错误 ——
+ * 每一种都需要「用户处理完外部条件后能立刻再来一次」的入口。按归因隐藏按钮会让用户在最需要它的
+ * 那几种失败上恰好找不到它（自动路径对这几类刻意不救）。
+ *
+ * 只给 `failed`：`skipped` 的正路是「强制下载」（重建会被链接检查原样拦回），`running` 不能重建（会
+ * 造出第二个同源任务），`complete` / `handed-off` 想再来一次用「重试」即可。
+ */
+export function taskRebuildable(task: QueueTask): boolean {
+    return task.status === 'failed'
+}
+/**
  * 次操作。
  *
  * 私有视频必须**同时**给「打开作者主页」和「重试」：加好友只是前置条件（还要对方通过），

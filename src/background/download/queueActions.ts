@@ -17,7 +17,7 @@
 import { i18n } from '../../shared/i18n'
 import { cancelStrategyOf } from '../../shared/task'
 import { syncIwaradlAlarm } from '../backends/iwaradl/client'
-import { syncAria2ProbeAlarm } from '../backends/aria2/tracker'
+import { resetAria2RecoveryState, syncAria2ProbeAlarm } from '../backends/aria2/tracker'
 import { syncIwaradlTasks } from '../backends/iwaradl/tracker'
 import { scanAria2TasksAndEnqueue } from '../backends/aria2/tracker'
 import { isAria2Configured } from '../backends/aria2/client'
@@ -36,6 +36,30 @@ export async function retryTaskById(taskId: string): Promise<unknown> {
     if (task.status === 'skipped') throw new Error(i18n.t('notify.taskSkippedRetry'))
     // 手动重试是用户的明确意图：清零自动重试计数，不让上限拦住
     task.attempts = 0
+    return retryTask(task)
+}
+
+/**
+ * 单条重建（`REBUILD_TASK`）。
+ *
+ * 与 `retryTaskById` 的差别只有两点，但两点都关键：
+ * 1. **先清自动恢复闸门**（网络退避、熔断、恢复次数、慢速/停滞采样）——否则用户处理完网络后点重建，
+ *    仍会被「30 分钟退避」或「熔断中」挡回去，界面看起来就是「点了没反应」；
+ * 2. **对每一种失败归因都成立**：网络、磁盘满、文件冲突这三类自动路径刻意不救，正因如此才更
+ *    需要一个人工出口。
+ *
+ * 实际的重建动作复用 `retryTask`：它会先清掉 aria2 侧旧记录（`discardPreviousAria2Task`）再重新
+ * 解析 + 投递。`continue=true` 保证已下载的分块尽量续传，重建不等于重头下。
+ */
+export async function rebuildTaskById(taskId: string): Promise<unknown> {
+    const task = findTask({ id: taskId })
+    if (!task) throw new Error(i18n.t('notify.taskNotFound'))
+    if (task.status === 'running') throw new Error(i18n.t('notify.taskRunningRetry'))
+    // 跳过任务走 FORCE_DOWNLOAD：重建会重新过链接检查，命中后又变回 skipped
+    if (task.status === 'skipped') throw new Error(i18n.t('notify.taskSkippedRetry'))
+    task.attempts = 0
+    // 先清自动恢复闸门，再重投递：顺序反了等于让用户等退避
+    await resetAria2RecoveryState(task.videoId)
     return retryTask(task)
 }
 

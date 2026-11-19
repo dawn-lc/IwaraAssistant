@@ -28,6 +28,7 @@
  * - `table.tasks tbody tr` 每行一条任务；首列 `td.mono` 是视频 ID
  * - `.pill-<status>` 状态胶囊（`running` / `queued` / `failed` / `complete` / `skipped` / `handed-off`）
  * - 操作列**最后一个按钮永远是「移除」**（其它用例用 `button:last-child` 点它）
+ * - `failed` 行额外有一颗「重建」（判据 `taskRebuildable`，与失败归因无关）
  * - `.queue-filters button` 是分组筛选
  */
 import { useMemo, useState } from 'react'
@@ -35,7 +36,7 @@ import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { QueueTask } from '../../shared/task'
-import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, type TaskGroup } from '../../shared/taskView'
+import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskRebuildable, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, type TaskGroup } from '../../shared/taskView'
 import { send } from '../../messaging/hub'
 import { Section, relativeTime } from '../widgets'
 
@@ -97,7 +98,7 @@ interface ActionMessage {
  * 拼出来的值，批量操作是固定名。之前写 `string | null` 时任何拼写错误都能通过编译，
  * 而按钮文案不依赖这个值，错了也不会有任何可见异常——属于只有类型能挡的一类错。
  */
-type BusyKey = 'clear-finished' | 'retry-failed' | 'sync-download' | `retry-${string}` | `remove-${string}` | `force-${string}` | `open-${string}`
+type BusyKey = 'clear-finished' | 'retry-failed' | 'sync-download' | `retry-${string}` | `rebuild-${string}` | `remove-${string}` | `force-${string}` | `open-${string}`
 
 export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
     const [filter, setFilter] = useState<FilterId>('all')
@@ -173,6 +174,17 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
         )
     }
 
+    /**
+     * 重建：用户处理完网络/磁盘等外部条件后，手动把任务从干净状态拉起来。
+     * 与「重试」的差别在后台：它会先清掉网络退避、熔断与 attempts，再重解析 + 重投递。
+     */
+    const rebuildOne = (task: QueueTask): void => {
+        void run(
+            `rebuild-${task.id}`,
+            () => send<QueueActionResult>({ type: 'REBUILD_TASK', payload: { taskId: task.id } }),
+            () => ({ message: tr('tasks.rebuilt', { id: task.videoId }) })
+        )
+    }
     /**
      * 强制下载：显式绕开「简介里有第三方网盘链接就不下载」那道门。
      *
@@ -377,6 +389,11 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
                                                 <button type="button" className="ghost" disabled={busy !== null || task.status === 'running'} title={task.status === 'running' ? tr('tasks.runningCannotAct') : undefined} onClick={() => runPrimary(task)}>
                                                     {tr(primary.labelKey)}
                                                 </button>
+                                                {taskRebuildable(task) ? (
+                                                    <button type="button" className="ghost" disabled={busy !== null} title={tr('tasks.rebuildHint')} onClick={() => rebuildOne(task)}>
+                                                        {tr('tasks.actionRebuild')}
+                                                    </button>
+                                                ) : null}
                                                 {secondary ? (
                                                     <button type="button" className="ghost" disabled={busy !== null} onClick={() => runSecondary(task)}>
                                                         {tr(secondary.labelKey)}
