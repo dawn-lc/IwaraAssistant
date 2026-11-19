@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isIdleAria2Status, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverCooldownRemaining, ARIA2_RECOVER_MIN_INTERVAL_MS, isUnrecoverableParseFailure, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isAria2EngineAlive, isFileConflictErrorCode, isIdleAria2Status, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverCooldownRemaining, ARIA2_RECOVER_MIN_INTERVAL_MS, isUnrecoverableParseFailure, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
 import { readSource } from './sourceGuard'
@@ -694,6 +694,30 @@ test('僵尸 active：active + 0 连接 + 0 字节 + URI 全 waiting 才成立',
     assert.equal(isIdleAria2Status({ ...idle, connections: '2' }), false, '有连接说明真的在跑')
     assert.equal(isIdleAria2Status({ ...idle, files: [{ uris: [{ uri: 'https://x', status: 'used' }] }] }), false, 'URI 已被尝试过就不是「引擎没动」')
     assert.equal(isIdleAria2Status({ ...idle, files: [] }), true, 'URI 列表为空同样是空转')
+})
+
+test('唤醒判据：totalLength / connections 起来就算引擎动了', () => {
+    assert.equal(isAria2EngineAlive(undefined), false)
+    assert.equal(isAria2EngineAlive({ status: 'active', totalLength: '0', completedLength: '0', connections: '0' }), false)
+    assert.equal(isAria2EngineAlive({ status: 'active', totalLength: '124520936', completedLength: '0', connections: '0' }), true, '真机实测：unpause 后 5 秒内 totalLength 从 0 变成真实长度，不必等出字节')
+    assert.equal(isAria2EngineAlive({ status: 'active', totalLength: '0', connections: '16' }), true)
+    assert.equal(isAria2EngineAlive({ status: 'active', totalLength: '0', completedLength: '1024' }), true)
+    assert.equal(isAria2EngineAlive({ status: 'error', totalLength: '124520936' }), false, '已经报错就不算活')
+})
+
+test('接线：唤醒优先于重建（pause/unpause 保留 gid、控制文件与已下字节）', () => {
+    const recover = readSource('src/background/backends/aria2/recover.ts')
+    const start = recover.indexOf('export async function reviveAria2Task')
+    assert.ok(start > 0, '要有专门的唤醒手段')
+    const body = recover.slice(start, start + 1400)
+    assert.match(body, /aria2\.pause/, 'pause 才会把 RequestGroup 从引擎里摘下来')
+    assert.match(body, /aria2\.unpause/, 'unpause 重新排进引擎 = 重建 DownloadCommand')
+    assert.match(body, /isAria2EngineAlive\(status\)/, '必须观察引擎是否真的动了，不能 unpause 完就当成功')
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    const reviveAt = tracker.indexOf('await reviveAria2Task(winner.gid)')
+    const recreateAt = tracker.indexOf('rebuildAria2Task(winner.gid, videoId, winner, { recreate: idle })')
+    assert.ok(reviveAt > 0 && recreateAt > 0, '两条手段都要在')
+    assert.ok(reviveAt < recreateAt, '先唤醒、后重建：重建会丢 gid 与已下字节，不该是第一步')
 })
 
 test('接线：僵尸 active 必须重建（changeUri 不会重新驱动引擎）', () => {

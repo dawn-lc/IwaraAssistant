@@ -37,7 +37,7 @@
  */
 import { analyzePath } from '../../../shared/analyzePath'
 import type { AnalyzedPath } from '../../../shared/analyzePath'
-import { buildChangeUriParams, canRebuildFromOldUris, isUnrecoverableParseFailure } from '../../../shared/aria2Recover'
+import { buildChangeUriParams, canRebuildFromOldUris, isAria2EngineAlive, isUnrecoverableParseFailure } from '../../../shared/aria2Recover'
 import type { FullVideoInfo } from '../../../shared/videoInfo'
 import { stringify } from '../../../shared/strings'
 import { aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2TellStatus, type Aria2Status } from './client'
@@ -52,6 +52,42 @@ import { parseVideoFull } from '../../iwara/videoApi'
  */
 export interface RecoverBlocked {
     blocked: string
+}
+
+/**
+ * 唤醒手段（比重建轻得多、且保留 gid / .aria2 控制文件 / 已下字节）：`pause` → `unpause`。
+ *
+ * 为什么这条有效：`aria2.pause` 会把 RequestGroup 从下载引擎里摘下来，`unpause` 再把它重新排进去——
+ * 也就是**重建了 DownloadCommand**，而 gid、输出文件、控制文件全都不变。真机实测（3.1.1）：
+ * 卡了几小时的僵尸 active 任务在 unpause 后 5 秒内 `totalLength` 从 0 变成 124 520 936。
+ *
+ * 而 `changeUri` 做不到这一点：它只往 URI 池里塞地址，引擎已经 idle 时没有任何东西会去取那个地址
+ * （实测 4 轮换址、gid 不变、connections 始终 0）。
+ *
+ * 返回引擎是否真的动了（见 `isAria2EngineAlive`）；没动就让调用方升级到重建。
+ */
+export async function reviveAria2Task(gid: string): Promise<boolean> {
+    try {
+        await aria2API('aria2.pause', [gid])
+    } catch (error) {
+        console.warn('[iwara-assistant] pause 唤醒失败:', stringify(error))
+        return false
+    }
+    try {
+        await aria2API('aria2.unpause', [gid])
+    } catch (error) {
+        console.warn('[iwara-assistant] unpause 唤醒失败:', stringify(error))
+        return false
+    }
+    // 观察最多 ~2 秒：看 totalLength / connections 有没有起来（不必等出字节）
+    for (let round = 0; round < 4; round++) {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        const status = await aria2TellStatus(gid).catch(() => undefined)
+        if (status === undefined) return false
+        if (isAria2EngineAlive(status)) return true
+        if (status.status === 'error' || status.status === 'removed') return false
+    }
+    return false
 }
 
 /** 单次恢复的结果；`gid` 与原来不同时调用方必须更新队列的 `kindRef` */

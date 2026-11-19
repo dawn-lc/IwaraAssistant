@@ -384,3 +384,28 @@ AriaNg 的「已完成 / 已停止」= aria2 的 `stopped` 列表 = complete + e
 - **complete 一律保留**：它既是「这个视频下过」的去重证据，也是用户的历史；
 - **别人的任务一条不碰**：只有我们自己 gid 才会出现在队列里；
 - 队列里的失败记录**不删**（那是用户在任务页看到的那条，能重建、能移除）；清的只是 aria2 侧那条日志。
+
+## 15. 重新激活卡住的 aria2 任务：可选手段清单
+
+任务「卡死」至少有三种完全不同的成因，能用的手段也不一样。2026-11-21 在 aria2-next **3.1.1** 上逐条实测过：
+
+| 手段                                                                            | 是否可行      | 代价 / 副作用                                        | 说明                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aria2.pause` → `aria2.unpause`                                                 | ✅ **有效**   | 最小：gid、`.aria2` 控制文件、已下字节全部保留       | `pause` 把 RequestGroup 从下载引擎摘下，`unpause` 重新排进去 = **重建 DownloadCommand**。实测僵尸 active 任务 unpause 后 5 秒内 `totalLength` 从 `0` 变成 `124520936`（URL 被真正请求到） |
+| `aria2.changeUri`                                                               | ❌ 对空转无效 | 保留 gid，但引擎不会动                               | 它只往 URI 池里塞地址；引擎已经 idle 时没有任何东西会去取那个地址。实测 4 轮换址、gid 不变、`connections` 始终 0                                                                          |
+| `aria2.remove` + `aria2.addUri`（＝重建）                                       | ✅ 有效       | 换新 gid、丢已下字节（`continue=true` 时能续上大半） | 唯一能救「引擎彻底毛了」的手段；也是唯一能改投递参数的路径（见 §14 的强制覆盖）                                                                                                           |
+| `aria2.changeOption`                                                            | ❌            | —                                                    | 只改选项（`max-tries` / `retry-wait`），不重启命令                                                                                                                                        |
+| `aria2.changePosition`                                                          | ❌            | —                                                    | 只调整 `waiting` 队列顺序                                                                                                                                                                 |
+| `aria2.forcePause`                                                              | ⚠️ 仅辅助     | 立即中断，之后仍要 `unpause`                         | 比 `pause` 更硬，用于 `pause` 不生效的场合                                                                                                                                                |
+| `aria2.restart`                                                                 | ❌ 不存在     | —                                                    | 3.1.1 的 `system.listMethods` 里**没有**这个方法（上游 1.36 也没有）                                                                                                                      |
+| `aria2.probe` / `aria2.retryMedia` / `aria2.moveDownload` / `aria2.finishMedia` | ⚠️ 仅媒体任务 | —                                                    | aria2-next 3.x 的媒体（HLS/DASH）扩展，对普通 HTTP 任务无效                                                                                                                               |
+| `aria2.purgeDownloadResult`                                                     | ❌ 不适用     | 会清空**所有** ended 记录                            | 那是清 `stopped` 列表，不是救活任务；aria2-next 上也没有 `system.purgeDownloadResult`                                                                                                     |
+
+### 我们的处置顺序
+
+1. **空转（`active` 但 0 连接、0 字节、URI 全 `waiting`）** → 先 `reviveAria2Task`（pause → unpause → 观察 2 秒）——救活了就到此为止，gid 与已下字节都不动；
+2. 唤醒没救活 → `rebuildAria2Task(..., { recreate: true })`：`remove` + `removeDownloadResult` + 新 `addUri`；
+3. **`error` 且属于文件冲突类（11 / 13 / 8）** → 不重建，交给用户点「强制覆盖」（§14）；
+4. **站点说视频不可用（notFound / privateVideo / forbidden）** → 不重试、不重建，如实标失败并给出下一步。
+
+> `changeUri` 仍然保留在「修改过地址的活任务」那一支（`restartAria2Task`）：那是它正确的用法——引擎明明在跑，只是地址过期了。判断依据是 `isIdleAria2Status`，不是「等多久没进度」。

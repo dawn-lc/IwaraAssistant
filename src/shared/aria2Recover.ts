@@ -103,6 +103,21 @@ export function isFileConflictErrorCode(code: string | number | undefined): bool
  * **移除旧 gid 再 addUri**（见 `rebuildAria2Task` 的 `recreate`）。判定还需要叠加
  * 停滞采样（连续 2 次），否则「刚创建、正在解析域名」的瞬间也会被误判。
  */
+/**
+ * 一次 pause→unpause 之后，引擎到底有没有被重新驱动起来。
+ *
+ * 真机实测（aria2-next 3.1.1，僵尸 active 的 `e4aed50d79232b5e`）：`pause` 立刻把它变成 paused，
+ * `unpause` 之后 5 秒内 `totalLength` 从 0 变成 124 520 936（URL 被真正请求到了）。
+ * 所以「引擎动了」的最早信号是 **totalLength > 0 或 connections > 0**——不必等下载出字节。
+ */
+export function isAria2EngineAlive(status: { totalLength?: string; completedLength?: string; connections?: string; status?: string } | undefined): boolean {
+    if (status === undefined) return false
+    if (status.status === 'error' || status.status === 'removed') return false
+    if (Number(status.totalLength ?? 0) > 0) return true
+    if (Number(status.completedLength ?? 0) > 0) return true
+    return Number(status.connections ?? 0) > 0
+}
+
 export function isIdleAria2Status(status: { status?: string; completedLength?: string; downloadSpeed?: string; connections?: string; files?: Array<{ uris?: Array<{ uri: string; status?: string }> }> }): boolean {
     if (status.status !== 'active') return false
     if (Number(status.completedLength ?? 0) > 0) return false

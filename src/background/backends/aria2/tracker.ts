@@ -37,7 +37,7 @@ import { aria2StoppedQueryLimit } from '../../../shared/aria2Options'
 import { NETWORK_BREAKER_COOLDOWN_MS, classifyAria2Failure, networkBackoffDue, networkBackoffRemaining, nextNetworkBackoff, shouldOpenNetworkBreaker } from '../../../shared/aria2Network'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
-import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverBlocked, type RecoverResult } from './recover'
+import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, reviveAria2Task, type RecoverBlocked, type RecoverResult } from './recover'
 import { describeParseFailure } from '../../download/parseFailure'
 import { notifyInfo, notifyWarn } from '../../runtime/notify'
 
@@ -944,7 +944,16 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
     // 「僵尸 active」：状态 active 却 0 连接、0 字节、URI 全停在 waiting。
     // 这种任务 changeUri 只会往池子里塞地址（引擎不会重新驱动），必须重建一个新 RequestGroup。
     const idle = isIdleAria2Status(winner)
-    if (idle) console.warn(`[iwara-assistant] ${videoId} 的 aria2 任务空转（active 但 0 连接、URI 未尝试），改为重建`)
+    // 空转任务先走最轻的唤醒：pause → unpause 会重建 DownloadCommand（gid / 控制文件 / 已下字节都不变），
+    // 比 remove + addUri 便宜得多；只有它也没把引擎叫醒时才升级到重建。
+    if (idle && (await reviveAria2Task(winner.gid))) {
+        console.warn(`[iwara-assistant] ${videoId} 的 aria2 任务空转，已用 pause/unpause 重新驱动`)
+        scanMemory.recoverAttempts[videoId] = attempts + 1
+        delete scanMemory.slowPolls[videoId]
+        delete scanMemory.stallSamples[videoId]
+        if (queuedTask) await patchTask(queuedTask.id, { status: 'running' })
+        return true
+    }
     if (needsRebuild) {
         const rebuilt = await rebuildAria2Task(winner.gid, videoId, winner, { recreate: idle })
         if (rebuilt && 'blocked' in rebuilt) return await settleBlocked(rebuilt)
