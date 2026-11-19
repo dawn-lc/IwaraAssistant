@@ -10,11 +10,12 @@ import { analyzePath, toDownloadFilename } from '../../shared/analyzePath'
 import type { AnalyzedPath } from '../../shared/analyzePath'
 import { ARIA2_TARGET, IWARADL_TARGET, callEndpoint } from '../../shared/endpoint'
 import { parseIwaradlTasks } from '../../shared/iwaradlTask'
-import { SITE_HOST } from '../../shared/site'
+import { SITE_HOST, siteUrl } from '../../shared/site'
 import { i18n } from '../../shared/i18n'
 import { prune, stringify } from '../../shared/strings'
 import type { FullVideoInfo } from '../../shared/videoInfo'
-import { getPageCookie } from '../iwara/auth'
+import { aria2CookieHeader } from '../../shared/cookieHeader'
+import { getLiveCookieHeader } from '../iwara/auth'
 import { getConfig } from '../storage/configStore'
 import { buildDownloadUrl, getDownloadPath } from './downloadPath'
 
@@ -103,7 +104,8 @@ export function aria2AddUriParams(localPath: AnalyzedPath, cookie: string, caps?
         out: localPath.fullName,
         dir: localPath.directory,
         referer: SITE_HOST,
-        header: [`Cookie:${cookie}`]
+        // 空 cookie 时**不给**这个键（`aria2CookieHeader` 返回 undefined，被 prune 丢掉）
+        header: aria2CookieHeader(cookie)
     })
 }
 
@@ -112,7 +114,8 @@ export async function aria2Download(videoInfo: FullVideoInfo, ctx: ChannelContex
     const localPath = getDownloadPath(videoInfo)
     // 执行器统一经 buildDownloadUrl 注入 videoid/download 参数（与 others/browser 一致）
     const downloadUrl = buildDownloadUrl(videoInfo, localPath)
-    const cookie = ctx.cookie ?? (await getPageCookie())
+    // 按**下载地址**现取 cookie：文件在哪个域名上，由浏览器决定该带哪些（含 HttpOnly）
+    const cookie = ctx.cookie ?? (await getLiveCookieHeader(downloadUrl.href))
     const [caps, serverOptions] = await Promise.all([aria2Capabilities(), aria2GlobalOptions()])
     const downloadParams = aria2AddUriParams(localPath, cookie, caps, serverOptions, ctx.forceOverwrite === true)
     // 接管保证：同一个视频在 aria2 里已经有活任务 ⇒ 接管它，**不再** addUri。
@@ -152,7 +155,8 @@ export async function aria2Download(videoInfo: FullVideoInfo, ctx: ChannelContex
 export async function iwaradlDownload(videoInfo: FullVideoInfo, ctx: ChannelContext): Promise<{ taskId: string }> {
     const config = getConfig()
     const localPath = getDownloadPath(videoInfo)
-    const cookie = ctx.cookie ?? (await getPageCookie())
+    // iwaradl 由它自己去请求页面与文件，所以给视频页地址的 cookie 集
+    const cookie = ctx.cookie ?? (await getLiveCookieHeader(siteUrl('/video/' + videoInfo.ID)))
 
     let proxyURL: URL | undefined
     if (config.downloadProxy !== '') {

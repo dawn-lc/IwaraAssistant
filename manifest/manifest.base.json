@@ -15,7 +15,8 @@
         "alarms",
         "contextMenus",
         "notifications",
-        "declarativeNetRequest"
+        "declarativeNetRequest",
+        "cookies"
     ],
     "optional_permissions": [],
     "host_permissions": [

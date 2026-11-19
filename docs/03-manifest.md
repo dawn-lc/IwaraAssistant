@@ -49,7 +49,7 @@ manifest['version'] = await readExtensionVersion(root)
     "description": "%#description#%",
     "icons": { "16": "icons/icon-16.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
 
-    "permissions": ["storage", "downloads", "clipboardWrite", "alarms", "contextMenus", "notifications", "declarativeNetRequest"],
+    "permissions": ["storage", "downloads", "clipboardWrite", "alarms", "contextMenus", "notifications", "declarativeNetRequest", "cookies"],
     "optional_permissions": [],
 
     "host_permissions": ["<all_urls>"],
@@ -113,11 +113,28 @@ manifest['version'] = await readExtensionVersion(root)
 | `notifications`                      | **唯一反馈通道**：成功/失败/入队提示全部走系统通知；批量入队按任务键去重聚合，防通知轰炸。点击通知打开它登记过的页面（登记表存 `storage.session`，因为 `onClicked` 可能在 SW 被回收之后才触发）                                                                                                                                 |
 | `host_permissions: <all_urls>`       | 两处用途：① 后台 fetch 用户自填的 aria2/iwaradl/MediaCenter 端点；② 任意站点判断主机名，做钓鱼仿冒防护。**不是**为了读写任意站点内容（iwara 专属脚本仍只匹配 `*://*.iwara.tv/*`），见下文「全站 host 权限」                                                                                                                     |
 | `declarativeNetRequest`              | 钓鱼防护的**主防线**：给「疑似仿冒」的标签页下一条 session 规则，拦住除顶层导航外的一切请求（img / font / 表单 / beacon / 跨域 iframe / Worker）。不申请 `feedback`（不需要读匹配日志），不带任何静态规则集                                                                                                                     |
-| **不需要** `cookies`                 | `document.cookie`（非 HttpOnly）由 ISOLATED 采集转发                                                                                                                                                                                                                                                                            |
+| `cookies`                            | 投递下载时**现取**站点 cookie jar（含 HttpOnly）拼 `Cookie` 头给 aria2/iwaradl，见下方「cookie：快照兜底、现取优先」。只读不写：代码里没有 `cookies.set/remove`                                                                                                                                                                 |     |
 | **不需要** `tabs`                    | `tabs.create/sendMessage/query` 均无需 `tabs` 权限（仅读取 url/title 等敏感字段需要；本项目不需要）                                                                                                                                                                                                                             |
 | **不需要** `unlimitedStorage`        | 大库走 IndexedDB                                                                                                                                                                                                                                                                                                                |
 | **不需要** `scripting`               | 世界注入全部由静态 `content_scripts` 声明覆盖                                                                                                                                                                                                                                                                                   |
 | **不需要** `debugger` / `webRequest` | 响应体改写走页内注入（见 01 / 05）                                                                                                                                                                                                                                                                                              |
+
+## cookie：快照兜底、现取优先
+
+`cookies` 权限只为读，且只读 iwara 的 cookie（按目标请求 URL 过滤，由浏览器决定这条请求该带哪些）。
+
+**为什么不能只用页面快照**：ISOLATED 上行的是 `document.cookie`，天生看不到 **HttpOnly**——`cf_clearance` 这类会话凭据恰好都是 HttpOnly。真机对照实验（Chromium，本地 echo 服务先写入一个可见 cookie 与一个 HttpOnly cookie）：
+
+```
+页面 document.cookie        -> probe_visible=1
+SW fetch（默认 credentials） -> {"cookie":"probe_visible=1; probe_http=1"}   ← 浏览器自己带，含 HttpOnly
+```
+
+也就是说扩展自己的请求本来就带完整 jar（有 host 权限时）；**只有推给 aria2 的那份是手写的头**，所以要从 `browser.cookies.getAll()` 现取。实测 aria2 收到的旧头长这样：`Cookie:_ga_...; pll_language=en`（只剩分析类 cookie），快照的缺口一目了然。
+
+链路：`getLiveCookieHeader(url)` → `cookies.getAll({ url })` → `buildCookieHeader`（同名取 path 最长那条）→ `header: ['Cookie:...']`；读不到、API 缺失、权限被撤销时**退回** `auth:pageCookie` 快照（宁可退回旧行为，也不要让下载因为拿不到 cookie 直接失败）。空 cookie 时不写这个头。
+
+> 快照链路仍然保留（`INGEST_COOKIE`）：它是老版本升级用户、以及「用户手动撤销 cookies 权限」时的兜底。装了新版后它长期不刷新也不影响投递。
 
 ## 全站 host 权限：一次声明，两处用途
 

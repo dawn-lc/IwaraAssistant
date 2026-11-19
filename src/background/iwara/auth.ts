@@ -7,8 +7,9 @@
  * - Referer 为 fetch 禁改头，SW 里无法设置，省略（服务端不依赖）
  * - X-Site 固化 www.iwara.tv（无 location 上下文）
  */
+import { buildCookieHeader, type CookieLike } from '../../shared/cookieHeader'
 import { apiUrl, SITE_HOST } from '../../shared/site'
-import { isNullOrUndefined, prune } from '../../shared/strings'
+import { isNullOrUndefined, prune, stringify } from '../../shared/strings'
 import { RATING_KEY } from '../../shared/storageKeys'
 import { getXVersion } from './xVersion'
 
@@ -60,6 +61,28 @@ export async function recordPageCookie(payload: { cookie: string; rating?: unkno
 
 export async function getPageCookie(): Promise<string> {
     return ((await browser.storage.local.get(COOKIE_KEY))[COOKIE_KEY] as string | undefined) ?? ''
+}
+
+/**
+ * 投递用的 cookie 头：**现取**浏览器 cookie jar，读不到再退回页面快照。
+ *
+ * 两种来源的差别是实质性的：
+ * - `browser.cookies.getAll()`（需要 manifest 的 `cookies` 权限）能读到 **HttpOnly**；
+ * - ISOLATED 上行的 `document.cookie` 快照天生看不到 HttpOnly，而且只在用户打开/刷新 iwara 页面时更新。
+ *
+ * `url` 传目标请求的真实地址（下载地址在另一个域名上，按 `domain` 过滤会漏也会多），
+ * 由浏览器判断「这条请求该带哪些 cookie」，比我们自己猜域和 path 可靠。
+ * 读不到（API 缺失、权限被撤销、异常）一律退回快照——宁可退回旧行为，也不要让下载因为拿不到 cookie 直接失败。
+ */
+export async function getLiveCookieHeader(url?: string): Promise<string> {
+    try {
+        const cookies = (await browser.cookies.getAll(url === undefined || url === '' ? { domain: SITE_HOST } : { url })) as CookieLike[]
+        const header = buildCookieHeader(cookies)
+        if (header !== '') return header
+    } catch (error) {
+        console.warn('[iwara-assistant] 读取浏览器 cookie 失败，退回页面快照:', stringify(error))
+    }
+    return getPageCookie()
 }
 
 /** JWT payload 解码（原 getPlayload 的 base64url 兼容版） */

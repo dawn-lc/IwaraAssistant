@@ -41,7 +41,7 @@ import { buildChangeUriParams, canRebuildFromOldUris, isAria2EngineAlive, isUnre
 import type { FullVideoInfo } from '../../../shared/videoInfo'
 import { stringify } from '../../../shared/strings'
 import { aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2TellStatus, type Aria2Status } from './client'
-import { getPageCookie } from '../../iwara/auth'
+import { getLiveCookieHeader } from '../../iwara/auth'
 import { getDownloadPath, buildDownloadUrl } from '../../download/downloadPath'
 import { aria2AddUriParams } from '../../download/downloaders'
 import { parseVideoFull } from '../../iwara/videoApi'
@@ -227,7 +227,8 @@ export async function rebuildAria2Task(gid: string, videoId: string, status: Ari
         await discardResult(gid)
     }
     try {
-        const cookie = await getPageCookie()
+        // 重建也要现取：与首次投递同源，否则「重建后仍然 403」会变成一个查不出来的谜
+        const cookie = await getLiveCookieHeader(urls[0])
         const localPath = fresh ? getDownloadPath(fresh.videoInfo) : pathFromStatus(status, videoId)
         const [caps, serverOptions] = await Promise.all([aria2Capabilities(), aria2GlobalOptions()])
         const params = aria2AddUriParams(localPath, cookie, caps, serverOptions)
