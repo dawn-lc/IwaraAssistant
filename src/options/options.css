@@ -998,6 +998,14 @@ code.preview {
     gap: 8px;
 }
 
+.queue-pager {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 10px;
+}
+
 table.tasks {
     width: 100%;
     border-collapse: collapse;

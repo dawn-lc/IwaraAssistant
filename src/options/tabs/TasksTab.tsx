@@ -32,6 +32,7 @@
  * - 失败归因是「目标文件已存在/同路径被占用」时再多一颗「强制覆盖」（判据 `taskForceOverwriteable`）：
  *   普通重建会原样再撞 aria2 的 errorCode 13，只有覆盖参数才会真的去写那个文件
  * - `.queue-filters button` 是分组筛选
+ * - 分页：`.queue-pager` 只在条目多于 `PAGE_SIZE` 时出现，`[data-testid="tasks-prev-page"]` / `[data-testid="tasks-next-page"]` 是翻页按钮；`tbody tr` 只含当前页
  */
 import { useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
@@ -57,6 +58,14 @@ const KIND_LABEL: Record<QueueTask['kind'], string> = {
     iwaradl: 'iwaradl',
     others: 'Others'
 }
+
+/**
+ * 每页渲染的任务条数。
+ *
+ * 不是审美参数：整份列表一次挂到 DOM 的代价随条数线性增长（实测 1200 条一次重渲染
+ * 1.0–1.1 s，且主线程完全阻塞）。50 条足以填满一屏且保住了「滚动就能看完」的体感。
+ */
+const PAGE_SIZE = 50
 
 interface QueueActionResult {
     /** CLEAR_FINISHED 返回的**条数**（与 REMOVE_TASK 的布尔值不同，见 `RemoveResult`） */
@@ -110,6 +119,8 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
     const [confirming, setConfirming] = useState<'clear' | 'retry' | null>(null)
     /** 下载中任务的行内确认：移除会真的取消下载，不能一点就没了 */
     const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null)
+    /** 当前页码（1 基）；筛选或条目数变化后由 `pageNo` 夹到有效范围，不用重复 setState */
+    const [page, setPage] = useState(1)
     const { t: tr } = useTranslation()
     const now = Date.now()
 
@@ -123,6 +134,17 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
         const matcher = FILTERS.find((item) => item.id === filter)?.match ?? (() => true)
         return sortTasks(queue.filter(matcher))
     }, [queue, filter])
+
+    /**
+     * 分页渲染（千条队列的卡顿来源）。
+     *
+     * `visible.map` 一次性把整份列表挂到 DOM 上：1200 条时一次重渲染实测 ~1.1 s，
+     * 「清除已结束」因为要卸载 1200 行更是 ~2 s，期间页面完全不响应——用户说的
+     * 「队列表超过 1000 条时操作卡一小段」就是这个。只渲染当前页后开销与队列长度无关。
+     */
+    const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
+    const pageNo = Math.min(page, pageCount)
+    const pageTasks = visible.slice((pageNo - 1) * PAGE_SIZE, pageNo * PAGE_SIZE)
 
     /**
      * 执行队列操作：统一捕获后台错误并提示（后台是唯一写者）。
@@ -320,7 +342,17 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
                     <div className="queue-toolbar">
                         <div className="queue-filters" role="tablist" aria-label={tr('tasks.filterLabel')}>
                             {FILTERS.map((item) => (
-                                <button key={item.id} type="button" role="tab" aria-selected={filter === item.id} className={filter === item.id ? 'active' : 'ghost'} onClick={() => setFilter(item.id)}>
+                                <button
+                                    key={item.id}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={filter === item.id}
+                                    className={filter === item.id ? 'active' : 'ghost'}
+                                    onClick={() => {
+                                        setFilter(item.id)
+                                        setPage(1)
+                                    }}
+                                >
                                     {tr(item.labelKey)}
                                     <span className="queue-count">{item.id === 'all' ? counts.total : counts[item.id]}</span>
                                 </button>
@@ -365,7 +397,7 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
                                 </tr>
                             </thead>
                             <tbody>
-                                {visible.map((task) => {
+                                {pageTasks.map((task) => {
                                     const group = taskGroupOf(task)
                                     const primary = taskPrimaryActionOf(task)
                                     const secondary = taskSecondaryActionOf(task)
@@ -431,6 +463,18 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
                             </tbody>
                         </table>
                     )}
+
+                    {pageCount > 1 ? (
+                        <div className="queue-pager">
+                            <button type="button" className="ghost" data-testid="tasks-prev-page" disabled={pageNo <= 1} onClick={() => setPage(pageNo - 1)}>
+                                {tr('tasks.prevPage')}
+                            </button>
+                            <span className="note">{tr('tasks.pageInfo', { current: pageNo, total: pageCount, count: visible.length })}</span>
+                            <button type="button" className="ghost" data-testid="tasks-next-page" disabled={pageNo >= pageCount} onClick={() => setPage(pageNo + 1)}>
+                                {tr('tasks.nextPage')}
+                            </button>
+                        </div>
+                    ) : null}
                 </>
             )}
             <div className="perm-row">
