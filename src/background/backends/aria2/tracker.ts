@@ -28,7 +28,7 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2ProgressOf, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
+import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
@@ -263,8 +263,35 @@ async function discardGarbageCopy(task: Aria2Status): Promise<void> {
     await aria2RemoveResult(task.gid)
 }
 
+export interface Aria2ScanOutcome {
+    adopted: number
+    stopped: number
+    rejected: number
+    lost: number
+}
+
+/**
+ * 单飞锁：扫描是 5 分钟一次的定时器，但「保活重连 / 用户手动刷新 / 端点变更」都会
+ * 再叫一次。两次并发扫描会看到同一批任务、各自判「冗余」并各自删一遍结果，
+ * 而在 tellStopped 已经要传 12 MB 的时候再叠一份等于翻倍。
+ *
+ * 后来者**等同一个 Promise**（拿到同一份结果），而不是直接返回 0：调用方
+ * （任务页的刷新）需要真实计数，而不是「刚才那轮我没跑」。
+ */
+let scanInFlight: Promise<Aria2ScanOutcome> | undefined
+
 /** 扫描 aria2 现有任务对账（原 scanAria2TasksAndEnqueue 精简移植） */
-export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; stopped: number; rejected: number; lost: number }> {
+export async function scanAria2TasksAndEnqueue(): Promise<Aria2ScanOutcome> {
+    if (scanInFlight) return scanInFlight
+    scanInFlight = runAria2Scan()
+    try {
+        return await scanInFlight
+    } finally {
+        scanInFlight = undefined
+    }
+}
+
+async function runAria2Scan(): Promise<Aria2ScanOutcome> {
     let adopted = 0
     let stopped = 0
     let rejected = 0
@@ -533,7 +560,20 @@ export async function syncAria2ProbeAlarm(): Promise<void> {
  * 不做择优与停冗余：`tellActive` 只有 active 任务，同 videoId 的 waiting/error 副本
  * 不在这个视图里，判「冗余」会误杀。
  */
+/** 探测的单飞锁：它同样是「定时器 + 保活重连」两处触发 */
+let probeInFlight: Promise<void> | undefined
+
 export async function probeAria2SlowTasks(): Promise<void> {
+    if (probeInFlight) return probeInFlight
+    probeInFlight = runAria2Probe()
+    try {
+        await probeInFlight
+    } finally {
+        probeInFlight = undefined
+    }
+}
+
+async function runAria2Probe(): Promise<void> {
     if (!isAria2Configured()) return
     // 队列里没有活跃任务时直接返回：省掉一次 RPC，也让 alarm 能自行收敛（见 syncAria2ProbeAlarm）
     if (!hasActiveAria2Tasks()) {
@@ -550,7 +590,8 @@ export async function probeAria2SlowTasks(): Promise<void> {
             const queuedTask = findTask({ kindRef: status.gid, kind: 'aria2' }) ?? getTasks().find((item) => item.videoId === videoId && item.kind === 'aria2')
             // 只处理本扩展追踪中的任务：未入队的由 scan 收编后走正常流程
             if (!queuedTask) continue
-            const recovered = await tryRecover(videoId, status, queuedTask)
+            // probe = 唯一记账方（1 分钟采样 → 约 2 分钟判据）
+            const recovered = await tryRecover(videoId, status, queuedTask, true)
             if (recovered) continue
             await syncLiveState(queuedTask, status, 'running')
         }
@@ -577,14 +618,14 @@ export async function probeAria2SlowTasks(): Promise<void> {
  *
  * 返回 `true` 表示「已处理」（调用方跳过本轮其余的终态同步/收编）。
  */
-async function tryRecover(videoId: string, winner: Aria2Status, queuedTask: QueueTask | undefined): Promise<boolean> {
+async function tryRecover(videoId: string, winner: Aria2Status, queuedTask: QueueTask | undefined, recordSlow = false): Promise<boolean> {
     // 并发闸门：轻量探测（1 分钟）与对账扫描（5 分钟）是两条独立定时器，同一时刻
     // 命中同一个任务时，会重复解析 + 重复 changeUri（第二次用已被替换的旧 URI 列表，
     // aria2 只删得掉 0 条，反而把新地址又追加一遍）。已经在处理就当作「本轮已处理」。
     if (recovering.has(videoId)) return true
     recovering.add(videoId)
     try {
-        return await recoverCore(videoId, winner, queuedTask)
+        return await recoverCore(videoId, winner, queuedTask, recordSlow)
     } finally {
         recovering.delete(videoId)
     }
@@ -596,12 +637,17 @@ async function tryRecover(videoId: string, winner: Aria2Status, queuedTask: Queu
  */
 const recovering = new Set<string>()
 
-async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: QueueTask | undefined): Promise<boolean> {
-    // 低速采样记账：本轮 +1（速度恢复/离开 active 时清零），返回值含本轮
-    const slowPolls = trackSlowObservation(videoId, winner)
+async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: QueueTask | undefined, recordSlow: boolean): Promise<boolean> {
+    // 慢速采样**只由 probe（1 分钟）记账**，扫描只读：两条定时器各记一笔会让「连续 2 次」
+    // 随相位漂移（5 分钟的扫描把 10 分钟判据稀释成 2 分钟，且时快时慢，无法解释）。
+    const slowPolls = trackSlowObservation(videoId, winner, recordSlow)
+
+    // 停滞采样：两条定时器都记，但 nextStallSample 拒绝过近的采样，不会重复计数。
+    // 这是 aria2 **不报错**时唯一可用的信号（aria2-next 3.x 的 403 会永远停在 active）。
+    const stallSample = observeStall(videoId, winner)
 
     const needsRebuild = winner.status === 'error' || winner.status === 'removed'
-    const needsRestart = winner.status === 'paused' || (winner.status === 'active' && shouldRestartForSlowSpeed(winner, slowPolls))
+    const needsRestart = winner.status === 'paused' || (winner.status === 'active' && (shouldRestartForSlowSpeed(winner, slowPolls) || shouldRestartForStall(winner, stallSample)))
     if (!needsRebuild && !needsRestart) return false
 
     // 恢复失败上限：超了就放弃（源弹「继续重试/取消」询问；后台没有页内交互，
@@ -610,6 +656,7 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
     if (recoverExhausted(attempts)) {
         delete scanMemory.recoverAttempts[videoId]
         delete scanMemory.slowPolls[videoId]
+        delete scanMemory.stallSamples[videoId]
         if (queuedTask) {
             await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2RecoverFailed', { id: videoId }) })
             const failed = findTask({ id: queuedTask.id })
@@ -632,6 +679,7 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
     if (needsRebuild && isFileConflictErrorCode(winner.errorCode)) {
         delete scanMemory.recoverAttempts[videoId]
         delete scanMemory.slowPolls[videoId]
+        delete scanMemory.stallSamples[videoId]
         console.warn(`[iwara-assistant] ${videoId} 的目标文件已存在或正被其他任务占用（errorCode=${winner.errorCode}），重建无意义，标记失败`)
         if (queuedTask) {
             await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2FileConflict', { id: videoId }) })
@@ -665,6 +713,7 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
             // 所有慢速任务都会被标成 failed——而它们其实还在慢慢下。
             // 清空采样计数 = 下一轮重新累计（相当于 10 分钟冷却），避免每轮都打一次解析请求。
             delete scanMemory.slowPolls[videoId]
+            delete scanMemory.stallSamples[videoId]
             console.warn(`[iwara-assistant] ${videoId} 重新解析失败，本轮跳过恢复（旧地址换旧地址没有意义）`)
             return true
         }
@@ -696,8 +745,12 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
  *
  * 单独一个函数是因为它必须**先于判定**执行（否则第一轮永远拿不到计数），
  * 而判定本身要求计数已累计——两件事写在一起很容易把顺序搅错。
+ *
+ * `record = false` 时**只读不记账**（清零照做）：扫描（5 分钟）与 probe（1 分钟）
+ * 都调 recoverCore，若两边都记，「连续 2 次」就同时代表 2 分钟和 10 分钟。
+ * 记账权归唯一的 probe。
  */
-function trackSlowObservation(videoId: string, status: Aria2Status): number {
+function trackSlowObservation(videoId: string, status: Aria2Status, record = true): number {
     const table = scanMemory.slowPolls
     const speed = Number(status.downloadSpeed)
     if (status.status === 'active' && Number.isFinite(speed) && speed > SLOW_SPEED_THRESHOLD) {
@@ -711,9 +764,21 @@ function trackSlowObservation(videoId: string, status: Aria2Status): number {
         delete table[videoId]
         return 0
     }
+    if (!record) return table[videoId] ?? 0
     const polls = (table[videoId] ?? 0) + 1
     table[videoId] = polls
     return polls
+}
+
+/**
+ * 停滞采样记账：把本轮的「进展签名」记进 `scanMemory.stallSamples`，返回最新采样
+ * （`undefined` = 已清零，不该再按停滞处理）。判据本身在 `shared/aria2Recover`。
+ */
+function observeStall(videoId: string, status: Aria2Status): Aria2StallSample | undefined {
+    const next = nextStallSample(status, scanMemory.stallSamples[videoId])
+    if (next) scanMemory.stallSamples[videoId] = next
+    else delete scanMemory.stallSamples[videoId]
+    return next
 }
 
 /** 启动追踪：注册 WS 通知（实时主路径）+ 首轮扫描对账。boot 幂等（重复调用安全） */

@@ -347,8 +347,9 @@ export function planResidualAdoption(status: string, knownDone: boolean, maxAtte
 /**
  * 连续观察到低速的采样次数达到几次才重启。
  *
- * 2 = 「跨两次扫描」：第一次只记录（单次采样受慢启动、并发抢占影响很大），
- * 第二次仍低速才动手。一次采样 ≈ 5 分钟（`scan-aria2` 周期）。
+ * 2 = 「跨两次采样」：第一次只记录（单次采样受慢启动、并发抢占影响很大），
+ * 第二次仍低速才动手。采样由 1 分钟的 probe 记账（扫描只读不记，见 tracker 的
+ * `trackSlowObservation` 第二个参数），所以是「约 2 分钟」而不是「约 10 分钟」。
  */
 export const MIN_SLOW_POLLS = 2
 
@@ -370,7 +371,67 @@ export function shouldRestartForSlowSpeed(status: Pick<Aria2StatusLike, 'status'
 }
 
 /**
- * 扫描期间需要跨 SW 回收保留的两张计数表。
+ * 停滞判定：`active` 但**字节数一点没动**。
+ *
+ * 与慢速判定的区别不是程度而是性质：慢速是「在动，但太慢」（看速度阈值 + 进度豁免），
+ * 停滞是「完全不动」。所以这里**不看总长、不看进度比例**——媒体任务的 `totalLength`
+ * 恒为 0（实测 aria2-next 3.1.x），进度豁免在它身上恒为 0 < 0.98 而永远"豁免"，
+ * 等于永不恢复；而 aria2-next 3.1.x 的 403 又会永远停在 `active` 不报错，
+ * 这条链路上除了「字节不动」没有任何别的信号可用。
+ *
+ * 判据是「已完成字节没变」而不是「速度是 0」：aria2 在两轮重试之间（`retry-wait=10`）
+ * 速度也是 0，那只是正常的重试间隙。
+ *
+ * 证据必须跨采样：两次观测之间要隔够 `STALL_MIN_SAMPLE_INTERVAL_MS`，
+ * 否则「两秒内两次零进展」什么也证明不了，反而会把刚启动的任务当成卡死。
+ */
+export const STALL_MIN_SAMPLE_INTERVAL_MS = 45_000
+
+/** 连续几次「零进展」才判停滞（配合 1 分钟的 probe：约 2 分钟出手） */
+export const MIN_STALL_POLLS = 2
+
+/** 停滞采样：只记「上次看到多少进展、什么时候、连着几次没动」 */
+export interface Aria2StallSample {
+    /** 采样签名（已完成字节 + 媒体进度），变了就说明还在动 */
+    signature: string
+    polls: number
+    at: number
+}
+
+/** 停滞采样用的签名：媒体任务靠 `media.progress` 兜底，普通任务靠 `completedLength` */
+export function aria2StallSignature(status: Pick<Aria2StatusLike, 'totalLength' | 'completedLength'> & { media?: { progress?: string } }): string {
+    return `${completedBytes(status)}|${aria2ProgressOf(status)}`
+}
+
+/**
+ * 记一次停滞采样。返回 `undefined` 表示「不该再算停滞」（调用方删掉这条记录）。
+ *
+ * - 不在 `active`：排队/暂停/报错时字节不动是常态；
+ * - 速度 > 0：在走；
+ * - 签名变了：有进展，重新数；
+ * - 签名没变但两次采样太近：**不累加**（1 分钟的 probe 与 5 分钟的扫描是两条独立定时器，
+ *   撞在一起时不能让同一时刻各记一笔，否则判据会随定时器相位漂移）。
+ */
+export function nextStallSample(status: Pick<Aria2StatusLike, 'status' | 'totalLength' | 'completedLength' | 'downloadSpeed'> & { media?: { progress?: string } }, previous: Aria2StallSample | undefined, now: number = Date.now(), minIntervalMs: number = STALL_MIN_SAMPLE_INTERVAL_MS): Aria2StallSample | undefined {
+    if (status.status !== 'active') return undefined
+    const speed = Number(status.downloadSpeed)
+    if (Number.isFinite(speed) && speed > 0) return undefined
+    const signature = aria2StallSignature(status)
+    if (!previous || previous.signature !== signature) return { signature, polls: 1, at: now }
+    if (now - previous.at < minIntervalMs) return previous
+    return { signature, polls: previous.polls + 1, at: now }
+}
+
+/** 是否该因「完全停滞」重启：连续 `minPolls` 次采样都没动 */
+export function shouldRestartForStall(status: Pick<Aria2StatusLike, 'status' | 'downloadSpeed'>, sample: Aria2StallSample | undefined, minPolls: number = MIN_STALL_POLLS): boolean {
+    if (status.status !== 'active') return false
+    const speed = Number(status.downloadSpeed)
+    if (Number.isFinite(speed) && speed > 0) return false
+    return sample !== undefined && sample.polls >= minPolls
+}
+
+/**
+ * 扫描期间需要跨 SW 回收保留的计数表。
  *
  * ⚠️ 必须持久化：Chrome MV3 的 service worker 空闲约 30 秒就被回收，而扫描是
  * 5 分钟一次——**每一次扫描都是全新的 SW 实例**。只存模块级 `Map` 的话
@@ -385,11 +446,13 @@ export interface Aria2ScanMemory {
     slowPolls: Record<string, number>
     /** videoId → 连续恢复失败次数（达到 `MAX_RECOVER_ATTEMPTS` 才放弃） */
     recoverAttempts: Record<string, number>
+    /** videoId → 停滞采样（见 `nextStallSample`） */
+    stallSamples: Record<string, Aria2StallSample>
 }
 
 /** 空白的扫描记忆 */
 export function emptyScanMemory(): Aria2ScanMemory {
-    return { slowPolls: {}, recoverAttempts: {} }
+    return { slowPolls: {}, recoverAttempts: {}, stallSamples: {} }
 }
 
 /**
@@ -408,6 +471,17 @@ export function parseScanMemory(raw: unknown): Aria2ScanMemory {
         for (const [videoId, value] of Object.entries(table as Record<string, unknown>)) {
             if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 10_000) continue
             result[key][videoId] = value
+        }
+    }
+    const stalls = (raw as { stallSamples?: unknown }).stallSamples
+    if (stalls && typeof stalls === 'object') {
+        for (const [videoId, value] of Object.entries(stalls as Record<string, unknown>)) {
+            if (!value || typeof value !== 'object') continue
+            const sample = value as { signature?: unknown; polls?: unknown; at?: unknown }
+            if (typeof sample.signature !== 'string') continue
+            if (typeof sample.polls !== 'number' || !Number.isFinite(sample.polls) || sample.polls <= 0 || sample.polls > 10_000) continue
+            if (typeof sample.at !== 'number' || !Number.isFinite(sample.at) || sample.at <= 0) continue
+            result.stallSamples[videoId] = { signature: sample.signature, polls: sample.polls, at: sample.at }
         }
     }
     return result

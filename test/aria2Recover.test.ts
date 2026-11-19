@@ -9,9 +9,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, SLOW_SPEED_THRESHOLD, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, parseScanMemory, planAria2Group, planResidualAdoption, recoverExhausted, shouldRestartForSlowSpeed, taskLatestExpiry } from '../src/shared/aria2Recover'
+import { MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isFileConflictErrorCode, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
+import { readSource } from './sourceGuard'
 
 function active(completed: number, total: number, speed: number) {
     return { status: 'active' as const, totalLength: String(total), completedLength: String(completed), downloadSpeed: String(speed) }
@@ -417,7 +418,8 @@ test('取消路径：先摘掉 kindRef 再 remove（否则 error 事件会把刚
 })
 
 test('扫描必须拉三张表：waiting/paused 只在 tellWaiting 里，漏了就是死分支', () => {
-    const body = trackerBody('scanAria2TasksAndEnqueue')
+    // 真正的对账逻辑在 runAria2Scan（scanAria2TasksAndEnqueue 只是单飞外壳）
+    const body = trackerBody('runAria2Scan')
     assert.match(body, /aria2\.tellActive/, 'active 一路')
     assert.match(body, /aria2\.tellStopped/, 'stopped 一路')
     assert.match(body, /aria2\.tellWaiting/, 'waiting/paused 只在 tellWaiting 里：漏了它，排队中的任务会一直显示「下载中」')
@@ -492,4 +494,78 @@ test('接线：文件冲突错误必须在重建之前拦下（否则白跑 8 �
     assert.ok(guard > 0, 'recoverCore 必须识别文件冲突错误')
     const rebuild = source.indexOf('await rebuildAria2Task(winner.gid, videoId, winner)', guard)
     assert.ok(rebuild > guard, '判据必须排在 rebuild 之前')
+})
+
+// ── 停滞判定：active 但字节完全不动（aria2 不报错时唯一可用的信号）──────────────
+
+function stalled(completed: number, speed = 0) {
+    return { status: 'active' as const, totalLength: '1000', completedLength: String(completed), downloadSpeed: String(speed) }
+}
+
+test('停滞采样：首次只记录，采样过近不重复计数', () => {
+    const first = nextStallSample(stalled(100), undefined, 1_000_000)
+    assert.ok(first)
+    assert.equal(first.polls, 1)
+    const close = nextStallSample(stalled(100), first, 1_000_000 + Math.floor(STALL_MIN_SAMPLE_INTERVAL_MS / 2))
+    assert.equal(close?.polls, 1, '两条定时器撞在一起时不能各记一笔')
+    assert.equal(close?.at, first.at, '不累加时保留原采样时间，判据才不会随相位漂移')
+    const second = nextStallSample(stalled(100), close, 1_000_000 + STALL_MIN_SAMPLE_INTERVAL_MS + 1)
+    assert.equal(second?.polls, 2, '隔够了时间还没动，这才是第二次观测')
+})
+
+test('停滞采样：有进展就重新数，有速度或离开 active 直接清零', () => {
+    const first = nextStallSample(stalled(100), undefined, 1_000_000)
+    const moved = nextStallSample(stalled(200), first, 1_000_000 + STALL_MIN_SAMPLE_INTERVAL_MS + 1)
+    assert.equal(moved?.polls, 1, '字节数变了就是有进展')
+    assert.equal(nextStallSample(stalled(200, 5000), moved, 2_000_000), undefined, '有速度不用管')
+    assert.equal(nextStallSample({ ...stalled(200), status: 'waiting' as const }, moved, 2_000_000), undefined, '排队不算停滞')
+    assert.equal(nextStallSample({ ...stalled(200), status: 'error' as const }, moved, 2_000_000), undefined, '报错交给 rebuild 分支')
+})
+
+test('停滞采样：媒体任务靠 media.progress 算「在动」（totalLength 恒 0 的分支）', () => {
+    const media = (progress: string) => ({ status: 'active' as const, totalLength: '0', completedLength: '0', downloadSpeed: '0', media: { progress } })
+    const first = nextStallSample(media('0.300000'), undefined, 1_000_000)
+    assert.equal(first?.polls, 1)
+    // completedLength 一直是 0，但媒体进度在涨 → 分片还在合并，绝不能判停滞
+    const moving = nextStallSample(media('0.400000'), first, 1_000_000 + STALL_MIN_SAMPLE_INTERVAL_MS + 1)
+    assert.equal(moving?.polls, 1, '媒体进度变了就是有进展')
+    assert.notEqual(moving?.signature, first?.signature)
+    const frozen = nextStallSample(media('0.400000'), moving, 2_000_000)
+    assert.equal(frozen?.polls, 2, '媒体进度也不动了才是真停滞')
+    assert.equal(shouldRestartForStall({ status: 'active' as const, downloadSpeed: '0' }, frozen), true, '媒体任务也必须能判停滞')
+})
+
+test('停滞判定：连续 2 次采样都没动才重启，且只对 active 生效', () => {
+    const one = { signature: '100|0', polls: 1, at: 1 }
+    const enough = { signature: '100|0', polls: MIN_STALL_POLLS, at: 1 }
+    assert.equal(shouldRestartForStall(stalled(100), one), false, '只观测到一次不动手')
+    assert.equal(shouldRestartForStall(stalled(100), enough), true)
+    assert.equal(shouldRestartForStall(stalled(100), undefined), false)
+    assert.equal(shouldRestartForStall(stalled(100, 1024), enough), false, '有速度就走慢速判据，不按停滞处理')
+    assert.equal(shouldRestartForStall({ ...stalled(100), status: 'waiting' as const }, enough), false)
+})
+
+test('扫描记忆：停滞采样能跨 SW 回收保留，脏值一律丢弃', () => {
+    const memory = parseScanMemory({
+        stallSamples: {
+            ok: { signature: '1024|0.5', polls: 2, at: 1_700_000_000_000 },
+            badSignature: { signature: 42, polls: 2, at: 1 },
+            badPolls: { signature: '1|0', polls: 0, at: 1 },
+            badAt: { signature: '1|0', polls: 2, at: 'x' },
+            badShape: 'nope'
+        }
+    })
+    assert.deepEqual(Object.keys(memory.stallSamples), ['ok'])
+    assert.deepEqual(emptyScanMemory().stallSamples, {})
+})
+
+test('接线：停滞判定在恢复链里，且慢速采样只有 probe 一个记账方', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /const stallSample = observeStall\(videoId, winner\)/, '恢复链必须先记停滞采样')
+    assert.match(tracker, /shouldRestartForStall\(winner, stallSample\)/, 'stallSample 必须参与 needsRestart')
+    assert.match(tracker, /trackSlowObservation\(videoId, winner, recordSlow\)/, '扫描与 probe 要区分记账权')
+    assert.match(tracker, /tryRecover\(videoId, status, queuedTask, true\)/, 'probe 是唯一记账方')
+    assert.doesNotMatch(tracker, /tryRecover\(videoId, winner, queuedTask, true\)/, '扫描（5 分钟）也记账会把「连续 2 次」的含义搅成 2 分钟和 10 分钟两种')
+    assert.match(tracker, /if \(scanInFlight\) return scanInFlight/, '扫描必须单飞（12 MB 的 tellStopped 不能并发两份）')
+    assert.match(tracker, /if \(probeInFlight\) return probeInFlight/, '探测也必须单飞')
 })
