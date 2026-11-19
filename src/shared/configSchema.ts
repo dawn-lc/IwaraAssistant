@@ -47,6 +47,15 @@ export const configSchema = z.object({
     downloadProxy: z.string().default(''),
     downloadProxyUsername: z.string().default(''),
     downloadProxyPassword: z.string().default(''),
+    /**
+     * 投递时显式指定的连接数与分段数。
+     *
+     * 为什么必须显式给：上游 aria2 的 `--max-connection-per-server` 默认是 **1**，
+     * 不设就是「每个文件一条连接」。而站点限速无关，这是 aria2 通道慢的主因之一。
+     * 默认 4 是折中：明显比 1 快，又不至于被站点当成滥用。
+     */
+    aria2MaxConnections: z.number().int().min(1).max(16).default(4),
+    aria2Split: z.number().int().min(1).max(16).default(4),
     aria2Path: z.string().default('http://127.0.0.1:6800/jsonrpc'),
     aria2Token: z.string().default(''),
     iwaradlPath: z.string().default('http://127.0.0.1:23456/api/tasks'),

@@ -16,6 +16,8 @@ export interface Aria2GlobalOptions {
     maxTries: number
     /** 秒；> 0 时 aria2 才会重试 502/503 */
     retryWait: number
+    /** aria2 自己的并发上限（队列满判据） */
+    maxConcurrentDownloads: number
     maxConnectionPerServer: number
     split: number
     minSplitSize: number
@@ -33,6 +35,7 @@ export interface Aria2GlobalOptions {
 export const ARIA2_GLOBAL_OPTIONS_DEFAULT: Aria2GlobalOptions = {
     maxTries: 5,
     retryWait: 0,
+    maxConcurrentDownloads: 5,
     maxConnectionPerServer: 1,
     split: 5,
     minSplitSize: 20 * 1024 * 1024,
@@ -63,6 +66,7 @@ export function parseAria2GlobalOptions(raw: Record<string, string> | undefined)
     return {
         maxTries: num(raw['max-tries'], d.maxTries),
         retryWait: num(raw['retry-wait'], d.retryWait),
+        maxConcurrentDownloads: num(raw['max-concurrent-downloads'], d.maxConcurrentDownloads),
         maxConnectionPerServer: num(raw['max-connection-per-server'], d.maxConnectionPerServer),
         split: num(raw.split, d.split),
         minSplitSize: num(raw['min-split-size'], d.minSplitSize),
@@ -108,6 +112,48 @@ export function aria2ProxyParams(url: string, user?: string, passwd?: string): R
     if (typeof user === 'string' && user !== '') params['all-proxy-user'] = user
     if (typeof passwd === 'string' && passwd !== '') params['all-proxy-passwd'] = passwd
     return params
+}
+
+/** 502/503 这类瞬时错误只有 `retry-wait > 0` 时 aria2 才会自己重试（上游默认 0 ⇒ 根本不重试） */
+export const ARIA2_RETRY_WAIT_SECONDS = 5
+
+/** 我们希望的连接/分段数（来自扩展配置，由调用方传入） */
+export interface Aria2TuningDesired {
+    maxConnections: number
+    split: number
+}
+
+/**
+ * 计算要不要给任务补「连接数 / 分段数 / 最小分段 / 重试等待」。
+ *
+ * 三条判据都是**只上不下**：
+ *
+ * 1. 服务端已经配得更高 ⇒ 一个键都不给（用户自己在 aria2.conf 里调过，尊重他）；
+ * 2. 上游默认 `-x=1 / -s=5 / -k=20M` ⇒ 不补就是**单连接**、小于 40 MB 的文件根本不分段。
+ *    这是「aria2 通道为什么感觉不快」的最可能原因，与站点限速无关；
+ * 3. `retry-wait=0`（上游默认）⇒ 502/503 **不重试**，一次网关抖动就升级成我们的「任务失败」。
+ *
+ * 值一律夹在 1..16：再高对单文件下载没有收益，却更容易被站点当成滥用。
+ */
+export function aria2TuningParams(options: Aria2GlobalOptions | undefined, desired: Aria2TuningDesired): Record<string, unknown> {
+    const current = options ?? ARIA2_GLOBAL_OPTIONS_DEFAULT
+    const params: Record<string, unknown> = {}
+    const connections = clampTuning(desired.maxConnections)
+    const splits = clampTuning(desired.split)
+    if (current.maxConnectionPerServer < connections) params['max-connection-per-server'] = String(connections)
+    if (current.split < splits) params.split = String(splits)
+    // 最小分段只在真的要分段时收紧：20 MB 的默认值意味着 < 40 MB 的文件只有一条连接在干活
+    // 只要抬高了连接数或分段数，就顺手把最小分段收紧：默认 20 MB 意味着小于 40 MB 的文件
+    // 即使设了 4 连接也只有一条在干活（aria2 按最小分段切块，切不出来就退回单连接）。
+    const raisedParallelism = params['max-connection-per-server'] !== undefined || params.split !== undefined
+    if (raisedParallelism && current.minSplitSize > 2 * 1024 * 1024) params['min-split-size'] = '1M'
+    if (current.retryWait === 0) params['retry-wait'] = String(ARIA2_RETRY_WAIT_SECONDS)
+    return params
+}
+
+function clampTuning(value: number): number {
+    if (!Number.isFinite(value)) return 1
+    return Math.max(1, Math.min(16, Math.trunc(value)))
 }
 
 /**

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { ARIA2_BOUNDED_MAX_TRIES, ARIA2_GLOBAL_OPTIONS_DEFAULT, aria2ProxyParams, aria2RetryParams, aria2StoppedQueryLimit, parseAria2GlobalOptions, shouldBoundAria2Retries } from '../src/shared/aria2Options'
+import { ARIA2_BOUNDED_MAX_TRIES, ARIA2_GLOBAL_OPTIONS_DEFAULT, aria2ProxyParams, aria2RetryParams, aria2StoppedQueryLimit, aria2TuningParams, parseAria2GlobalOptions, shouldBoundAria2Retries } from '../src/shared/aria2Options'
 import { parseAria2Capabilities } from '../src/shared/aria2Flavor'
 
 // 真机抓下来的 getGlobalOption 片段（本机 aria2-next 3.1.1 与远程上游 1.36.0）
@@ -70,4 +70,16 @@ test('接线：投递参数必须走自适应入口，不许再直接塞配置',
     assert.doesNotMatch(downloaders, /'all-proxy': config\.downloadProxy/, '直接传配置会在没配代理时传空串，静默废掉服务端代理')
     const tracker = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
     assert.match(tracker, /aria2StoppedQueryLimit\(await aria2GlobalOptions\(\)\)/, '结果窗口要按服务端配置取')
+})
+
+test('连接参数：上游默认值下必须显式抬高，用户配得更高则不覆盖', () => {
+    const tuning = aria2TuningParams(parseAria2GlobalOptions({}), { maxConnections: 4, split: 4 })
+    assert.equal(tuning['max-connection-per-server'], '4', '上游默认 -x=1：不补就是单连接')
+    assert.equal(tuning.split, undefined, '上游 split 默认 5 ≥ 4，不需要覆盖（只上不下）')
+    assert.equal(tuning['min-split-size'], '1M', '默认 20M 时小于 40M 的文件即使设了 4 连接也只有一条在干活')
+    assert.equal(tuning['retry-wait'], '5', 'retry-wait=0 时 502/503 不会被重试')
+    const tuned = parseAria2GlobalOptions({ 'max-connection-per-server': '16', split: '16', 'min-split-size': '1048576', 'retry-wait': '10' })
+    assert.deepEqual(aria2TuningParams(tuned, { maxConnections: 4, split: 4 }), {}, '用户自己在 conf 里配得更高就尊重他')
+    // 越界夹回 1..16；split 想设 1（= 不分段）时服务端本来就有 5，不需要也没理由覆盖
+    assert.deepEqual(aria2TuningParams(undefined, { maxConnections: 99, split: 0 }), { 'max-connection-per-server': '16', 'min-split-size': '1M', 'retry-wait': '5' })
 })

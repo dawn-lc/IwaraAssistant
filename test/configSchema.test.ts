@@ -73,3 +73,11 @@ test('保持后台活跃默认关闭（Chrome 也没有官方常驻能力）', (
     assert.equal(DEFAULT_CONFIG.keepBackgroundAlive, false)
     assert.equal(configSchema.parse({ keepBackgroundAlive: true }).keepBackgroundAlive, true)
 })
+
+test('aria2 连接参数：默认 4/4，越界直接判非法', () => {
+    assert.equal(DEFAULT_CONFIG.aria2MaxConnections, 4)
+    assert.equal(DEFAULT_CONFIG.aria2Split, 4)
+    assert.equal(configSchema.safeParse({ ...DEFAULT_CONFIG, aria2MaxConnections: 0 }).success, false)
+    assert.equal(configSchema.safeParse({ ...DEFAULT_CONFIG, aria2Split: 17 }).success, false)
+    assert.equal(configSchema.safeParse({ ...DEFAULT_CONFIG, aria2MaxConnections: 16 }).success, true)
+})

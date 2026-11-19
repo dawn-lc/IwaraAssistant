@@ -75,6 +75,15 @@ export function DownloadTab({ config }: { config: Config }): ReactElement {
                 </Row>
             </Section>
 
+            <Section title={t('download.aria2TuningTitle')} note={t('download.aria2TuningNote')}>
+                <Row label={t('download.aria2MaxConnections')} hint={t('download.aria2MaxConnectionsHint')}>
+                    <NumberField value={config.aria2MaxConnections} min={1} max={16} onChange={(next) => save({ aria2MaxConnections: next })} />
+                </Row>
+                <Row label={t('download.aria2Split')} hint={t('download.aria2SplitHint')}>
+                    <NumberField value={config.aria2Split} min={1} max={16} onChange={(next) => save({ aria2Split: next })} />
+                </Row>
+            </Section>
+
             <Section title={t('download.pathTitle')} note={t('download.pathNote')}>
                 <Row label={t('download.template')} stack hint={t('download.templateHint')}>
                     <TextField value={config.downloadPath} onChange={(next) => save({ downloadPath: next })} mono placeholder="/Iwara/%#AUTHOR#%/%#TITLE#%[%#ID#%].mp4" />

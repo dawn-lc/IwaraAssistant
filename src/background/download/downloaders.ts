@@ -61,7 +61,7 @@ export async function browserDownload(videoInfo: FullVideoInfo, ctx: ChannelCont
 
 import { aria2API, aria2Capabilities, aria2GlobalOptions } from '../backends/aria2/client'
 import type { Aria2Capabilities } from '../../shared/aria2Flavor'
-import { aria2ProxyParams, aria2RetryParams, type Aria2GlobalOptions } from '../../shared/aria2Options'
+import { aria2ProxyParams, aria2RetryParams, aria2TuningParams, type Aria2GlobalOptions } from '../../shared/aria2Options'
 
 interface Aria2TaskRef {
     gid: string
@@ -85,6 +85,8 @@ export function aria2AddUriParams(localPath: AnalyzedPath, cookie: string, caps?
         // 扩展里没配代理时**一个键都不给**：传空串会覆盖成「不走代理」，
         // 把 aria2.conf 里配好的代理静默废掉（真机实测过这个语义）。
         ...aria2ProxyParams(config.downloadProxy, config.downloadProxyUsername, config.downloadProxyPassword),
+        // 连接数/分段/重试等待：只在服务端配置更低时才补（判据见 shared/aria2Options）
+        ...aria2TuningParams(options, { maxConnections: config.aria2MaxConnections, split: config.aria2Split }),
         out: localPath.fullName,
         dir: localPath.directory,
         referer: SITE_HOST,
