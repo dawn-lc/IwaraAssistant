@@ -114,6 +114,39 @@ export async function aria2API<T = unknown>(method: string, params: unknown[]): 
  */
 export const ARIA2_STATUS_FIELDS = ['gid', 'status', 'errorCode', 'errorMessage', 'files', 'bittorrent', 'totalLength', 'completedLength', 'downloadSpeed'] as const
 
+// ── 活任务索引：投递前先查「同一个视频是不是已经在下了」────────────────
+
+/** 索引的存活时间：批量投递同一批文件时只需一次查询，又要足够短以免挡住刚完成的任务 */
+const LIVE_GID_TTL_MS = 5_000
+
+let liveGidCache: { at: number; map: Map<string, string> } | undefined
+
+/**
+ * aria2 里**正在跑**的任务索引（videoId → gid），5 秒缓存。
+ *
+ * 投递前必须查一次：同一视频如果还有活着的 gid（用户清过队列、上一轮记录丢了、两个入口
+ * 并发投递），再 `addUri` 就会撞 `belongs to another download`（errorCode 13），
+ * 用户看到的是「目标文件已存在，请先确认是否已下好」这种看不懂的假失败。
+ * 已有活 gid 就**接管它**——这正是「自己创建的任务不许重复」的落地点。
+ */
+export async function aria2LiveGidMap(): Promise<Map<string, string>> {
+    if (liveGidCache !== undefined && Date.now() - liveGidCache.at < LIVE_GID_TTL_MS) return liveGidCache.map
+    const map = new Map<string, string>()
+    const [active, waiting] = await Promise.all([aria2API<Aria2Status[]>('aria2.tellActive', [EXTRACT_VIDEO_ID_FIELDS]).catch(() => undefined), aria2API<Aria2Status[]>('aria2.tellWaiting', [0, 500, EXTRACT_VIDEO_ID_FIELDS]).catch(() => undefined)])
+    for (const task of [...(active?.result ?? []), ...(waiting?.result ?? [])]) {
+        // 种子任务（bittorrent）不属于任何视频，别拿它的 gid 去接管
+        if (!isNullOrUndefined(task.bittorrent)) continue
+        const videoId = extractVideoIdFromTask(task)
+        if (videoId !== undefined && videoId !== '' && !map.has(videoId)) map.set(videoId, task.gid)
+    }
+    liveGidCache = { at: Date.now(), map }
+    return map
+}
+
+/** 投递成功后把 gid 记进索引：同批后续投递立刻看得见，不必等缓存过期 */
+export function rememberAria2LiveGid(videoId: string, gid: string): void {
+    if (liveGidCache !== undefined && Date.now() - liveGidCache.at < LIVE_GID_TTL_MS) liveGidCache.map.set(videoId, gid)
+}
 /** aria2 任务状态（原 aria2.tellStatus 封装） */
 export async function aria2TellStatus(gid: string): Promise<Aria2Status | undefined> {
     const res = await aria2API<Aria2Status>('aria2.tellStatus', [gid, [...ARIA2_STATUS_FIELDS]])

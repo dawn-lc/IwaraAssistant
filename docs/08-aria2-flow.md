@@ -291,3 +291,24 @@ aria2 有两条完全不同的「卡住」，判据分开，不能混。
 | 拿不到 `numStoppedTotal`（老版本） | 保守退回每轮全量                                             |
 
 判据是纯函数 `planStoppedWindow`（`shared/aria2Recover.ts`），五个分支都有单测；`scanMemory` 多了 `stoppedTotal` / `sessionId` / `scanRound` 三个字段，随扫描记忆一起持久化在 `storage.session`。
+
+## 12. 去重与接管：同一视频只许一条任务
+
+**真机取证（2026-11-20，一台跑了几个月的机器）**：1218 条 `stopped` 记录里有 **87 组同 videoId 的重复 gid**。典型形态是「一条 `complete` + 一条 `error 13`」——同一个输出路径先后投递两次，后到的那条被 aria2 拒了：
+
+```
+gid cb7a9638b82b0b6e  error     errorCode 13  "…/I'm Ready(Remielle)[tAMBp1dKkZJpxC].mp4 belongs to another download"
+gid 54aff47d9cadf85a  complete  151994770/151994770  "…/I'm Ready(Remielle)[tAMBp1dKkZJpxC].mp4"
+```
+
+用户看到的是「任务页一片红 + 一句『目标文件已存在，请先确认是否已下好』」，而文件其实已经下完。根因不在 aria2：我们只按**自己的队列**判重（`blockingTaskFor`），而「用户清过队列 / 上一轮记录丢了 / 两个入口并发」这三种情况下队列里根本没有那条记录，`addUri` 照发。
+
+### 三层保证
+
+| 时机   | 做法                                                                                                                                                                                       | 位置                                                                                  |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| 投递前 | 查 `tellActive` + `tellWaiting` 建 `videoId → gid` 索引（5 秒缓存）；命中时先 `tellStatus` 确认那个 gid 还活着，活着就**接管**、不 `addUri`                                                | `downloaders.ts` `aria2Download`、`client.ts` `aria2LiveGidMap()`                     |
+| 投递后 | 把新 gid 记进索引，让同批后续投递立刻看得见（不必等缓存过期）                                                                                                                              | `client.ts` `rememberAria2LiveGid()`                                                  |
+| 对账时 | ① 队列里同 videoId 的多条任务收敛成一条（在跑 > 完成 > 已交付 > 失败，`skipped` 不参与）；② 撞 `errorCode 13` 时先看同视频是否已有 `complete`/`running` 记录，有就删掉这条重复行而不报失败 | `queue.ts` `collapseDuplicateVideoTasks()`、`tracker.ts` `dropDuplicateConflictRow()` |
+
+两个边界刻意保留：**`skipped` 不参与收敛**（它带着 `followUpUrl`，是用户的待办，收敛掉等于删待办）；**真正的文件冲突仍然报失败**（同视频没有任何完成/在下的记录 ⇒ 那个文件是用户自己放的，必须让人看见）。

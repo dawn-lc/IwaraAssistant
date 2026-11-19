@@ -97,6 +97,8 @@
 
 同一 videoId 可以有多条 `running`/`queued`（界面两行「下载中」，浏览器通道还按记录数吃并发槽位）。修法：`planQueueLiveDuplicates` 只分组活记录，保留优先级「kindRef 在 aria2 活跃集内 → 有 kindRef → 更新时间新」，丢弃者若带 kindRef 要**继承**给保留者（否则追踪器再也认不出这条任务）。
 
+**2026-11-20 补充（真机取证）**：一台机器 1218 条 stopped 记录里有 **87 组同 videoId 的重复 gid**，其中大量是「一条 `complete` + 一条 `error 13`（`belongs to another download`）」——同一个输出路径先后投递两次，后到的那条被 aria2 拒了。表现到界面上就是「已完成」与「目标文件已存在，请先确认是否已下好」两行并存。根因是队列层去重只认我们自己队列里的 `queued/running/complete`：用户清过队列、或上一轮记录丢了，`addUri` 仍会照发。现在的三层保证：① **投递前**查 `aria2LiveGidMap()`（`tellActive`+`tellWaiting`，5 秒缓存，命中再 `tellStatus` 确认还活着）→ 已有活 gid 就**接管**不重投；② **扫描**用 `planQueueVideoDuplicates` 把同视频的多条任务收敛成一条（优先级 在跑 > 完成 > 已交付 > 失败，`skipped` 是待办不参与）；③ **撞 errorCode 13** 时先看同视频是否已有 `complete`/`running` 记录，有就删掉这条重复行（`dropDuplicateConflictRow`），不报假失败。
+
 ---
 
 ## 6. aria2 的七个坑（全部实测）

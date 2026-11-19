@@ -30,7 +30,7 @@ import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
 import { ARIA2_FULL_SWEEP_ROUNDS, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
-import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
+import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, removeTask, syncTask, collapseDuplicateLiveTasks, collapseDuplicateVideoTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2SessionId, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { aria2StatusFieldsWith } from '../../../shared/aria2Flavor'
 import { aria2StoppedQueryLimit } from '../../../shared/aria2Options'
@@ -197,7 +197,25 @@ async function handleDownloadComplete(gid: string): Promise<void> {
 }
 
 /**
- * 下载失败：**先分类，再决定「报失败」还是「就地修」**。
+ * 「目标文件已存在 / 属于另一个任务」是不是我们自己重复投递造成的？
+ *
+ * 实测症状：同一个视频先有一条 gid 下完了，随后又有一条 gid 撞 errorCode 13，
+ * 队列里就成了「已完成 + 目标文件已存在」两条并存的假失败（一台机器上 87 组同 videoId 的
+ * aria2 记录里大量是这种「完成 + error 13」配对，用户只能自己判断文件到底下没下好）。
+ *
+ * 判据只看队列、不额外发 RPC：同视频已有 complete / running / queued 的记录 ⇒ 这条是重复行，
+ * 直接删掉；真正的「文件是别人下的 / 用户自己放着的」仍然如实报失败。
+ */
+async function dropDuplicateConflictRow(task: QueueTask): Promise<boolean> {
+    const sibling = getTasks().find((item) => item.id !== task.id && item.videoId === task.videoId && (item.status === 'complete' || item.status === 'running' || item.status === 'queued'))
+    if (sibling === undefined) return false
+    // allowRunning：这条记录代表的那次投递已经死了（error 13），不删掉就永远留在面板上
+    await removeTask(task.id, { allowRunning: true })
+    console.info(`[iwara-assistant] ${task.videoId} 的「文件已存在」来自重复投递（同视频已有 ${sibling.status} 记录），已丢弃这条重复任务`)
+    return true
+}
+
+/** 下载失败：**先分类，再决定「报失败」还是「就地修」**。
  *
  * 旧实现一收到 WS 事件就写 failed + 弹通知，而 5 分钟后的扫描会对同一条 error 调
  * `tryRecover` 再发一条「已恢复」——同一个视频十分钟内先「失败」再「已恢复」。
@@ -216,6 +234,8 @@ async function handleDownloadError(gid: string, recoverable = true): Promise<voi
     if (task.status === 'failed' || task.status === 'complete') return
     const status = await aria2TellStatus(gid)
     if (status && isFileConflictErrorCode(status.errorCode)) {
+        // 同视频已经下完了 ⇒ 这条是重复投递的残骸，删掉它而不是报一句让用户猜的「请先确认是否已下好」
+        if (await dropDuplicateConflictRow(task)) return
         task.status = 'failed'
         task.detail = i18n.t('notify.aria2FileConflict', { id: task.videoId })
         await syncTask(task)
@@ -359,6 +379,8 @@ async function runAria2Scan(): Promise<Aria2ScanOutcome> {
         // ⚠️ 只算 active：排队中的副本没在传，把它的 gid 放进 liveGids 会让去重误留一条空转的。
         const liveGids = new Set(activeTasks.map((task) => task.gid))
         await collapseDuplicateLiveTasks(liveGids)
+        // 再把「完成 + 失败」这类跨状态的重复行收敛掉（重复投递的残骸：一条下完、一条撞 errorCode 13）
+        await collapseDuplicateVideoTasks(liveGids)
 
         // 按 videoId 分组（同一视频可能存在多个 gid：重复下载/重建残留）
         const groups = new Map<string, Aria2Status[]>()
@@ -709,7 +731,9 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         delete scanMemory.recoverAttempts[videoId]
         delete scanMemory.slowPolls[videoId]
         delete scanMemory.stallSamples[videoId]
-        console.warn(`[iwara-assistant] ${videoId} 的目标文件已存在或正被其他任务占用（errorCode=${winner.errorCode}），重建无意义，标记失败`)
+        console.warn(`[iwara-assistant] ${videoId} 的目标文件已存在或正被其他任务占用（errorCode=${winner.errorCode}），重建无意义`)
+        // 重复投递的残骸：同视频已有完成/在下的记录 ⇒ 删掉这条重复行，别报假失败
+        if (queuedTask && (await dropDuplicateConflictRow(queuedTask))) return true
         if (queuedTask) {
             await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2FileConflict', { id: videoId }) })
             const failed = findTask({ id: queuedTask.id })

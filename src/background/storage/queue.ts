@@ -7,7 +7,7 @@ import { i18n } from '../../shared/i18n'
 import { QUEUE_KEY } from '../../shared/storageKeys'
 import type { QueueTask } from '../../shared/task'
 import { taskMatchesRef } from '../../shared/task'
-import { planQueueLiveDuplicates } from '../../shared/downloadDedupe'
+import { planQueueLiveDuplicates, planQueueVideoDuplicates } from '../../shared/downloadDedupe'
 import { isClearable } from '../../shared/taskView'
 import { getConfig } from './configStore'
 import { clearNotification, showNotification, type NotificationTarget } from '../runtime/notify'
@@ -223,6 +223,32 @@ export async function collapseDuplicateLiveTasks(liveGids?: ReadonlySet<string>)
 }
 
 /** 状态落盘 + 扩展页推送（popup/options 无监听时静默） */
+/**
+ * 收敛队列里同一 videoId 的**所有**重复行（`skipped` 除外）—— 用户的硬要求：
+ * 「接管后同一视频不该出现两条任务」。
+ *
+ * 与 `collapseDuplicateLiveTasks` 的分工：那个只管两条「在下的」谁去谁留（要保住真正在传的 gid）；
+ * 这个管「完成 + 失败」这类跨状态的重复行——典型来源是重复投递：一条下完、一条撞 errorCode 13
+ * （目标文件已存在 / belongs to another download），于是同一个视频在面板上同时显示「已完成」和一句假失败。
+ * 判据在 `shared/downloadDedupe.ts` 的 `planQueueVideoDuplicates`（纯函数，已单测）。
+ *
+ * @returns 丢弃的条数
+ */
+export async function collapseDuplicateVideoTasks(liveGids?: ReadonlySet<string>): Promise<number> {
+    const plan = planQueueVideoDuplicates(memQueue, liveGids)
+    if (plan.drop.length === 0) return 0
+    for (const inherit of plan.inheritKindRef) {
+        const keeper = memQueue.find((task) => task.id === inherit.taskId)
+        if (keeper) keeper.kindRef = inherit.kindRef
+    }
+    const droppedIds = new Set(plan.drop.map((task) => task.id))
+    memQueue = memQueue.filter((task) => !droppedIds.has(task.id))
+    await persist()
+    updateBadge()
+    console.info(`[iwara-assistant] 队列去重：同一视频的重复任务已收敛到一条，丢弃 ${plan.drop.length} 条（${plan.drop.map((task) => `${task.videoId}:${task.status}`).join(', ')}）`)
+    return plan.drop.length
+}
+
 export async function syncTask(task: QueueTask): Promise<void> {
     task.updatedAt = Date.now()
     await persist()

@@ -213,3 +213,63 @@ export function planQueueLiveDuplicates(tasks: readonly QueueTask[], liveGids?: 
     }
     return result
 }
+
+/**
+ * 同一 videoId 只有一条任务的可收敛结果（比 `planQueueLiveDuplicates` 更宽）。
+ *
+ * 用户的诉求是「接管后同一视频不该有重复任务」，而不只是「不该有两条在下的」：
+ * 实测一台机器上 87 组同 videoId 的 aria2 记录里，大量是「一条 complete + 一条 error 13
+ * （目标文件已存在 / belongs to another download）」。失败那条在队列里表现成一句
+ * 「目标文件已存在，请先确认是否已下好」的假失败，而文件其实已经下完——
+ * 这类重复只能靠「同视频只留最强的一条」收敛掉。
+ */
+export interface QueueVideoDedupeResult {
+    /** 每个视频保留的那条 */
+    keep: QueueTask[]
+    /** 被收敛掉的重复行 */
+    drop: QueueTask[]
+    /** 保留者没有 kindRef 而重复行有时，需要把 gid 接过来（否则追踪器认不出它） */
+    inheritKindRef: Array<{ taskId: string; kindRef: string }>
+}
+
+/** 状态优先级：活的任务 > 完成的历史 > 已交付 > 失败。`skipped` 是待办，永远不参与 */
+const QUEUE_STATUS_RANK: Record<QueueTask['status'], number> = { running: 5, queued: 4, complete: 3, 'handed-off': 2, failed: 1, skipped: 0 }
+
+/**
+ * 按 videoId 收敛**所有**状态的任务（`skipped` 除外）。
+ *
+ * 排序：命中 `liveGids`（真正在下的那条）> 状态优先级 > 有 kindRef > 更新时间。
+ * 保留 `skipped` 不参与的原因：它是「简介里有网盘链接，去看看吧」的待办，带着 followUpUrl，
+ * 收敛掉等于把用户的待办删了；而它和完成记录并存也不会造成重复下载。
+ */
+export function planQueueVideoDuplicates(tasks: readonly QueueTask[], liveGids?: ReadonlySet<string>): QueueVideoDedupeResult {
+    const groups = new Map<string, QueueTask[]>()
+    for (const task of tasks) {
+        if (task.status === 'skipped') continue
+        const group = groups.get(task.videoId) ?? []
+        group.push(task)
+        groups.set(task.videoId, group)
+    }
+    const result: QueueVideoDedupeResult = { keep: [], drop: [], inheritKindRef: [] }
+    for (const group of groups.values()) {
+        if (group.length <= 1) continue
+        const ranked = [...group].sort((a, b) => {
+            const aLive = a.kindRef !== undefined && liveGids?.has(a.kindRef) === true
+            const bLive = b.kindRef !== undefined && liveGids?.has(b.kindRef) === true
+            if (aLive !== bLive) return aLive ? -1 : 1
+            const byStatus = QUEUE_STATUS_RANK[b.status] - QUEUE_STATUS_RANK[a.status]
+            if (byStatus !== 0) return byStatus
+            const aHas = a.kindRef !== undefined && a.kindRef !== ''
+            const bHas = b.kindRef !== undefined && b.kindRef !== ''
+            if (aHas !== bHas) return aHas ? -1 : 1
+            return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0)
+        })
+        const keeper = ranked[0]!
+        result.keep.push(keeper)
+        for (const extra of ranked.slice(1)) {
+            result.drop.push(extra)
+            if ((keeper.kindRef === undefined || keeper.kindRef === '') && extra.kindRef !== undefined && extra.kindRef !== '') result.inheritKindRef.push({ taskId: keeper.id, kindRef: extra.kindRef })
+        }
+    }
+    return result
+}

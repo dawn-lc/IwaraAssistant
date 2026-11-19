@@ -36,6 +36,7 @@ npm run lint:firefox      # web-ext lint（目标 0 errors 0 notices 0 warnings�
 7. **MAIN ⇄ ISOLATED 只走 CustomEvent + JSON 字符串**（`CONTENT_SCHEMA` 门闩）。`content/isolated.ts` 与 `content/pageUi.ts` 是**两个独立 bundle**，不共享 JS 变量。
 8. **状态属于区块，不属于页面**：一个组件里塞互不相关的区块会让禁用态串台。`AdvancedTab`（遍历 / 链接检查 / MediaCenter）与 `MigrateTab`（旧库导入 / 导出 / 导入）都因此拆过。
 9. **消除重复真相源**：同一个形状被后台和页面各写一份 interface 必然漂移（`SyncState` 曾手抄过）。要么放 `shared/`，要么删掉一份。
+10. **同一 `videoId` 只允许一条任务**（`skipped` 待办除外）。投递前必须查 `aria2LiveGidMap()`：aria2 里已有活 gid 就**接管**，绝不 `addUri` 第二次——同一输出路径两个 gid 必被 aria2 判成 `errorCode 13`，用户看到的是「目标文件已存在」这种看不懂的假失败。扫描再用 `planQueueVideoDuplicates` 收敛「完成 + 失败」这类跨状态重复行。
 
 ### 目录归位（`src/background/` 下只有 `index.ts` + 5 个目录）
 

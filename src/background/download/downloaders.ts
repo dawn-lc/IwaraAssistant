@@ -59,7 +59,8 @@ export async function browserDownload(videoInfo: FullVideoInfo, ctx: ChannelCont
 
 // ── aria2 通道（原 aria2Download）────────────────────────────────────
 
-import { aria2API, aria2Capabilities, aria2GlobalOptions } from '../backends/aria2/client'
+import { aria2API, aria2Capabilities, aria2GlobalOptions, aria2LiveGidMap, aria2TellStatus, rememberAria2LiveGid } from '../backends/aria2/client'
+import { isLiveAria2Status } from '../../shared/aria2Recover'
 import type { Aria2Capabilities } from '../../shared/aria2Flavor'
 import { aria2ProxyParams, aria2RetryParams, aria2TuningParams, type Aria2GlobalOptions } from '../../shared/aria2Options'
 
@@ -102,9 +103,25 @@ export async function aria2Download(videoInfo: FullVideoInfo, ctx: ChannelContex
     const cookie = ctx.cookie ?? (await getPageCookie())
     const [caps, serverOptions] = await Promise.all([aria2Capabilities(), aria2GlobalOptions()])
     const downloadParams = aria2AddUriParams(localPath, cookie, caps, serverOptions)
+    // 接管保证：同一个视频在 aria2 里已经有活任务 ⇒ 接管它，**不再** addUri。
+    // 不查这一步的后果是可复现的：同一输出路径上两个 gid，后到的那个被 aria2 判成
+    // `belongs to another download`（errorCode 13），用户看到「目标文件已存在，请先确认是否已下好」，
+    // 而文件其实正在下/已经下完。队列层的去重（`blockingTaskFor`）拦不住这种情况——
+    // 它只看我们的队列，看不到「队列记录被清掉、aria2 里还在跑」的那些任务。
+    // 索引是 5 秒缓存，命中时**再确认一次**它真的还活着：刚被「移除」的任务不会立刻从缓存里消失，
+    // 接管一个已经死掉的 gid 会让任务永远对不上账。确认只发生在「本来就要重复投递」这一条罕见分支上。
+    const existingGid = (await aria2LiveGidMap()).get(videoInfo.ID)
+    if (existingGid !== undefined && existingGid !== '') {
+        const existing = await aria2TellStatus(existingGid).catch(() => undefined)
+        if (existing !== undefined && isLiveAria2Status(existing.status)) {
+            console.info(`[iwara-assistant] ${videoInfo.ID} 在 aria2 里已有活任务 ${existingGid}，接管而不是重复投递`)
+            return { gid: existingGid, downloadParams }
+        }
+    }
     // 指令走 WS 实时通道（未连接时 aria2API 内部自动降级 HTTP）
     const res = await callEndpoint(ARIA2_TARGET, config.aria2Path, () => aria2API<string>('aria2.addUri', [[downloadUrl.href], downloadParams]))
     if (typeof res.result !== 'string' || res.result === '') throw new Error(i18n.t('notify.aria2Failed', { detail: stringify(res) }))
+    rememberAria2LiveGid(videoInfo.ID, res.result)
     return { gid: res.result, downloadParams }
 }
 

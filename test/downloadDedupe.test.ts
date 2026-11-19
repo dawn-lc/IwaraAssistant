@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { blockingTaskFor, dedupeAgainstAria2, dedupeAgainstQueue, planQueueLiveDuplicates, reusableFailedTaskFor } from '../src/shared/downloadDedupe'
+import { blockingTaskFor, dedupeAgainstAria2, dedupeAgainstQueue, planQueueLiveDuplicates, planQueueVideoDuplicates, reusableFailedTaskFor } from '../src/shared/downloadDedupe'
 import type { QueueTask } from '../src/shared/task'
 
 function task(videoId: string, status: QueueTask['status'], updatedAt?: number): QueueTask {
@@ -304,4 +304,72 @@ test('接线：停止冗余 aria2 副本前必须先把 kindRef 指向赢家', (
     const stop = loop.indexOf('stopLiveCopy(')
     assert.ok(patch > 0 && stop > 0, '循环里应同时有 patchTask 与 stopLiveCopy')
     assert.ok(patch < stop, '先 remove 再改 kindRef 会让 aria2 的 onDownloadError 把正常任务标成 failed（“Download aborted.”）')
+})
+
+// ── 同视频只留一条任务（`planQueueVideoDuplicates`）──────────────────────
+
+test('同视频只留一条：完成 + 失败（重复投递的残骸）必须收敛掉失败那条', () => {
+    const done = { ...task('a', 'complete'), id: 'done', kindRef: 'gid-done' }
+    const dead = { ...task('a', 'failed'), id: 'dead', kindRef: 'gid-dead' }
+    const plan = planQueueVideoDuplicates([done, dead])
+    assert.deepEqual(
+        plan.keep.map((item) => item.id),
+        ['done']
+    )
+    assert.deepEqual(
+        plan.drop.map((item) => item.id),
+        ['dead'],
+        '一条下完、一条撞 errorCode 13 —— 面板上那句假失败必须消失'
+    )
+})
+
+test('同视频只留一条：优先级 跑着的 > 完成 > 失败', () => {
+    const running = { ...task('a', 'running', 1), id: 'running' }
+    const complete = { ...task('a', 'complete', 9), id: 'complete' }
+    const failed = { ...task('a', 'failed', 9), id: 'failed' }
+    assert.deepEqual(
+        planQueueVideoDuplicates([failed, complete, running]).keep.map((item) => item.id),
+        ['running']
+    )
+    assert.deepEqual(
+        planQueueVideoDuplicates([failed, complete]).keep.map((item) => item.id),
+        ['complete']
+    )
+})
+
+test('同视频只留一条：skipped 是待办，既不参与也不被丢', () => {
+    const skipped = { ...task('a', 'skipped'), id: 'todo' }
+    const complete = { ...task('a', 'complete'), id: 'done' }
+    const plan = planQueueVideoDuplicates([skipped, complete])
+    assert.deepEqual(
+        plan.drop.map((item) => item.id),
+        [],
+        'TODO 里带着 followUpUrl，收敛掉等于删了用户的待办'
+    )
+})
+
+test('同视频只留一条：保留者没 kindRef 时把 gid 接过来', () => {
+    const keeper = { ...task('a', 'complete', 5), id: 'keeper' }
+    const withGid = { ...task('a', 'failed', 1), id: 'withgid', kindRef: 'gid-x' }
+    const plan = planQueueVideoDuplicates([keeper, withGid])
+    assert.deepEqual(plan.inheritKindRef, [{ taskId: 'keeper', kindRef: 'gid-x' }])
+})
+
+test('同视频只留一条：命中 aria2 活 gid 的那条优先', () => {
+    const live = { ...task('a', 'queued', 1), id: 'live', kindRef: 'gid-live' }
+    const stale = { ...task('a', 'running', 9), id: 'stale', kindRef: 'gid-stale' }
+    assert.deepEqual(
+        planQueueVideoDuplicates([stale, live], new Set(['gid-live'])).keep.map((item) => item.id),
+        ['live']
+    )
+})
+
+test('接线：投递前必须查 aria2 活任务并接管，扫描必须收敛跨状态重复行', () => {
+    const downloaders = readFileSync('src/background/download/downloaders.ts', 'utf8')
+    assert.match(downloaders, /await aria2LiveGidMap\(\)/, '不查活任务，同一输出路径就会造出第二个 gid（errorCode 13）')
+    assert.match(downloaders, /接管而不是重复投递/)
+    assert.match(downloaders, /rememberAria2LiveGid\(/, '投递成功要记进索引，否则同批后续投递在缓存窗口内看不见它')
+    const tracker = readFileSync('src/background/backends/aria2/tracker.ts', 'utf8')
+    assert.match(tracker, /collapseDuplicateVideoTasks\(liveGids\)/, '只收敛「两条在下的」不够：完成 + 失败这种跨状态重复会一直留着')
+    assert.match(tracker, /dropDuplicateConflictRow\(/, '撞 errorCode 13 时先判断是不是自己重复投递的残骸')
 })
