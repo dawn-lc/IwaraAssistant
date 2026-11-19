@@ -583,6 +583,7 @@ test('增量窗口：没有基线 / 计数不可信 / 到点全量，都退回�
     assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: Number.NaN, lastTotal: 100, fullSweepDue: false }), { num: ARIA2_STOPPED_PAGE, restarted: false })
     assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: 100, lastTotal: 100, fullSweepDue: true, fullSize: 1000 }), { num: 1000, restarted: false })
     assert.deepEqual(planStoppedWindow({ sessionChanged: true, currentTotal: 100, lastTotal: 100, fullSweepDue: false, fullSize: 64 }), { num: 64, restarted: true }, 'aria2 重启过：必须全量，且调用方要清空采样')
+    assert.deepEqual(planStoppedWindow({ sessionChanged: false, currentTotal: 3, lastTotal: 1134, fullSweepDue: false, fullSize: 64 }), { num: 64, restarted: true }, '计数倒退只能是重启；按 delta=0 跳过就会漏掉重启后的全部新记录')
 })
 
 test('扫描记忆：增量窗口与网络退避都能跨 SW 回收保留（脏值丢弃）', () => {
@@ -596,6 +597,15 @@ test('扫描记忆：增量窗口与网络退避都能跨 SW 回收保留（脏�
     assert.equal(blank.stoppedTotal, -1, '没有基线必须能被识别出来')
     assert.equal(blank.sessionId, '')
     assert.equal(blank.networkBreakerUntil, 0)
+})
+
+test('会话 ID：两个方法名都要试（3.1.1 只有 aria2.getSessionInfo，上游只有 system.getSessionInfo）', () => {
+    const client = readSource('src/background/backends/aria2/client.ts')
+    assert.match(client, /ARIA2_SESSION_INFO_METHODS = \['aria2\.getSessionInfo', 'system\.getSessionInfo'\]/, '两个名字都要在表里，顺序按实测优先级')
+    assert.match(client, /res\?\.result\?\.sessionId/, 'RPC 错误不抛异常，必须先看 result')
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /aria2SessionId\(\)/, '扫描必须走带兜底的读取')
+    assert.doesNotMatch(tracker, /'aria2\.getSessionInfo'/, '调用点写死方法名就没有兜底（上游只有 system 那个）')
 })
 
 test('接线：扫描先问计数（P1-1）、恢复链区分网络失败、attempts 先落盘', () => {

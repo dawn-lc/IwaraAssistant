@@ -31,7 +31,7 @@ import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
 import { ARIA2_FULL_SWEEP_ROUNDS, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
-import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
+import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2SessionId, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { aria2StatusFieldsWith } from '../../../shared/aria2Flavor'
 import { aria2StoppedQueryLimit } from '../../../shared/aria2Options'
 import { NETWORK_BREAKER_COOLDOWN_MS, classifyAria2Failure, networkBackoffDue, networkBackoffRemaining, nextNetworkBackoff, shouldOpenNetworkBreaker } from '../../../shared/aria2Network'
@@ -319,9 +319,10 @@ async function runAria2Scan(): Promise<Aria2ScanOutcome> {
         // 实测（远程那台 1134 条历史）：完整回包 12,815,311 B / 289 ms，而 getGlobalStat 只有
         // 153 B。5 分钟一轮 ⇒ 每台机器每天约 3.5 GB 的本地回包与 JSON 解析，全在问「有没有新的」。
         // numStoppedTotal 单调递增（含被挤出/被删的条目），sessionId 变化 = aria2 重启过。
-        const [statRes, sessionRes] = await Promise.all([aria2API<{ numStoppedTotal?: string }>('aria2.getGlobalStat', []).catch(() => undefined), aria2API<{ sessionId?: string }>('aria2.getSessionInfo', []).catch(() => undefined)])
+        // 会话 ID 的方法名在两条线上不同（aria2-next 3.1.1 只有 aria2.getSessionInfo，上游只有 system.getSessionInfo），
+        // 由 client 的 aria2SessionId 两个名字都试并缓存命中项——读不到就会退化成「每轮全量」。
+        const [statRes, sessionId] = await Promise.all([aria2API<{ numStoppedTotal?: string }>('aria2.getGlobalStat', []).catch(() => undefined), aria2SessionId()])
         const currentTotal = Number.parseInt(statRes?.result?.numStoppedTotal ?? '', 10)
-        const sessionId = sessionRes?.result?.sessionId ?? ''
         const window = planStoppedWindow({
             sessionChanged: scanMemory.sessionId !== '' && sessionId !== '' && sessionId !== scanMemory.sessionId,
             currentTotal,

@@ -456,6 +456,9 @@ export const ARIA2_FULL_SWEEP_ROUNDS = 12
 export function planStoppedWindow(input: { sessionChanged: boolean; currentTotal: number; lastTotal: number; fullSweepDue: boolean; fullSize?: number }): Aria2StoppedWindow {
     const fullSize = input.fullSize ?? ARIA2_STOPPED_PAGE
     if (input.sessionChanged) return { num: fullSize, restarted: true }
+    // 计数倒退只可能是 aria2 重启（numStoppedTotal 单调递增：被挤出/被删的条目也计入）。
+    // 没有 sessionId 可读的分支上，这是「重启」的第二个信号，不能按 delta=0 跳过。
+    if (Number.isFinite(input.currentTotal) && Number.isFinite(input.lastTotal) && input.lastTotal >= 0 && input.currentTotal < input.lastTotal) return { num: fullSize, restarted: true }
     if (input.fullSweepDue) return { num: fullSize, restarted: false }
     // 计数不可信（aria2 太老 / 回包缺字段 / 还没有基线）⇒ 全量，宁可多传一次
     if (!Number.isFinite(input.currentTotal) || !Number.isFinite(input.lastTotal) || input.lastTotal < 0) return { num: fullSize, restarted: false }

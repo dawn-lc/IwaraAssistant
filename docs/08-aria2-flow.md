@@ -157,16 +157,23 @@ sequenceDiagram
 
 ## 8. 分支兼容（上游 aria2 / aria2-next）
 
-同一套 RPC 在三条实际行为线上并不等价，**只按版本号判断会踩坑**（`1.36.0` 与 `3.1.1` 是两条互不相干的版本线）。三次真机实测（2026-11-18 / 11-19）得到：
+同一套 RPC 在三条实际行为线上并不等价，**只按版本号判断会踩坑**（`1.36.0` 与 `3.1.1` 是两条互不相干的版本线）。四次真机实测（2026-11-18 / 11-19 / 11-20）得到：
 
-| 行为                                                         | 上游 1.36.0          | aria2-next 2.4.9 | aria2-next 3.1.1                                  |
-| ------------------------------------------------------------ | -------------------- | ---------------- | ------------------------------------------------- |
-| `getVersion().product`                                       | 无                   | **无**           | `aria2-next`                                      |
-| `aria2.probe` / `aria2.moveDownload`                         | 无                   | 无               | **有**                                            |
-| 媒体任务（HLS/DASH）                                         | 不支持               | 不支持           | 支持：`totalLength` 恒 0，进度在 `media.progress` |
-| 403 过期直链                                                 | `error 22`（5 秒内） | `error 22`       | **永远 `active`、不报错**（每 10 秒重试）         |
-| `addUri` 选项（`force-save`/`referer`/`header`/`all-proxy`） | 全部接受             | 全部接受         | 全部接受                                          |
-| 取消后清结果                                                 | 1 次成功（35 ms）    | 1 次成功         | 1 次成功                                          |
+| 行为                                                         | 上游 1.36.0             | aria2-next 2.4.9 | aria2-next 3.1.1                                             |
+| ------------------------------------------------------------ | ----------------------- | ---------------- | ------------------------------------------------------------ |
+| `getVersion().product`                                       | 无                      | **无**           | `aria2-next`                                                 |
+| `aria2.probe` / `aria2.moveDownload`                         | 无                      | 无               | **有**                                                       |
+| 媒体任务（HLS/DASH）                                         | 不支持                  | 不支持           | 支持：`totalLength` 恒 0，进度在 `media.progress`            |
+| 403 过期直链                                                 | `error 22`（5 秒内）    | `error 22`       | **永远 `active`、不报错**（每 10 秒重试）                    |
+| `addUri` 选项（`force-save`/`referer`/`header`/`all-proxy`） | 全部接受                | 全部接受         | 全部接受                                                     |
+| 取消后清结果                                                 | 1 次成功（35 ms）       | 1 次成功         | 1 次成功                                                     |
+| 会话 ID 方法名                                               | `system.getSessionInfo` | 未测             | **`aria2.getSessionInfo`**（`system.*` 回 `No such method`） |
+
+**2026-11-20 复查（两台测试机都已升级到 `aria2-next 3.1.1`）**：`getVersion` 回 `product: aria2-next` / `rpcVersion 1.1.0` / 55 个方法，`system.listMethods` 里有 `aria2.probe` / `moveDownload` / `resolveFilename` / `finishMedia` / `retryMedia`。上游 1.36 那台已不存在，表里它的行为是升级前的实测记录，保留作为兼容依据。
+
+**同一台机器上 `system.getSessionInfo` 与 `aria2.getSessionInfo` 只有一个存在**：3.1.1 只认后者，上游只认前者。会话 ID 是「aria2 重启过没有」的唯一可靠信号（重启后旧 gid 全失效，慢速/停滞采样、恢复次数、网络退避都必须一起清），读不到就只能每轮拉全量 `tellStopped`。所以 `client.ts` 的 `aria2SessionId()` 两个名字都试，成功过就缓存命中项（`ARIA2_SESSION_INFO_METHODS`）。第二个信号是 `numStoppedTotal` **倒退**——它单调递增（被挤出/被删的条目也计入），只有重启会让它变小，`planStoppedWindow()` 因此把倒退也判成 `restarted`。
+
+**这台升级后的 3.1.1 上，403 依旧表现为「不报错地卡住」**：抽查 `tellActive` 的 17 条里 16 条 `totalLength=0` / `downloadSpeed=0` / `connections=0`（`getGlobalStat.numActive` = 18），同时也有历史记录已落成 `errorCode 22 / HTTP 403`。所以判据不变：**不能等错误浮出**，靠停滞判定（`aria2StallSignature` 跨轮签名不变化 × 连续 2 次）主动 `changeUri` 换新直链；投递时加 `max-tries: 5` 只是让「永不报错」最多 5 轮后浮出。
 
 ### 怎么判断
 
@@ -182,7 +189,7 @@ sequenceDiagram
 | `stallsOnForbidden`      | 投递时给任务加 `max-tries: 5`，把永不出现的错误逼出来（实测 403 从「永不报错」变成 2 秒内 `errorCode 22`） | `downloaders.ts` `aria2AddUriParams()`             |
 | `probe` / `moveDownload` | 目前**只探测不使用**：两项都依赖「投递前预检」与「改目录」的新流程，留给后续单独做                         | `client.ts`                                        |
 
-**已知缺口**：媒体任务的慢速重启仍不生效（`shouldRestartForSlowSpeed` 要求 `totalLength > 0`，而媒体任务恒为 0）。正确的修法是把「停滞判定」按 `completedLength` / `media.progress` 的跨轮变化来做，与提案里的 P1-2 一起改。
+**媒体任务的覆盖情况**：**慢速**判定仍不生效（`shouldRestartForSlowSpeed` 要求 `totalLength > 0`，而 HLS 任务恒为 0）；但**停滞**判定已覆盖（`aria2StallSignature` 在 `totalLength` 为 0 时改用 `media.progress`，P1-2 已实施），所以媒体任务卡住仍会被 `changeUri` 重启，只是「慢」不会被当成「停滞」。
 
 ### 配置自适应（问 `getGlobalOption`，不要假设）
 
@@ -271,7 +278,7 @@ aria2 有两条完全不同的「卡住」，判据分开，不能混。
 
 ## 11. `tellStopped` 的增量窗口（P1-1）
 
-实测（远程那台 1134 条历史）：`tellStopped(0, 4096, 全字段)` = **12,815,311 B / 289 ms**；只问计数 `getGlobalStat` = **153 B**。5 分钟一轮 ⇒ 每台机器每天约 **3.5 GB** 的本地回包与 JSON 解析，全花在「有没有新完成的任务」上。
+实测（远程那台 1134 条历史）：`tellStopped(0, 4096, 全字段)` = **12,815,311 B / 289 ms**；只问计数 `getGlobalStat` = **153 B**。回包大小由**记录内容**决定，不是条数：同一台机器升级重启后 1116 条只 **923,163 B / 25 ms**（记录里没有大的 `files` / `bittorrent` / `followedBy`），只要 `gid` 时 = 30,196 B / 4 ms。5 分钟一轮 ⇒ 每台机器每天约 **3.5 GB** 的本地回包与 JSON 解析，全花在「有没有新完成的任务」上。
 
 现在每轮先问 `getGlobalStat().numStoppedTotal` + `getSessionInfo().sessionId`：
 

@@ -165,6 +165,7 @@ export function aria2CachedCapabilities(): Aria2Capabilities | undefined {
 export function resetAria2Capabilities(): void {
     capabilitiesCache = undefined
     optionsCache = undefined
+    sessionInfoMethodCache = undefined
 }
 
 /**
@@ -188,6 +189,36 @@ export async function aria2GlobalOptions(): Promise<Aria2GlobalOptions> {
     } catch {
         return ARIA2_GLOBAL_OPTIONS_DEFAULT
     }
+}
+
+// ── 会话 ID：名字在两条线上不同 ──────────────────────────────────────
+
+/**
+ * getSessionInfo 的方法名**不通用**（2026-11-20 实测两台 3.1.1）：
+ * - aria2-next 3.1.1：aria2.getSessionInfo 有，system.getSessionInfo → No such method；
+ * - 上游 1.36.0：只有 system.getSessionInfo。
+ *
+ * 会话 ID 是「aria2 重启过没有」的唯一可靠信号：重启后旧 gid 全部失效，慢速/停滞采样、
+ * 恢复次数、网络退避都建立在那些 gid 上，必须一起清掉。读不到就只能每轮拉全量
+ * tellStopped（闲时也是每 5 分钟一页），所以两个名字都试，成功过就缓存那个名字。
+ */
+let sessionInfoMethodCache: string | undefined
+
+/** 依次尝试的会话信息方法名（顺序 = 实测优先级：两台 aria2-next 都是前者） */
+export const ARIA2_SESSION_INFO_METHODS = ['aria2.getSessionInfo', 'system.getSessionInfo'] as const
+
+/** 读 aria2 的会话 ID；两个名字都失败就返回空串（调用方按「读不到」处理） */
+export async function aria2SessionId(): Promise<string> {
+    const ordered = sessionInfoMethodCache === undefined ? [...ARIA2_SESSION_INFO_METHODS] : [sessionInfoMethodCache, ...ARIA2_SESSION_INFO_METHODS.filter((method) => method !== sessionInfoMethodCache)]
+    for (const method of ordered) {
+        const res = await aria2API<{ sessionId?: string }>(method, []).catch(() => undefined)
+        const sessionId = res?.result?.sessionId
+        if (typeof sessionId === 'string' && sessionId !== '') {
+            if (sessionInfoMethodCache !== method) sessionInfoMethodCache = method
+            return sessionId
+        }
+    }
+    return ''
 }
 
 /**
