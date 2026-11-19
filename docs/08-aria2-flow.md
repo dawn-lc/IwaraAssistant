@@ -360,6 +360,23 @@ AriaNg 的「已完成 / 已停止」= aria2 的 `stopped` 列表 = complete + e
 
 `max-download-result` 默认 4096（那台机器正好配到 4096），所以这些记录既不挤出去，也没人清 → 越积越多。
 
+### 三处「别再制造残骸」的修复（2026-11-21 用调试通道真机取证后补）
+
+取证方式：扩展「高级 → 调试通道」主动连本机 `scripts/debug-bridge-server.mjs`，把队列、`scanMemory`、后台日志环推给服务端（见 [docs/09-debug-bridge.md](09-debug-bridge.md)）。实测到的两条证据链：
+
+| 现象                                | 证据                                                                                                                                 |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 8 轮恢复上限在 **13 秒**内烧完      | `zgC4YDXRi5Rq90` 14:15:25→14:15:38 连续 5 次「已恢复下载」，每次一个新 gid                                                           |
+| 私有 / 被删视频每 40 秒造一条新 gid | `2EltpiBeKr8eAO`（`errors.privateVideo`）、`SOrCX4bjTPCTIc`（`errors.notFound`）反复「重新解析失败，回退用现有链接」→ 旧直链必然 403 |
+
+修复：
+
+1. **自动恢复节流 60 秒**（`scanMemory.recoverAt` + `recoverCooldownRemaining`）。WS 的 `onDownloadError` 是秒级事件，没有闸门就是重试风暴；手动「重建」走 `resetAria2RecoveryState`，不受节流限制。
+2. **换 gid 立刻清掉被放弃的那条记录**（`aria2RemoveResult(winner.gid)`）。这是我们自己刚放弃的记录，不是别人的历史——不清就会在 `stopped` 里留一条同视频的 `error`。
+3. **站点说视频不可用就停手**（`errors.notFound` / `privateVideo` / `forbidden`）：不再用旧直链重建，直接标失败并给出下一步（私有视频复用 `describeParseFailure` 的作者主页入口）。
+
+叠加下面这条清理规则之后，一个视频在 aria2 里最多留 **1 条**记录（当前那条），而不是 8 条。
+
 ### 清理规则（已实现）
 
 每轮扫描在拿到 `tellStopped` 之后、对账之前，先执行一次 `discardFailedAria2Records()`：**只删「队列里已记为 `failed`、且 gid 就在本轮 stopped 列表里、状态是 `error`/`removed`」的记录**（`removeDownloadResult`）。
