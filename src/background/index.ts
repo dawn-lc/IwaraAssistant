@@ -42,6 +42,7 @@ import { downloadMetadata } from './download/downloaders'
 import { onContextMenuClicked, setupContextMenus } from './runtime/contextMenus'
 import { recordAuthToken, recordPageCookie } from './iwara/auth'
 import { setupAlarms } from './runtime/alarms'
+import { startDebugBridge, watchDebugBridgeConfig } from './runtime/debugBridge'
 import { syncKeepAlive } from './runtime/keepAlive'
 import { startAria2Tracking, watchAria2Endpoint } from './backends/aria2/tracker'
 import { consumeNotificationTarget, notifyInfo } from './runtime/notify'
@@ -149,6 +150,9 @@ async function boot(): Promise<void> {
     // aria2：记住端点指纹（配置变更时由 tracker 自己比对并重连）+ 首轮对账
     watchAria2Endpoint(getConfig())
     await startAria2Tracking()
+    // 调试通道（默认关闭）：开启后主动连本机调试服务，见 docs/09-debug-bridge.md
+    startDebugBridge()
+    watchDebugBridgeConfig()
     // 慢速判定需要分钟级采样（源项目每任务 4 秒轮询）：按队列对齐轻探测 alarm
     await syncAria2ProbeAlarm()
     // 上一代进程留下的「推送 MediaCenter 失败」待重试（源项目同样不丢）

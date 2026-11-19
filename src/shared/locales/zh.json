@@ -379,7 +379,14 @@
         "mediaSyncScan": "正在读取 MediaCenter 列表：{done} / {total}",
         "mediaSyncScanUnknown": "正在读取 MediaCenter 列表：已读 {done} 条",
         "mediaSyncPush": "正在推送映射记录：{done} / {total}",
-        "mediaSyncInterrupted": "上次同步被中断（扩展被重载或浏览器关闭），没有跑完。"
+        "mediaSyncInterrupted": "上次同步被中断（扩展被重载或浏览器关闭），没有跑完。",
+        "bridgeTitle": "调试通道（本地）",
+        "bridgeNote": "默认关闭。开启后扩展会**主动**连本机 127.0.0.1 上的调试服务（长轮询），把队列、扫描记忆与后台日志推给那个服务，方便定位「后台到底在做什么」。本扩展自己不监听任何端口，也不接受外部入站。",
+        "bridgeEnable": "启用调试通道",
+        "bridgeEnableHint": "只在排查问题时开；关掉即停止连接。凭据字段（token / 密码）在推送前会被替换成 ***",
+        "bridgePort": "调试服务端口",
+        "bridgePortHint": "只连 127.0.0.1，默认 8765。改完端口后调试服务也要用同一个端口启动",
+        "bridgeHelp": "启动方式：node scripts/debug-bridge-server.mjs 8765，然后打开 http://127.0.0.1:8765 查看最新快照与最近日志"
     },
     "guide": {
         "quickTitle": "快速上手",

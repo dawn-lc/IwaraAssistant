@@ -379,7 +379,14 @@
         "mediaSyncScan": "MediaCenter の一覧を読み込み中：{done} / {total}",
         "mediaSyncScanUnknown": "MediaCenter の一覧を読み込み中：{done} 件読込済み",
         "mediaSyncPush": "対応レコードを反映中：{done} / {total}",
-        "mediaSyncInterrupted": "前回の同期は中断されました（拡張機能の再読み込みまたはブラウザ終了）。完了していません。"
+        "mediaSyncInterrupted": "前回の同期は中断されました（拡張機能の再読み込みまたはブラウザ終了）。完了していません。",
+        "bridgeTitle": "デバッグブリッジ（ローカル）",
+        "bridgeNote": "既定は無効です。有効にすると拡張が 127.0.0.1 上のローカルデバッグサービスへ**能動的に**接続し（ロングポーリング）、キュー・スキャン記憶・バックグラウンドログを送ります。拡張自身はポートを待ち受けず、外部からの接続も受け付けません。",
+        "bridgeEnable": "デバッグブリッジを有効にする",
+        "bridgeEnableHint": "調査時のみ有効にしてください。無効にすると接続は停止します。認証情報（token / パスワード）は送信前に *** に置き換えます",
+        "bridgePort": "デバッグサービスのポート",
+        "bridgePortHint": "127.0.0.1 にのみ接続します（既定 8765）。デバッグサービスも同じポートで起動してください",
+        "bridgeHelp": "起動方法: node scripts/debug-bridge-server.mjs 8765 → http://127.0.0.1:8765 で最新のスナップショットとログを確認"
     },
     "guide": {
         "quickTitle": "クイックスタート",

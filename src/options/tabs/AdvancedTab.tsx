@@ -236,6 +236,16 @@ export function AdvancedTab({ config }: { config: Config }): ReactElement {
                 </Row>
             </Section>
 
+            <Section title={t('advanced.bridgeTitle')} note={t('advanced.bridgeNote')}>
+                <Row label={t('advanced.bridgeEnable')} hint={t('advanced.bridgeEnableHint')}>
+                    <Toggle label="" checked={config.debugBridgeEnabled} onChange={(next) => save({ debugBridgeEnabled: next })} />
+                </Row>
+                <Row label={t('advanced.bridgePort')} hint={t('advanced.bridgePortHint')}>
+                    <TextField value={String(config.debugBridgePort)} onChange={(next) => save({ debugBridgePort: Number.parseInt(next, 10) || 8765 })} mono />
+                </Row>
+                <p className="note">{t('advanced.bridgeHelp')}</p>
+            </Section>
+
             <Section title={t('advanced.linkTitle')} note={t('advanced.linkNote')}>
                 <Row label={t('advanced.link')} hint={t('advanced.linkHint')}>
                     <TextField value={linkInput} onChange={setLinkInput} mono placeholder="https://example.com/file.mp4" />

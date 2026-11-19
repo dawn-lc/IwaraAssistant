@@ -56,6 +56,10 @@ export const configSchema = z.object({
      */
     aria2MaxConnections: z.number().int().min(1).max(16).default(4),
     aria2Split: z.number().int().min(1).max(16).default(4),
+    /** 调试通道：主动连本机的调试服务（默认关，见 docs/09-debug-bridge.md） */
+    debugBridgeEnabled: z.boolean().default(false),
+    /** 调试服务的端口（只连 127.0.0.1） */
+    debugBridgePort: z.number().int().min(1024).max(65535).default(8765),
     aria2Path: z.string().default('http://127.0.0.1:6800/jsonrpc'),
     aria2Token: z.string().default(''),
     iwaradlPath: z.string().default('http://127.0.0.1:23456/api/tasks'),

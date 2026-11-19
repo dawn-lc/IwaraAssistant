@@ -379,7 +379,14 @@
         "mediaSyncScan": "Reading MediaCenter list: {done} / {total}",
         "mediaSyncScanUnknown": "Reading MediaCenter list: {done} read",
         "mediaSyncPush": "Pushing mapped records: {done} / {total}",
-        "mediaSyncInterrupted": "The previous sync was interrupted (extension reloaded or browser closed) and did not finish."
+        "mediaSyncInterrupted": "The previous sync was interrupted (extension reloaded or browser closed) and did not finish.",
+        "bridgeTitle": "Debug bridge (local)",
+        "bridgeNote": "Off by default. When enabled, the extension **actively** connects to a local debug service on 127.0.0.1 (long polling) and pushes the queue, scan memory and background logs to it. The extension never listens on a port and accepts no inbound connections.",
+        "bridgeEnable": "Enable debug bridge",
+        "bridgeEnableHint": "Turn it on only while debugging; turning it off stops the connection. Credentials (token / password) are replaced with *** before sending",
+        "bridgePort": "Debug service port",
+        "bridgePortHint": "Connects to 127.0.0.1 only, default 8765. Start the debug service on the same port",
+        "bridgeHelp": "Start it with: node scripts/debug-bridge-server.mjs 8765, then open http://127.0.0.1:8765 for the latest snapshot and logs"
     },
     "guide": {
         "quickTitle": "Quick start",
