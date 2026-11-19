@@ -31,8 +31,9 @@ import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
 import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2ProgressOf, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
-import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
+import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { aria2StatusFieldsWith } from '../../../shared/aria2Flavor'
+import { aria2StoppedQueryLimit } from '../../../shared/aria2Options'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
 import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverResult } from './recover'
@@ -283,12 +284,15 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
         // 少了这一路，`statusOfAria2` 的 waiting/paused 分支就是永远走不到的死代码：
         // aria2 因并发上限排队的任务在队列里一直显示「下载中」，而没有任何路径能纠正它。
         const fields = await progressFields()
+        // 结果窗口上限由服务端 `max-download-result` 决定（0 = 不限），要多了纯属浪费
+        // 带宽：一条完整记录约 11 KB（提案 §9.5 实测 1134 条 = 12.2 MB）。
+        const stoppedLimit = aria2StoppedQueryLimit(await aria2GlobalOptions())
         const [actRes, waitRes, stopRes] = await Promise.all([
             aria2API<Aria2Status[]>('aria2.tellActive', [fields]),
             // 这一路只要 ID 字段：用途是「别把排队任务当成 running / 当成不存在」，不需要速度与进度。
             // 空表时回包不到 100 字节；失败也只当空表（少一路不影响其余对账）。
             aria2API<Aria2Status[]>('aria2.tellWaiting', [0, 500, EXTRACT_VIDEO_ID_FIELDS]).catch(() => ({ id: 'waiting', jsonrpc: '2.0', result: [] as Aria2Status[] })),
-            aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, fields])
+            aria2API<Aria2Status[]>('aria2.tellStopped', [0, stoppedLimit, fields])
         ])
         const activeTasks = (actRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent))
         const queuedTasks = (waitRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent) && (task.status === 'waiting' || task.status === 'paused'))

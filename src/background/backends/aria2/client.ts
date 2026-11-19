@@ -7,6 +7,7 @@ import { analyzePath } from '../../../shared/analyzePath'
 import { aria2AuthParams } from '../../../shared/aria2Rpc'
 import { isAria2GidMissingError } from '../../../shared/aria2Recover'
 import { ARIA2_CAPABILITIES_UPSTREAM, parseAria2Capabilities, refineAria2Capabilities, type Aria2Capabilities, type Aria2VersionInfo } from '../../../shared/aria2Flavor'
+import { ARIA2_GLOBAL_OPTIONS_DEFAULT, parseAria2GlobalOptions, type Aria2GlobalOptions } from '../../../shared/aria2Options'
 import { getConfig } from '../../storage/configStore'
 import { isWsOpen, serializeRpc, wsCall, Aria2RpcError } from './ws'
 
@@ -163,6 +164,30 @@ export function aria2CachedCapabilities(): Aria2Capabilities | undefined {
 /** 强制重探（例如用户改了 RPC 地址、或 aria2 重启换了二进制） */
 export function resetAria2Capabilities(): void {
     capabilitiesCache = undefined
+    optionsCache = undefined
+}
+
+/**
+ * 对面**正在生效**的全局配置（`aria2.getGlobalOption`）。
+ *
+ * 为什么必须问而不是假设：同一个参数在不同配置下含义不同，硬编等于替用户改配置。
+ * 尤其 `max-tries=0`（无限重试）与 `all-proxy`（配了代理）这两项，会直接改变
+ * 我们投递参数的对错（见 shared/aria2Options 的注释与实测）。
+ *
+ * 取不到就用上游默认值——那是最保守的一侧。
+ */
+let optionsCache: { at: number; value: Aria2GlobalOptions } | undefined
+
+export async function aria2GlobalOptions(): Promise<Aria2GlobalOptions> {
+    if (optionsCache && Date.now() - optionsCache.at < CAPABILITIES_TTL_MS) return optionsCache.value
+    try {
+        const res = await aria2API<Record<string, string>>('aria2.getGlobalOption', [])
+        const value = parseAria2GlobalOptions(res.result)
+        optionsCache = { at: Date.now(), value }
+        return value
+    } catch {
+        return ARIA2_GLOBAL_OPTIONS_DEFAULT
+    }
 }
 
 /**

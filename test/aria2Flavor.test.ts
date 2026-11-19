@@ -112,6 +112,6 @@ test('接线：字段集与进度都必须走分支感知的入口', () => {
     assert.match(tracker, /aria2StatusFieldsWith\(PROGRESS_FIELDS/, '扫描与探测都要按分支能力取字段')
     assert.doesNotMatch(tracker, /aria2Progress\(status\)/, '进度必须走 aria2ProgressOf，否则媒体任务恒 0%')
     const downloaders = readFileSync('src/background/download/downloaders.ts', 'utf8')
-    assert.match(downloaders, /caps\?\.stallsOnForbidden \? \{ 'max-tries': '5' \}/, '只有 403 会卡死的分支才加 max-tries')
-    assert.match(downloaders, /aria2AddUriParams\(localPath, cookie, await aria2Capabilities\(\)\)/, '投递时必须先探测分支')
+    assert.match(downloaders, /aria2RetryParams\(caps, options\)/, '重试上限必须按分支 + 服务端配置决定（见 aria2Options 的判据）')
+    assert.match(downloaders, /await Promise\.all\(\[aria2Capabilities\(\), aria2GlobalOptions\(\)\]\)/, '投递前要同时探测分支与正在生效的配置')
 })
