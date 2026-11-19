@@ -195,3 +195,21 @@ sequenceDiagram
 | `max-download-result` | 结果窗口上限，0 = 不限；决定 `tellStopped` 能拿到多少条                                                                                                      | 扫描按它取条数（再封顶 4096），不多要                                                                                  |
 
 `aria2GlobalOptions()`（`backends/aria2/client.ts`）取一次 `getGlobalOption` 并缓存 10 分钟，与能力探测同生命周期（`resetAria2Capabilities()` 一并清掉）。判据本身是纯函数（`src/shared/aria2Options.ts`），单测覆盖。
+
+## 9. 什么时候动一个「看起来还在跑」的任务
+
+aria2 有两条完全不同的「卡住」，判据分开，不能混。
+
+| 现象                 | 判据                                                                     | 出手                                 |
+| -------------------- | ------------------------------------------------------------------------ | ------------------------------------ |
+| **慢**：在动，但太慢 | `downloadSpeed <= 16 KB/s` 且连续 2 次采样；进度 ≥ 98% 且速度非 0 时豁免 | `restartAria2Task`（换地址，保进度） |
+| **停滞**：完全不动   | `active` 且**进展签名**连续 2 次采样没变（采样间隔 ≥ 45 秒）             | 同上                                 |
+
+停滞这条是给「aria2 根本不报错」准备的：aria2-next 3.1.x 上 403 会永远停在 `active`（`errorCode` 为空、每 10 秒重试一次），上游与 2.4.9 都会正常给 `errorCode 22`。除了「字节数不动」没有别的信号可用。
+
+两个容易写错的地方：
+
+1. **进展签名要包含媒体进度**。媒体任务的 `totalLength` 恒为 `0`（实测 3.1.1），只看 `completedLength` 会在分片合并期误判；签名是 `completedLength|aria2ProgressOf(status)`，后者对媒体任务取 `media.progress`。
+2. **采样要隔够时间**。1 分钟的 probe 与 5 分钟的扫描是两条独立定时器，撞在一起时各记一笔会让「连续 2 次」同时代表 2 分钟和 10 分钟。所以：`nextStallSample` 拒绝间隔 < 45 秒的重复采样，慢速采样则**只由 probe 记账**（扫描只读）。
+
+两条定时器各自加了单飞锁（`scanInFlight` / `probeInFlight`）：后到的调用等同一个 Promise。扫描一次要传 12 MB 的 `tellStopped`（1134 条历史），并发两份就是白烧 24 MB 流量，还会各自判「冗余」各删一遍结果。
