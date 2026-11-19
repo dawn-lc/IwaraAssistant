@@ -104,6 +104,22 @@ export function aria2Progress(status: Pick<Aria2StatusLike, 'totalLength' | 'com
 }
 
 /**
+ * 进度（0~1），**媒体任务单独走一条路**。
+ *
+ * 真机实测（aria2-next 3.1.1）：HLS 任务的 totalLength 恒为 0，进度只在 media.progress 里（"1.000000" 这种字符串）。直接调 aria2Progress 会返回 0，于是进度条永远 0%、慢速判据（要求 totalLength > 0）永不触发。
+ *
+ * 非媒体任务的行为与 aria2Progress 完全一致；媒体分支拿不到值时也返回 0——不猜，猜出来的百分比会盖掉真实状态。
+ */
+export function aria2ProgressOf(status: Pick<Aria2StatusLike, 'totalLength' | 'completedLength'> & { media?: { progress?: string } }): number {
+    if (Number(status.totalLength) > 0) return aria2Progress(status)
+    const raw = status.media?.progress
+    if (typeof raw !== 'string' && typeof raw !== 'number') return 0
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value < 0) return 0
+    return Math.min(1, value)
+}
+
+/**
  * 任务里最晚的过期时间：多源下载一个文件可能有多个 URL，取**最晚**的那个
  * （源 `aria2TrackTaskExpiry`）。比某个 URL 更晚过期，说明这个任务还能撑更久。
  *

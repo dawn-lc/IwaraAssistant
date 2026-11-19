@@ -6,6 +6,7 @@ import { among, isEmpty, isNullOrUndefined } from '../../../shared/strings'
 import { analyzePath } from '../../../shared/analyzePath'
 import { aria2AuthParams } from '../../../shared/aria2Rpc'
 import { isAria2GidMissingError } from '../../../shared/aria2Recover'
+import { ARIA2_CAPABILITIES_UPSTREAM, parseAria2Capabilities, refineAria2Capabilities, type Aria2Capabilities, type Aria2VersionInfo } from '../../../shared/aria2Flavor'
 import { getConfig } from '../../storage/configStore'
 import { isWsOpen, serializeRpc, wsCall, Aria2RpcError } from './ws'
 
@@ -34,6 +35,19 @@ export interface Aria2Status {
     dir?: string
     files?: Aria2File[]
     bittorrent?: unknown
+    /**
+     * 媒体任务（HLS/DASH）的进度信息。
+     *
+     * 只有 aria2-next 3.x 会返回，而且此时 totalLength 恒为 0 —— 进度只能看
+     * media.progress（见 shared/aria2Recover 的 aria2ProgressOf）。
+     */
+    media?: {
+        progress?: string
+        downloadedLength?: string
+        lengthKnown?: string
+        protocol?: string
+        live?: string
+    }
 }
 
 interface Aria2RpcResult<T> {
@@ -103,6 +117,52 @@ export const ARIA2_STATUS_FIELDS = ['gid', 'status', 'errorCode', 'errorMessage'
 export async function aria2TellStatus(gid: string): Promise<Aria2Status | undefined> {
     const res = await aria2API<Aria2Status>('aria2.tellStatus', [gid, [...ARIA2_STATUS_FIELDS]])
     return res.result
+}
+
+// ── 分支能力探测（上游 aria2 / aria2-next 各版本）────────────────────
+
+/**
+ * 能力缓存。
+ *
+ * 探测要一次 getVersion（对自报身份的 aria2-next 再补一次 system.listMethods），
+ * 不该在每个任务上重复做。10 分钟过期：换二进制重启是低频事件，过期后重探一次
+ * 就能自动切过来，不需要监听什么信号。
+ */
+let capabilitiesCache: { at: number; value: Aria2Capabilities } | undefined
+const CAPABILITIES_TTL_MS = 10 * 60 * 1000
+
+/**
+ * 探测对面是哪条分支、有哪些能力（失败返回上游默认值，绝不抛）。
+ *
+ * `stallsOnForbidden` 这类位决定要不要给任务加 `max-tries`，所以**拿不到就按上游**：
+ * 少加一个 option 顶多是恢复变慢，加错了会让老版本行为莫名其妙地变。
+ */
+export async function aria2Capabilities(): Promise<Aria2Capabilities> {
+    if (capabilitiesCache && Date.now() - capabilitiesCache.at < CAPABILITIES_TTL_MS) return capabilitiesCache.value
+    try {
+        const res = await aria2API<Aria2VersionInfo>('aria2.getVersion', [])
+        let caps = parseAria2Capabilities(res.result)
+        // 只有自报家门的新版 aria2-next 才值得再花一次往返确认扩展方法；
+        // 老版本（2.4.9）没有 product，多问一次也只会得到「没有」。
+        if (caps.flavor === 'aria2-next' && caps.selfIdentifying) {
+            const methods = await aria2API<string[]>('system.listMethods', []).catch(() => undefined)
+            if (methods?.result) caps = refineAria2Capabilities(caps, methods.result)
+        }
+        capabilitiesCache = { at: Date.now(), value: caps }
+        return caps
+    } catch {
+        return ARIA2_CAPABILITIES_UPSTREAM
+    }
+}
+
+/** 同步读缓存（已经探测过才有；用于字段表这类不该 await 的位置） */
+export function aria2CachedCapabilities(): Aria2Capabilities | undefined {
+    return capabilitiesCache?.value
+}
+
+/** 强制重探（例如用户改了 RPC 地址、或 aria2 重启换了二进制） */
+export function resetAria2Capabilities(): void {
+    capabilitiesCache = undefined
 }
 
 /**

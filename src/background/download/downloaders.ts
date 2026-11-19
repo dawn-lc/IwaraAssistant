@@ -59,7 +59,8 @@ export async function browserDownload(videoInfo: FullVideoInfo, ctx: ChannelCont
 
 // ── aria2 通道（原 aria2Download）────────────────────────────────────
 
-import { aria2API } from '../backends/aria2/client'
+import { aria2API, aria2Capabilities } from '../backends/aria2/client'
+import type { Aria2Capabilities } from '../../shared/aria2Flavor'
 
 interface Aria2TaskRef {
     gid: string
@@ -73,10 +74,15 @@ interface Aria2TaskRef {
  * 重建时视频信息可能解析失败，若签名要求一个 video，调用方就得伪造一个假的——
  * 而假的字段一旦被用到就会写出错误文件名。这里只收真正需要的输入。
  */
-export function aria2AddUriParams(localPath: AnalyzedPath, cookie: string): Record<string, unknown> {
+export function aria2AddUriParams(localPath: AnalyzedPath, cookie: string, caps?: Aria2Capabilities): Record<string, unknown> {
     const config = getConfig()
     return prune({
         'force-save': true,
+        // aria2-next 3.x 上 403 永远不会变成 error（实测：一直 active、errorCode 为空、
+        // 每 10 秒重试一次），而整条恢复链都建立在「先报错」上。给有限的 max-tries
+        // 把错误逼出来：实测同一 URL 从「永不报错」变成 2 秒内 error 22。
+        // 上游与 2.4.9 不需要（它们本来就报错），所以按分支能力加，不外溢。
+        ...(caps?.stallsOnForbidden ? { 'max-tries': '5' } : {}),
         'all-proxy': config.downloadProxy,
         'all-proxy-passwd': config.downloadProxy !== '' ? config.downloadProxyPassword : undefined,
         'all-proxy-user': config.downloadProxy !== '' ? config.downloadProxyUsername : undefined,
@@ -93,7 +99,7 @@ export async function aria2Download(videoInfo: FullVideoInfo, ctx: ChannelContex
     // 执行器统一经 buildDownloadUrl 注入 videoid/download 参数（与 others/browser 一致）
     const downloadUrl = buildDownloadUrl(videoInfo, localPath)
     const cookie = ctx.cookie ?? (await getPageCookie())
-    const downloadParams = aria2AddUriParams(localPath, cookie)
+    const downloadParams = aria2AddUriParams(localPath, cookie, await aria2Capabilities())
     // 指令走 WS 实时通道（未连接时 aria2API 内部自动降级 HTTP）
     const res = await callEndpoint(ARIA2_TARGET, config.aria2Path, () => aria2API<string>('aria2.addUri', [[downloadUrl.href], downloadParams]))
     if (typeof res.result !== 'string' || res.result === '') throw new Error(i18n.t('notify.aria2Failed', { detail: stringify(res) }))

@@ -40,7 +40,7 @@ import type { AnalyzedPath } from '../../../shared/analyzePath'
 import { buildChangeUriParams, canRebuildFromOldUris } from '../../../shared/aria2Recover'
 import type { FullVideoInfo } from '../../../shared/videoInfo'
 import { stringify } from '../../../shared/strings'
-import { aria2API, aria2RemoveResult, aria2TellStatus, type Aria2Status } from './client'
+import { aria2API, aria2Capabilities, aria2RemoveResult, aria2TellStatus, type Aria2Status } from './client'
 import { getPageCookie } from '../../iwara/auth'
 import { getDownloadPath, buildDownloadUrl } from '../../download/downloadPath'
 import { aria2AddUriParams } from '../../download/downloaders'
@@ -167,7 +167,7 @@ export async function rebuildAria2Task(gid: string, videoId: string, status: Ari
     try {
         const cookie = await getPageCookie()
         const localPath = fresh ? getDownloadPath(fresh.videoInfo) : pathFromStatus(status, videoId)
-        const params = aria2AddUriParams(localPath, cookie)
+        const params = aria2AddUriParams(localPath, cookie, await aria2Capabilities())
         const added = await aria2API<string>('aria2.addUri', [urls, params])
         const nextGid = added.result
         if (typeof nextGid !== 'string' || nextGid === '') {

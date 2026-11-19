@@ -28,10 +28,11 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2Progress, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
+import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2ProgressOf, recoverExhausted, shouldRestartForSlowSpeed, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
-import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
+import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
+import { aria2StatusFieldsWith } from '../../../shared/aria2Flavor'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
 import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverResult } from './recover'
@@ -106,6 +107,16 @@ const PROGRESS_EPSILON = 0.005
 const PROGRESS_FIELDS = [...EXTRACT_VIDEO_ID_FIELDS, 'totalLength', 'completedLength', 'downloadSpeed']
 
 /**
+ * 本轮要请求的字段集。
+ *
+ * 媒体分支（aria2-next 3.x）多要一个 `media`：那里 `totalLength` 恒为 0，进度只能从
+ * `media.progress` 读。上游不认识这个键，所以**不能无条件加**——按分支能力决定。
+ */
+async function progressFields(): Promise<string[]> {
+    return aria2StatusFieldsWith(PROGRESS_FIELDS, await aria2Capabilities())
+}
+
+/**
  * 把「还在跑」的任务的实时状态同步回队列（状态 + 进度）。
  *
  * 两个都必须看：WS 的 `onDownloadStart` 可能丢（SW 挂起），那时队列里还是 `queued`
@@ -115,7 +126,8 @@ const PROGRESS_FIELDS = [...EXTRACT_VIDEO_ID_FIELDS, 'totalLength', 'completedLe
  * 两处用不同算法会让界面上的百分比和「接近完成」的豁免阈值对不上。
  */
 async function syncLiveState(task: QueueTask, status: Aria2Status, nextStatus: QueueTask['status']): Promise<void> {
-    const progress = aria2Progress(status)
+    // 媒体任务（HLS/DASH）的 totalLength 恒为 0，进度只在 media.progress 里
+    const progress = aria2ProgressOf(status)
     const statusChanged = task.status !== nextStatus
     // progress === 0 时不写：那既可能是「刚开始」也可能是「读不到 totalLength」，
     // 写成 0 等于替后端编了一个值
@@ -270,12 +282,13 @@ export async function scanAria2TasksAndEnqueue(): Promise<{ adopted: number; sto
         // **waiting 与 paused 只在 `tellWaiting` 里**（aria2 的 reservedGroups）。
         // 少了这一路，`statusOfAria2` 的 waiting/paused 分支就是永远走不到的死代码：
         // aria2 因并发上限排队的任务在队列里一直显示「下载中」，而没有任何路径能纠正它。
+        const fields = await progressFields()
         const [actRes, waitRes, stopRes] = await Promise.all([
-            aria2API<Aria2Status[]>('aria2.tellActive', [PROGRESS_FIELDS]),
+            aria2API<Aria2Status[]>('aria2.tellActive', [fields]),
             // 这一路只要 ID 字段：用途是「别把排队任务当成 running / 当成不存在」，不需要速度与进度。
             // 空表时回包不到 100 字节；失败也只当空表（少一路不影响其余对账）。
             aria2API<Aria2Status[]>('aria2.tellWaiting', [0, 500, EXTRACT_VIDEO_ID_FIELDS]).catch(() => ({ id: 'waiting', jsonrpc: '2.0', result: [] as Aria2Status[] })),
-            aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, PROGRESS_FIELDS])
+            aria2API<Aria2Status[]>('aria2.tellStopped', [0, 4096, fields])
         ])
         const activeTasks = (actRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent))
         const queuedTasks = (waitRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent) && (task.status === 'waiting' || task.status === 'paused'))
@@ -525,7 +538,7 @@ export async function probeAria2SlowTasks(): Promise<void> {
     }
     await loadScanMemory()
     try {
-        const res = await aria2API<Aria2Status[]>('aria2.tellActive', [PROGRESS_FIELDS])
+        const res = await aria2API<Aria2Status[]>('aria2.tellActive', [await progressFields()])
         for (const status of res.result ?? []) {
             if (status.status !== 'active') continue
             const videoId = extractVideoIdFromTask(status)
