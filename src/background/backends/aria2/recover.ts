@@ -199,10 +199,12 @@ function pathFromStatus(status: Aria2Status, videoId: string): AnalyzedPath {
 /** aria2 并发队列是否已满（源 `isAria2QueueFull`）：paused 重启前的守门 */
 export async function isAria2QueueFull(): Promise<boolean> {
     try {
-        const [stat, option] = await Promise.all([aria2API<{ numActive?: string }>('aria2.getGlobalStat', []), aria2API<Record<string, string>>('aria2.getGlobalOption', [])])
+        const [stat, options] = await Promise.all([aria2API<{ numActive?: string }>('aria2.getGlobalStat', []), aria2GlobalOptions()])
         const active = Number.parseInt(stat.result?.numActive ?? '0', 10)
-        const maxConcurrent = Number.parseInt(option.result?.['max-concurrent-downloads'] ?? '5', 10)
-        if (!Number.isFinite(active) || !Number.isFinite(maxConcurrent)) return false
+        // 曾经这里写的是 `?? '5'`：读不到上限就**假装**上限是 5。那与「查不到就不要阻塞恢复」
+        // 的语义相反——恢复一个暂停任务是免费的，而误判「队列满」会让它一直停着。
+        const maxConcurrent = options.maxConcurrentDownloads
+        if (!Number.isFinite(active) || !Number.isFinite(maxConcurrent) || maxConcurrent <= 0) return false
         return active >= maxConcurrent
     } catch {
         // 查不到并发上限时**不阻塞恢复**：宁可多试一次，也不因为一个附加查询丢掉恢复机会
