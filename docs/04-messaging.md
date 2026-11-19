@@ -17,7 +17,7 @@
 | 采集      | `INGEST_VIDEO_INFO` / `INGEST_AUTH` / `INGEST_COOKIE`                                                                                           | 页面 MAIN / ISOLATED 上行；后台负责解析、落库与 token 使用                                                                                                        |
 | 下载      | `INIT_DOWNLOAD` / `DOWNLOAD` / `DOWNLOAD_METADATA` / `CHECK_LINK` / `BATCH_DOWNLOAD` / `FORCE_DOWNLOAD`                                         | 发起下载、链接预检、批量入队、跳过预检的显式强制下载                                                                                                              |
 | 查询/配置 | `GET_VIDEOS` / `GET_CONFIG` / `PAGE_READY` / `GET_CACHE_INJECTION` / `ENV_CHECK` / `GET_CARD_META` / `GET_BACKEND_STATS`                        | 视频库与配置查询、页面就绪、按页窗查询回填列表、环境自检、卡片角标、后端容量                                                                                      |
-| 队列      | `RETRY_TASK` / `REMOVE_TASK` / `CLEAR_FINISHED` / `RETRY_FAILED` / `SYNC_DOWNLOAD_TASKS`                                                        | 队列操作全部由后台执行；running 任务不可直接移除                                                                                                                  |
+| 队列      | `RETRY_TASK` / `REBUILD_TASK` / `REMOVE_TASK` / `CLEAR_FINISHED` / `RETRY_FAILED` / `SYNC_DOWNLOAD_TASKS`                                       | 队列操作全部由后台执行；running 任务不可直接移除                                                                                                                  |
 | 同步      | `SYNC_ALL_VIDEOS` / `SYNC_SUBSCRIBED` / `SYNC_MEDIA_CENTER` / `GET_MEDIA_SYNC_STATE` / `REMOVE_PLAYLIST_ITEMS`                                  | 全量/订阅遍历、MediaCenter 推送、播放列表移除（进度一律走快照，见下）                                                                                             |
 | 好友      | `APPROVE_FRIEND_REQUESTS` / `GET_FRIEND_APPROVE_STATE`                                                                                          | 审批只返回「已开始」，进度与结果由 `storage.session` 快照推送                                                                                                     |
 | 迁移/导出 | `LEGACY_DB_SCAN` / `IMPORT_LEGACY_DB` / `LEGACY_DB_PULL` / `LEGACY_DB_BATCH` / `LEGACY_DB_PROGRESS` / `DB_EXPORT_PAGE` / `DB_STORE_COUNTS`      | 旧库检测与显式导入、四表分页导出、进度与条数                                                                                                                      |
@@ -55,6 +55,12 @@
 >
 > 想绕过那道门只有一条路：`FORCE_DOWNLOAD { videoId }`（任务列表里 `skipped` 行的「强制下载」）。
 > 不去伪造 `pageType: 'video'`——那等于让调用方谎报页面上下文，且页型判定一变就会静默失效。
+
+> **`REBUILD_TASK` 与 `RETRY_TASK` 不是同义词**：`RETRY_TASK` 只把 `attempts` 归零后重新投递；`REBUILD_TASK` 还会
+> **先清掉自动恢复的闸门**（网络退避、熔断、恢复次数、慢速与停滞采样）与 aria2 侧旧记录，再重解析 + 重投递。
+> 之所以要有这条消息：自动路径对三类失败**刻意不动**（网络被阻断该等恢复、磁盘满/文件已存在重试必然再撞），
+> 用户处理完外部条件后需要一个不受退避限制的明确入口。判据 `taskRebuildable` 只看状态（`failed`），不看失败归因。
+> 两者都不接受 `skipped`（会被链接检查原样拦回，正路是 `FORCE_DOWNLOAD`）。详见 [08-aria2-flow.md](08-aria2-flow.md) 的「手动出口」一节。
 
 > **`REMOVE_TASK` 对下载中的任务会先取消下载器**，返回 `{ removed: boolean; cancelled?: boolean }`。
 > 只抹记录会留下一个无人看管的下载：`browser` 通道不再回传终态，`aria2` 里的任务会在 5 分钟后

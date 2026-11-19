@@ -99,13 +99,16 @@
 
 ---
 
-## 6. aria2 的五个坑（全部实测）
+## 6. aria2 的七个坑（全部实测）
 
 1. **`aria2.restart` 不存在**。1.36.0 的 `system.listMethods` 无此方法；调用返回 `{"code":1,"message":"No such method: aria2.restart"}`（无 token 时先回 `Unauthorized`，所以**必须带 token 才能测**）。源项目那条 error 分支是死代码且有害：`aria2API` 只 `fetch().json()`（RPC 错误不抛异常）→ `restartRes.result` 是 undefined → 仍执行 `removeDownloadResult`（真删了记录）→ `changeUri(undefined,…)` 静默失败 → 任务从队列消失。正确路径是「清结果 + `addUri`」。
 2. **WS 分支曾经不发 token**。`token:` 前缀只有 HTTP 拼了一处；WS 拿 `Unauthorized` → 抛异常 → 降级 HTTP（带 token）→ 看起来正常。等把「RPC 级错误不降级」改上去后，掩盖层被移除，缺陷才暴露成「环境自检 Unauthorized」。**同一个 RPC 有多条传输路径时，认证参数必须由唯一一处生成**；「失败自动降级」会静默掩盖前一条通道的毛病，降级路径必须可观测（日志计数）。
 3. **`changeUri` 参数**：`fileIndex` 必须是 **1**（传 0 被拒：`must be greater than or equal to 1`）；`position: 0` 必须显式给（否则新地址只追加到 `uris` 末尾，`used` 仍是旧地址）。对 `active` 任务调 `unpause` 会抛 `cannot be unpaused now`，把同一次 try 里的 `changeUri` 一起判失败。
 4. **`allow-overwrite` 救不了「File exists but a control file does not exist」**。aria2 源码里 `tryAutoFileRenaming()` 只看 `auto-file-renaming`（默认 false），而 `adjustFilename()` 在「同一文件正被另一个 RequestGroup 处理」时的分支**完全不参与 allow-overwrite**。这条错误是竞态的产物，也是**重复投递**的后遗症；根治只能靠投递前去重。
 5. **事故：慢速恢复把 87 个真实任务复制了**。`rebuildAria2Task` 无条件回退旧地址（源项目同款写法），慢速分支在 `restart` 失败时降级到它 → 每个任务多出一个 0 字节副本、原任务消失。修法：只有 `error`/`removed` 才允许用旧地址兜底（`canRebuildFromOldUris`）。衍生事实：`active` 任务的重建参数里没有 `continue`，所以「重建」一定丢进度；`force-save`/`allow-overwrite: true` 会让副本从头覆盖同一文件。
+
+6. **`all-proxy: ''` 的真实语义是「不走代理」，不是「继承」**。实测：全局代理指向一个不通的地址（`http://127.0.0.1:9`）时，不带该选项的任务继承代理、一直 `active` 连不上；带空串的任务 `getOption` 里**没有** `all-proxy` 键且**直连成功**。旧实现「用户没配代理就传空串」等于把用户 `aria2.conf` 里的代理静默关掉（两台测试机都没配代理，所以一直没暴露）。修法：没配就**别传这个键**（`shared/aria2Options.ts` 的 `aria2ProxyParams`）。凡是能改变语义的选项，先问 `aria2.getGlobalOption`。
+7. **上游默认值会让「aria2 通道」看起来比浏览器还慢**：`--max-connection-per-server` 默认 **1**（每个文件一条连接）、`--min-split-size` 默认 **20M**（<40 MB 的文件不分段）、`--retry-wait` 默认 **0**（此时 502/503 根本不重试）。用户 conf 里若没写过这几项，我们就是在用单连接下载，还把一次网关抖动升级成「任务失败」。现在投递时显式补，且**只往更并行的方向补**（conf 已配更高就不覆盖）。
 
 **慢速判定的采样必须持久化**：源项目是每任务 worker 4 秒轮询 ×16 次；我们是分钟级探测，采样计数原本只存内存 → Chrome SW 空闲 30 秒就回收，而探测 1 分钟一次 ⇒ **每次都是新实例，「连续 2 次」永远数不到 2**（自移植以来从未触发过）。现在存 `storage.session`。
 
@@ -207,7 +210,7 @@
 - `content/` 顶层只留 manifest 入口（`mainWorld` / `isolated` / `pageUi` / `markers`）+ 功能目录。
 - `download/cardMeta.ts` → `storage/`（它不下东西，只读库拼视图模型，与 `cacheList` 是一对）。
 
-**聚合 vs 保留的判据**：同一个概念被切成多个文件 → 聚合（任务语义曾散在 `task` / `taskReconcile` / `cancelStrategy` 三处）；彼此独立的叶子工具 → 平铺（`shared/` 28 个文件只有 8 处互相引用）。**纯/不纯的边界比领域边界更重要**：`iwaradl` 的模型必须留在 `shared/`，否则单测会 import 整条后台链。
+**聚合 vs 保留的判据**：同一个概念被切成多个文件 → 聚合（任务语义曾散在 `task` / `taskReconcile` / `cancelStrategy` 三处）；彼此独立的叶子工具 → 平铺（`shared/` 41 个模块只有少量互相引用）。**纯/不纯的边界比领域边界更重要**：`iwaradl` 的模型必须留在 `shared/`，否则单测会 import 整条后台链。
 
 **迁移脚本的三个坑**：解析旧 specifier 不能查 `fs.existsSync`（文件此刻已移走，要构造「旧路径集合」做字符串匹配）；正则会漏**动态导入** `import('./x')`（靠 `type-check` 抓）；文件清单必须在移动**之后**重新收集。`import.meta.dirname` 的相对深度也要跟着改，否则 e2e 会报「未找到扩展产物」。
 
@@ -225,3 +228,15 @@
 - `videoUploadTime` 缺省不写（源写 `0`，等于造假）。
 - 进入 `/videos` 的自动遍历加了 5 分钟最小间隔（源是每次 pageChange 试一次）。
 - 默认下载方式是**浏览器内建**（源默认 `Others`，那是油猴环境没有 `downloads.download` 的妥协）。`others` 对扩展来说是「交付即失联」通道。
+
+---
+
+## 14. 网络受限环境与「别把网络问题当链接失效」（2026-11-19 实测）
+
+用户网络里的 DNS 污染 / 连接重置 / IP 阻断 / SNI 嗅探与「iwara 直链过期」在我们眼里都是「aria2 报了个错」，但**处置相反**：过期要重解析，网络阻断重解析毫无用处（新链接一样连不上，而且解析本身也要出网）。
+
+- **归因表**（`shared/aria2Network.ts`，纯函数）：`22 + status=401/403/404/410`、`4` → `expired`（重解析）；`22 + status=5xx`、`29` → `transient`；`6/19/2/23`、报文含 connection reset / name resolution / TLS → `network`（退避，**不计入恢复上限**）；`11/13` → `file-conflict`；`9/10/15/16/17/18` → `permanent`（磁盘满、目录不可写，重试必然再撞）。
+- **退避**：1 分钟起翻倍、封顶 30 分钟。**熔断**：最近 5 分钟 ≥3 个任务网络失败 ⇒ 冷却 10 分钟，期间一个 RPC 一个解析都不发，只发一条通知。阻断是**成片**的，逐个小步退避仍会把 20 次解析 + 20 次 addUri 打出去，而这些请求大概率也出不去。
+- **手动出口**：`REBUILD_TASK`（任务页「重建」）对每条 `failed` 都给，判据只看状态不看归因；它会清掉退避/熔断/attempts 再重投递。自动路径对上述三类失败是刻意不动的，若没有人工出口，用户处理完网络后只能干等。
+- **`tellStopped` 全量的真实代价**（1134 条历史）：`tellStopped(0,4096,全字段)` = **12,815,311 B / 289 ms**，`getGlobalStat` 只有 **153 B**；5 分钟一轮 ≈ **3.5 GB/天**。改为先问 `numStoppedTotal` + `sessionId`：计数没变就**一条都不拉**，涨了 N 只拉 `min(256, N+8)`，每 12 轮全量一次，`sessionId` 变化（aria2 重启）立即全量并清空采样。**`sessionId` 也是 gid 失效的唯一可靠信号**。
+- **`attempts` 必须落盘再重试**：`retryTask` 有三处早退，早退时内存里的 `+1` 从不写回；Chrome MV3 的 SW 每 30 秒可能被回收 ⇒ 计数永远停在 0 ⇒ 永久失败（私有视频 / 外部 embed / errorCode 13）被每 30 分钟重打一次，永不停止，还占满 `RETRY_BATCH_LIMIT` 的名额。**任何跨事件保留的计数都必须先写存储。**

@@ -68,13 +68,13 @@ flowchart TB
 
 `index.ts` 是**装配层**——注册事件监听、启动恢复、消息路由。业务逻辑一律下沉到目录里。
 
-| 目录        | 装什么                                         | 典型文件                                                                                                                              |
-| ----------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `storage/`  | 本地状态的唯一真源                             | `configStore`（配置）、`queue`（队列唯一写者）、`db`（IndexedDB）、`parse`、`cacheList`                                               |
-| `iwara/`    | 与站点交互（都要网络或身份）                   | `auth`、`videoApi`、`comments`、`interactions`、`playlists`、`friendApprove`、`promoteAuthor`、`linkCheck`、`pageSync`、`mediaCenter` |
-| `download/` | 下载编排：把视频变成任务、把任务交给后端       | `dispatch`、`downloaders`、`downloadPath`、`adopt`、`cancel`、`batch`、`cardMeta`、`envCheck`                                         |
-| `backends/` | 每个下载后端的连接与对账，**一个后端一个目录** | `aria2/{client,ws,tracker,recover}`、`iwaradl/{client,tracker}`                                                                       |
-| `runtime/`  | 宿主平台能力（横切）                           | `alarms`、`notify`、`clipboard`、`contextMenus`、`keepAlive`、`guardRules`                                                            |
+| 目录        | 装什么                                         | 典型文件                                                                                                                                          |
+| ----------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage/`  | 本地状态的唯一真源                             | `configStore`（配置）、`queue`（队列唯一写者）、`queueReconcile`、`db`（IndexedDB）、`parse`、`cacheList`、`cardMeta`、`legacyImport`             |
+| `iwara/`    | 与站点交互（都要网络或身份）                   | `auth`、`videoApi`、`comments`、`interactions`、`playlists`、`friendApprove`、`promoteAuthor`、`linkCheck`、`pageSync`、`mediaCenter`             |
+| `download/` | 下载编排：把视频变成任务、把任务交给后端       | `dispatch`、`downloaders`、`downloadPath`、`adopt`、`cancel`、`batch`、`parseFailure`、`queueActions`、`browserQueue`、`backendStats`、`envCheck` |
+| `backends/` | 每个下载后端的连接与对账，**一个后端一个目录** | `aria2/{client,ws,tracker,recover}`、`iwaradl/{client,tracker}`                                                                                   |
+| `runtime/`  | 宿主平台能力（横切）                           | `alarms`、`notify`、`clipboard`、`contextMenus`、`keepAlive`、`guardRules`                                                                        |
 
 **后端目录必须同名**：同一角色的文件在不同后端目录里叫同一个名字（`client` = 连接与指令门面，`tracker` = 对账，`recover` = 恢复）。
 
@@ -118,13 +118,13 @@ content/
 
 ### `src/shared/` 为什么平铺
 
-它是**叶子工具库**：30 个文件里只有少量互相引用（`analyzePath → i18n`、`migrationStream → legacyDb` 之类），没有任何服务依赖网络。文件名即用途（`task` / `url` / `paging`），再套一层目录反而让「这个纯函数在哪」需要先猜目录。
+它是**叶子工具库**：41 个模块里只有少量互相引用（`analyzePath → i18n`、`migrationStream → legacyDb` 之类），没有任何服务依赖网络。文件名即用途（`task` / `url` / `paging`），再套一层目录反而让「这个纯函数在哪」需要先猜目录。
 
 判据：**有内部依赖网络的服务模块要按领域分目录；彼此独立的叶子工具平铺**。
 
 ### `test/`：与源文件同名
 
-30 个测试全部平铺且**文件名与被测模块一致**（`shared/task.ts` → `test/task.test.ts`）。
+45 个测试全部平铺且**文件名与被测模块一致**（`shared/task.ts` → `test/task.test.ts`）。
 这一层不需要按 `src/` 的五个领域再分一层目录：找测试的唯一途径是「我知道要看哪个模块」，
 而同名文件比路径更快。合并后的测试文件内部用 `── 某主题 ──` 分节（例如 `task.test.ts` 的
 通道能力 / 重启对账 / 取消策略三节）。

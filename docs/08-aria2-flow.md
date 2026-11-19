@@ -45,7 +45,7 @@ flowchart TD
 flowchart TD
     S["scanAria2TasksAndEnqueue"] --> C{"aria2 已配置？"}
     C -->|"否"| R0["直接返回"]
-    C -->|"是"| F["并发三路只读<br/>tellActive(全字段) · tellWaiting(仅 ID) · tellStopped(0,4096,全字段)"]
+    C -->|"是"| F["先问计数：getGlobalStat(numStoppedTotal) + getSessionInfo(sessionId)<br/>计数没变则本轮跳过 tellStopped<br/>变了才拉 min(256, Δ+8) 条；每 12 轮全量一次<br/>tellActive(全字段) · tellWaiting(仅 ID)"]
     F --> G["按 videoid 分组<br/>路径反查不到的 → rejected"]
     G --> P["planAria2Group：选保留者<br/>完成度最高，队列里的 gid 优先"]
     P --> L1["liveLosers：remove + 等入表再清结果"]
