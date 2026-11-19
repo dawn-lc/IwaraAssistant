@@ -163,6 +163,9 @@
         "aliasMax": "ALIAS 最大长度"
     },
     "tasks": {
+        "actionForceOverwrite": "强制覆盖",
+        "forceOverwriteHint": "带覆盖参数重新投递：允许覆盖已存在的目标文件、不改名、不续传。会真的写那个文件，不可撤销",
+        "forceOverwrote": "已按覆盖参数重新投递 [{id}]",
         "title": "下载队列",
         "empty": "暂无任务。在 iwara 页面右键视频链接 → 「Iwara Assistant → 下载此视频」，或在页内菜单中批量下载。",
         "filterLabel": "队列筛选",
@@ -452,6 +455,7 @@
         }
     },
     "notify": {
+        "forceOverwriteAria2Only": "「强制覆盖」只对 aria2 通道有效",
         "batchQueued": "批量入队完成：共 {total} 个，失败 {failed} 个",
         "batchQueuedSkipped": "，跳过已下载或下载中的 {n} 个",
         "batchAllSkipped": "所选的 {n} 个视频都已下载或在下载中，本次没有新建任务",

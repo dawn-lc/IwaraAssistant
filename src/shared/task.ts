@@ -68,6 +68,20 @@ export interface QueueTask {
     followUpKind?: FollowUpKind
     /** 自动重试已尝试次数（retry-failed alarm 用；上限见 alarms.ts） */
     attempts?: number
+    /**
+     * 失败归因：目标文件已存在 / 同路径被另一任务占用（aria2 errorCode 11/13）。
+     *
+     * 单独打标记是因为这一类**重建一定再撞**（自动路径刻意不救），而用户此时唯一想要的是
+     * 「别管那个文件，覆盖掉重下」——任务页据此给一颗「强制覆盖」按钮。
+     */
+    conflict?: true
+    /**
+     * 失败归因：站点已判定这个视频不可用（已删除 / 仅好友可见 / 被禁）。
+     *
+     * 同样**不自动重试**：每次重解析都只会得到同一句话，重试等于白烧请求 + 在 aria2 里留残骸。
+     * 留给用户自己处理（去作者主页加好友 / 确认后移除），所以自动重试的 alarm 会跳过它。
+     */
+    unrecoverable?: true
     /** 入队时间（ms）；旧记录可能缺失，UI 需容错 */
     createdAt?: number
     /** 最后状态变更时间（ms）；用于排序与「多久没动」判定 */

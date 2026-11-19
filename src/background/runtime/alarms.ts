@@ -48,7 +48,11 @@ async function retryFailedTasks(): Promise<void> {
     // （任务面板上的 “Download aborted.” 有一部分就是这么来的）。
     const seenVideos = new Set<string>()
     const candidates = getTasks()
-        .filter((task) => task.status === 'failed' && (task.attempts ?? 0) < RETRY_MAX_ATTEMPTS)
+        // ② 归因明确的失败**不自动重试**：`unrecoverable`（视频已删/仅好友可见）与
+        //    `conflict`（目标文件已存在/同路径被占用）都不是重试能解决的，自动打出去只会
+        //    白烧一次解析、在 aria2 里留一条新残骸。这两类留给用户：前者去加好友或移除，
+        //    后者用任务页的「强制覆盖」。
+        .filter((task) => task.status === 'failed' && task.unrecoverable !== true && task.conflict !== true && (task.attempts ?? 0) < RETRY_MAX_ATTEMPTS)
         .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
         .filter((task) => {
             if (seenVideos.has(task.videoId)) return false

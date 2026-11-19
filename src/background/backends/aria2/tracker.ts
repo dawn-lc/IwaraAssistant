@@ -238,6 +238,7 @@ async function handleDownloadError(gid: string, recoverable = true): Promise<voi
         // 同视频已经下完了 ⇒ 这条是重复投递的残骸，删掉它而不是报一句让用户猜的「请先确认是否已下好」
         if (await dropDuplicateConflictRow(task)) return
         task.status = 'failed'
+        task.conflict = true
         task.detail = i18n.t('notify.aria2FileConflict', { id: task.videoId })
         await syncTask(task)
         await notifyTask(task)
@@ -288,6 +289,9 @@ async function discardFailedAria2Records(stopped: readonly Aria2Status[]): Promi
         const record = byGid.get(task.kindRef!)
         if (record === undefined) continue
         if (record.status !== 'error' && record.status !== 'removed') continue
+        // 顺手补打归因标记：旧版本的记录只有一句 detail，没有 `conflict`。
+        // 不打标记 = 界面拿不到「强制覆盖」按钮，用户只能看着「目标文件已存在」无从下手。
+        if (record.status === 'error' && isFileConflictErrorCode(record.errorCode) && task.conflict !== true) await patchTask(task.id, { conflict: true })
         await aria2RemoveResult(record.gid)
         removed++
     }
@@ -827,7 +831,7 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         // 重复投递的残骸：同视频已有完成/在下的记录 ⇒ 删掉这条重复行，别报假失败
         if (queuedTask && (await dropDuplicateConflictRow(queuedTask))) return true
         if (queuedTask) {
-            await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2FileConflict', { id: videoId }) })
+            await patchTask(queuedTask.id, { status: 'failed', conflict: true, detail: i18n.t('notify.aria2FileConflict', { id: videoId }) })
             const failed = findTask({ id: queuedTask.id })
             if (failed) await notifyTask(failed)
         }
@@ -969,11 +973,11 @@ async function failUnrecoverableVideo(videoId: string, queuedTask: QueueTask | u
     const oldGid = queuedTask?.kindRef
     if (oldGid !== undefined && oldGid !== '') await aria2RemoveResult(oldGid)
     if (queuedTask) {
-        await patchTask(queuedTask.id, { status: 'failed', detail, ...(outcome.followUpUrl === undefined ? {} : { followUpUrl: outcome.followUpUrl, followUpKind: outcome.followUpKind }) })
+        await patchTask(queuedTask.id, { status: 'failed', unrecoverable: true, detail, ...(outcome.followUpUrl === undefined ? {} : { followUpUrl: outcome.followUpUrl, followUpKind: outcome.followUpKind }) })
         const failed = findTask({ id: queuedTask.id })
         if (failed) await notifyTask(failed)
     } else {
-        await addTask({ id: crypto.randomUUID(), videoId, kind: 'aria2', status: 'failed', detail })
+        await addTask({ id: crypto.randomUUID(), videoId, kind: 'aria2', status: 'failed', unrecoverable: true, detail })
     }
     console.warn(`[iwara-assistant] ${videoId} 站点判定不可用（${message}），已标失败并给出下一步，不再自动重建`)
 }

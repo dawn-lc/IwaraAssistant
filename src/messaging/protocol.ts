@@ -199,6 +199,7 @@ export type Req =
      */
     | { type: 'FORCE_DOWNLOAD'; payload: { videoId: string; pageType?: PageType } }
     /** 从队列移除单条已结束任务（running 不可移除） */
+    | { type: 'FORCE_OVERWRITE_TASK'; payload: { taskId: string } }
     | { type: 'REMOVE_TASK'; payload: { taskId: string } }
     /** 清除全部已结束（complete / failed）任务 */
     | { type: 'CLEAR_FINISHED'; payload: Record<string, never> }

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskRebuildable, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, followUpOpenSettles } from '../src/shared/taskView'
+import { sortTasks, taskCounts, taskForceOverwriteable, taskGroupOf, taskPrimaryActionOf, taskRebuildable, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, followUpOpenSettles } from '../src/shared/taskView'
 import { readSource } from './sourceGuard'
 import type { QueueTask } from '../src/shared/task'
 
@@ -239,4 +239,47 @@ test('接线：重建走独立消息且必须先清自动恢复闸门，按钮�
     const tab = readSource('src/options/tabs/TasksTab.tsx')
     assert.match(tab, /type: 'REBUILD_TASK'/, '界面必须发独立消息，不能复用 RETRY_TASK')
     assert.ok(tab.indexOf('rebuildOne(task)') < tab.indexOf('removeOne(task)'), '「移除」永远是操作列最后一个按钮（e2e 契约）')
+})
+
+test('强制覆盖按钮：只给「目标文件已存在/同路径被占用」这一类失败', () => {
+    assert.equal(taskForceOverwriteable({ status: 'failed', conflict: true } as never), true)
+    assert.equal(taskForceOverwriteable({ status: 'failed' } as never), false, '没有归因标记就不给：覆盖会真的写掉磁盘上的文件')
+    assert.equal(taskForceOverwriteable({ status: 'failed', conflict: true, unrecoverable: true } as never), true, '两类标记同时存在时仍按 conflict 处理（覆盖是可行动的）')
+    assert.equal(taskForceOverwriteable({ status: 'complete', conflict: true } as never), false, '下完了不该覆盖')
+    assert.equal(taskForceOverwriteable({ status: 'running' } as never), false)
+})
+
+test('接线：强制覆盖要带真参数，且只给 aria2 通道', () => {
+    const downloaders = readSource('src/background/download/downloaders.ts')
+    // 收窄到参数组装函数：三个覆盖键必须成组出现，且默认不带
+    const start = downloaders.indexOf('export function aria2AddUriParams')
+    assert.ok(start > 0)
+    const body = downloaders.slice(start, downloaders.indexOf('export async function aria2Download'))
+    assert.match(body, /forceOverwrite = false/, '默认必须是 false：默认覆盖会截断同名文件')
+    assert.match(body, /'allow-overwrite': 'true'/, '允许覆盖才是「强制覆盖」的本体')
+    assert.match(body, /'auto-file-renaming': 'false'/, '不关掉自动改名会写出 xxx.1.mp4，用户看到「多了一份」')
+    assert.match(body, /continue: 'false'/, '续传一个可能损坏的残片只会得到「已完成」假象')
+    const actions = readSource('src/background/download/queueActions.ts')
+    const forceStart = actions.indexOf('export async function forceOverwriteTaskById')
+    assert.ok(forceStart > 0, '后台入口必须存在')
+    const forceBody = actions.slice(forceStart, actions.indexOf('/** 单条移除', forceStart))
+    assert.match(forceBody, /task\.kind !== 'aria2'/, '只对 aria2 通道有效（浏览器通道没有覆盖语义）')
+    assert.match(forceBody, /await aria2API\('aria2\.remove', \[liveGid\]\)/, '占着同一路径的活任务必须先摘掉，否则覆盖参数也过不了门')
+    assert.match(forceBody, /retryTask\(task, \{ forceOverwrite: true \}\)/, '必须把覆盖参数传下去')
+    const tab = readSource('src/options/tabs/TasksTab.tsx')
+    assert.match(tab, /type: 'FORCE_OVERWRITE_TASK'/, '界面发独立消息')
+    assert.ok(tab.indexOf('forceOverwriteOne(task)') < tab.indexOf('removeOne(task)'), '「移除」仍然最后')
+})
+
+test('接线：归因明确的失败不自动重试（视频没了 / 文件冲突交给用户）', () => {
+    const alarms = readSource('src/background/runtime/alarms.ts')
+    assert.match(alarms, /task\.unrecoverable !== true/, '视频已删/仅好友可见：自动重试只会再撞同一句话')
+    assert.match(alarms, /task\.conflict !== true/, '文件冲突：自动重试必然再撞，应该等用户点「强制覆盖」')
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /task\.conflict = true/, '文件冲突行必须打标记，否则界面拿不到按钮')
+    assert.match(tracker, /status: 'failed', unrecoverable: true/, '站点判定不可用的行必须打标记，否则会被自动重试反复捞起来')
+    // 旧记录（只有一句 detail、没有标记）也要能补上：否则界面上那颗按钮永远不出现
+    assert.match(tracker, /isFileConflictErrorCode\(record\.errorCode\) && task\.conflict !== true/, '扫描要按 aria2 的 errorCode 给存量行补打 conflict 标记')
+    const dispatchSrc = readSource('src/background/download/dispatch.ts')
+    assert.match(dispatchSrc, /isUnrecoverableParseFailure\(/, '重试时解析失败也要判「视频没了」，并打标记')
 })

@@ -29,6 +29,8 @@
  * - `.pill-<status>` 状态胶囊（`running` / `queued` / `failed` / `complete` / `skipped` / `handed-off`）
  * - 操作列**最后一个按钮永远是「移除」**（其它用例用 `button:last-child` 点它）
  * - `failed` 行额外有一颗「重建」（判据 `taskRebuildable`，与失败归因无关）
+ * - 失败归因是「目标文件已存在/同路径被占用」时再多一颗「强制覆盖」（判据 `taskForceOverwriteable`）：
+ *   普通重建会原样再撞 aria2 的 errorCode 13，只有覆盖参数才会真的去写那个文件
  * - `.queue-filters button` 是分组筛选
  */
 import { useMemo, useState } from 'react'
@@ -36,7 +38,7 @@ import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { QueueTask } from '../../shared/task'
-import { sortTasks, taskCounts, taskGroupOf, taskPrimaryActionOf, taskRebuildable, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, type TaskGroup } from '../../shared/taskView'
+import { sortTasks, taskCounts, taskForceOverwriteable, taskGroupOf, taskPrimaryActionOf, taskRebuildable, taskSecondaryActionOf, taskProgressOf, taskStatusKey, isClearable, type TaskGroup } from '../../shared/taskView'
 import { send } from '../../messaging/hub'
 import { Section, relativeTime } from '../widgets'
 
@@ -98,7 +100,7 @@ interface ActionMessage {
  * 拼出来的值，批量操作是固定名。之前写 `string | null` 时任何拼写错误都能通过编译，
  * 而按钮文案不依赖这个值，错了也不会有任何可见异常——属于只有类型能挡的一类错。
  */
-type BusyKey = 'clear-finished' | 'retry-failed' | 'sync-download' | `retry-${string}` | `rebuild-${string}` | `remove-${string}` | `force-${string}` | `open-${string}`
+type BusyKey = 'clear-finished' | 'retry-failed' | 'sync-download' | `retry-${string}` | `rebuild-${string}` | `force-ow-${string}` | `remove-${string}` | `force-${string}` | `open-${string}`
 
 export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
     const [filter, setFilter] = useState<FilterId>('all')
@@ -185,6 +187,20 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
             () => ({ message: tr('tasks.rebuilt', { id: task.videoId }) })
         )
     }
+    /**
+     * 强制覆盖：目标文件已存在 / 同路径被另一任务占用时，带覆盖参数重新投递一次。
+     *
+     * 与「重建」的区别在后台（`allow-overwrite` + 不改名 + 不续传）：重建会原样再撞 aria2 的
+     * errorCode 13，覆盖参数才真的去写那个文件。会覆盖磁盘上已有的文件，不可撤销。
+     */
+    const forceOverwriteOne = (task: QueueTask): void => {
+        void run(
+            `force-ow-${task.id}`,
+            () => send<QueueActionResult>({ type: 'FORCE_OVERWRITE_TASK', payload: { taskId: task.id } }),
+            () => ({ message: tr('tasks.forceOverwrote', { id: task.videoId }) })
+        )
+    }
+
     /**
      * 强制下载：显式绕开「简介里有第三方网盘链接就不下载」那道门。
      *
@@ -392,6 +408,11 @@ export function TasksTab({ queue }: { queue: QueueTask[] }): ReactElement {
                                                 {taskRebuildable(task) ? (
                                                     <button type="button" className="ghost" disabled={busy !== null} title={tr('tasks.rebuildHint')} onClick={() => rebuildOne(task)}>
                                                         {tr('tasks.actionRebuild')}
+                                                    </button>
+                                                ) : null}
+                                                {taskForceOverwriteable(task) ? (
+                                                    <button type="button" className="ghost" disabled={busy !== null} title={tr('tasks.forceOverwriteHint')} onClick={() => forceOverwriteOne(task)}>
+                                                        {tr('tasks.actionForceOverwrite')}
                                                     </button>
                                                 ) : null}
                                                 {secondary ? (

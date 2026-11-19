@@ -22,6 +22,13 @@ export interface ChannelContext {
     /** 页面转发的 document.cookie（无则读最近快照） */
     cookie?: string
     overwrite?: boolean
+    /**
+     * 「强制覆盖」：投递时显式要求 aria2 覆盖已存在的目标文件（任务页那颗按钮专用）。
+     *
+     * 默认**不带**这些参数：`allow-overwrite=true` 会让 aria2 截断同名文件，
+     * 万一文件名模板撞车就是丢别人的数据——只有用户明确点「强制覆盖」时才给。
+     */
+    forceOverwrite?: boolean
 }
 
 // ── browser 通道（原 browserDownload：GM_download → downloads.download）──
@@ -76,10 +83,15 @@ interface Aria2TaskRef {
  * 重建时视频信息可能解析失败，若签名要求一个 video，调用方就得伪造一个假的——
  * 而假的字段一旦被用到就会写出错误文件名。这里只收真正需要的输入。
  */
-export function aria2AddUriParams(localPath: AnalyzedPath, cookie: string, caps?: Aria2Capabilities, options?: Aria2GlobalOptions): Record<string, unknown> {
+export function aria2AddUriParams(localPath: AnalyzedPath, cookie: string, caps?: Aria2Capabilities, options?: Aria2GlobalOptions, forceOverwrite = false): Record<string, unknown> {
     const config = getConfig()
     return prune({
         'force-save': true,
+        // 「强制覆盖」专用：目标文件已存在时 aria2 默认回 errorCode 13（拒绝重下以免截断为 0）。
+        // 三件必须一起给：允许覆盖（真去写那个文件）、关掉自动改名（否则会写出 xxx.1.mp4 又留一份）、
+        // 不续传（继续写一个可能已损坏/大小不匹配的残片，只会得到「已完成」假象）。
+        // 判据是用户显式点了按钮，不是自动路径（见 shared/taskView 的 taskForceOverwriteable）。
+        ...(forceOverwrite ? { 'allow-overwrite': 'true', 'auto-file-renaming': 'false', continue: 'false' } : {}),
         // 只有「这个分支的 403 会卡死」**且**「服务端没设重试上限」时才加有限 max-tries。
         // 用户自己设了 max-tries 就说明他知道自己在做什么，不覆盖（判据在 shared/aria2Options）。
         ...aria2RetryParams(caps, options),
@@ -102,7 +114,7 @@ export async function aria2Download(videoInfo: FullVideoInfo, ctx: ChannelContex
     const downloadUrl = buildDownloadUrl(videoInfo, localPath)
     const cookie = ctx.cookie ?? (await getPageCookie())
     const [caps, serverOptions] = await Promise.all([aria2Capabilities(), aria2GlobalOptions()])
-    const downloadParams = aria2AddUriParams(localPath, cookie, caps, serverOptions)
+    const downloadParams = aria2AddUriParams(localPath, cookie, caps, serverOptions, ctx.forceOverwrite === true)
     // 接管保证：同一个视频在 aria2 里已经有活任务 ⇒ 接管它，**不再** addUri。
     // 不查这一步的后果是可复现的：同一输出路径上两个 gid，后到的那个被 aria2 判成
     // `belongs to another download`（errorCode 13），用户看到「目标文件已存在，请先确认是否已下好」，

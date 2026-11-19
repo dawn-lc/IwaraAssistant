@@ -20,7 +20,7 @@ import { syncIwaradlAlarm } from '../backends/iwaradl/client'
 import { resetAria2RecoveryState, syncAria2ProbeAlarm } from '../backends/aria2/tracker'
 import { syncIwaradlTasks } from '../backends/iwaradl/tracker'
 import { scanAria2TasksAndEnqueue } from '../backends/aria2/tracker'
-import { isAria2Configured } from '../backends/aria2/client'
+import { aria2API, aria2LiveGidMap, aria2RemoveResult, isAria2Configured } from '../backends/aria2/client'
 import { isIwaradlConfigured } from '../backends/iwaradl/client'
 import { cancelTaskDownload } from './cancel'
 import { retryTask } from './dispatch'
@@ -61,6 +61,34 @@ export async function rebuildTaskById(taskId: string): Promise<unknown> {
     // 先清自动恢复闸门，再重投递：顺序反了等于让用户等退避
     await resetAria2RecoveryState(task.videoId)
     return retryTask(task)
+}
+
+/**
+ * 单条「强制覆盖」（`FORCE_OVERWRITE_TASK`）。
+ *
+ * 只对「目标文件已存在 / 同路径被另一任务占用」这类失败开放（`task.conflict`）。它与「重建」的差别是
+ * **投递参数不同**：重建仍会被 aria2 的 errorCode 13 原样挡回来（输出路径没变、文件还在），
+ * 强制覆盖会带 `allow-overwrite=true` + `auto-file-renaming=false` + `continue=false`
+ * ——真去写那个文件、不改名、不续传。
+ *
+ * 前置动作：先把同视频在 aria2 里的活 gid 摘掉（它可能正占着同一个输出路径），
+ * 再清自动恢复闸门，最后按覆盖参数重新投递。用户点了按钮就是一个明确决定，这里不再二次询问。
+ */
+export async function forceOverwriteTaskById(taskId: string): Promise<unknown> {
+    const task = findTask({ id: taskId })
+    if (!task) throw new Error(i18n.t('notify.taskNotFound'))
+    if (task.status === 'running') throw new Error(i18n.t('notify.taskRunningRetry'))
+    if (task.status === 'skipped') throw new Error(i18n.t('notify.taskSkippedRetry'))
+    if (task.kind !== 'aria2') throw new Error(i18n.t('notify.forceOverwriteAria2Only'))
+    task.attempts = 0
+    // 占着同一个输出路径的活任务必须先摘掉，否则覆盖参数也过不了「同路径被占用」这道门
+    const liveGid = (await aria2LiveGidMap()).get(task.videoId)
+    if (liveGid !== undefined && liveGid !== '' && liveGid !== task.kindRef) {
+        await aria2API('aria2.remove', [liveGid]).catch(() => undefined)
+        await aria2RemoveResult(liveGid)
+    }
+    await resetAria2RecoveryState(task.videoId)
+    return retryTask(task, { forceOverwrite: true })
 }
 
 /** 单条移除（`REMOVE_TASK`），必要时先取消下载器 */

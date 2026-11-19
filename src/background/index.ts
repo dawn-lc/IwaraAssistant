@@ -29,7 +29,7 @@ import { loadQueue, findTask, notifyTask, syncTask, updateBadge, queueReady, col
 import { pageReadySnapshot } from './storage/pageReady'
 import { computeCacheList } from './storage/cacheList'
 import { importLegacyDb, recordLegacyProgress, recordLegacyScan, storeLegacyBatch } from './storage/legacyImport'
-import { clearFinishedTasks, rebuildTaskById, removeTaskById, retryAllFailed, retryTaskById, syncDownloadTasks } from './download/queueActions'
+import { clearFinishedTasks, forceOverwriteTaskById, rebuildTaskById, removeTaskById, retryAllFailed, retryTaskById, syncDownloadTasks } from './download/queueActions'
 import { readBackendStats } from './download/backendStats'
 import { reconcileStaleRunningTasks } from './storage/queueReconcile'
 import { runDownload } from './download/dispatch'
@@ -301,6 +301,8 @@ onMessage<Req>(async (req, sender) => {
             return retryTaskById(req.payload.taskId)
         case 'REBUILD_TASK':
             return rebuildTaskById(req.payload.taskId)
+        case 'FORCE_OVERWRITE_TASK':
+            return forceOverwriteTaskById(req.payload.taskId)
         case 'REMOVE_TASK':
             return removeTaskById(req.payload.taskId)
         case 'CLEAR_FINISHED':

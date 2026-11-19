@@ -119,6 +119,20 @@ export function taskPrimaryActionOf(task: QueueTask): TaskPrimaryAction {
 export function taskRebuildable(task: QueueTask): boolean {
     return task.status === 'failed'
 }
+
+/**
+ * 这一行是否该给「强制覆盖」按钮。
+ *
+ * 只给「目标文件已存在 / 同路径被另一任务占用」这一类（`task.conflict`）：成因在文件系统——
+ * 目标文件还在，或另一个 aria2 任务正占着同一个输出路径。普通「重建」会原样再撞一次，
+ * 用户真正需要的是「按覆盖参数投递一次」（`allow-overwrite` + 关掉自动改名 + 不续传）。
+ *
+ * 为什么不给所有失败行：这只按钮会**覆盖磁盘上已有的文件**，不可撤销，
+ * 只在归因明确时出现，别让它变成顺手点掉的东西。
+ */
+export function taskForceOverwriteable(task: QueueTask): boolean {
+    return task.status === 'failed' && task.conflict === true
+}
 /**
  * 次操作。
  *

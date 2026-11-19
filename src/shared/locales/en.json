@@ -163,6 +163,9 @@
         "aliasMax": "ALIAS max length"
     },
     "tasks": {
+        "actionForceOverwrite": "Force overwrite",
+        "forceOverwriteHint": "Re-dispatch with overwrite options: allow overwriting the existing target file, no renaming, no resume. It really writes that file and cannot be undone",
+        "forceOverwrote": "Re-dispatched [{id}] with overwrite options",
         "title": "Download queue",
         "empty": "No tasks yet. Right-click a video link on an iwara page → \"Iwara Assistant → Download this video\", or batch download from the in-page menu.",
         "filterLabel": "Queue filters",
@@ -452,6 +455,7 @@
         }
     },
     "notify": {
+        "forceOverwriteAria2Only": "\"Force overwrite\" only works for the aria2 channel",
         "batchQueued": "Batch queued {total} tasks, {failed} failed",
         "batchQueuedSkipped": ", skipped {n} already downloaded or in progress",
         "batchAllSkipped": "All {n} selected videos are already downloaded or in progress; no new tasks were created",

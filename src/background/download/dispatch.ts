@@ -33,7 +33,7 @@ import { db } from '../storage/db'
 import { syncIwaradlAlarm } from '../backends/iwaradl/client'
 import { aria2API, aria2RemoveResult, aria2TellStatus } from '../backends/aria2/client'
 import { syncAria2ProbeAlarm } from '../backends/aria2/tracker'
-import { isLiveAria2Status } from '../../shared/aria2Recover'
+import { isLiveAria2Status, isUnrecoverableParseFailure } from '../../shared/aria2Recover'
 import type { PageType } from '../../shared/pageType'
 
 /** 原 DownloadType 枚举 → 协议通道名 */
@@ -381,7 +381,7 @@ async function discardPreviousAria2Task(task: QueueTask): Promise<'proceed' | 'c
 }
 
 /** 对既有队列任务重新执行（retry-failed alarm 用）：重解析（URL expires 短）后原记录复跑 */
-export async function retryTask(task: QueueTask): Promise<QueueTask> {
+export async function retryTask(task: QueueTask, options?: { forceOverwrite?: boolean }): Promise<QueueTask> {
     // 已有同一 task 的重试在跑：直接返回它，避免重复 addUri（见 `retryingTaskIds`）
     if (retryingTaskIds.has(task.id)) return task
     // 同一视频的新投递/另一次重试正在进行：让那一次负责，重复 addUri 只会制造冗余副本
@@ -394,7 +394,7 @@ export async function retryTask(task: QueueTask): Promise<QueueTask> {
     pushingVideoIds.add(task.videoId)
     try {
         if ((await discardPreviousAria2Task(task)) === 'completed') return task
-        const ctx: ChannelContext = { overwrite: true }
+        const ctx: ChannelContext = { overwrite: true, ...(options?.forceOverwrite === true ? { forceOverwrite: true } : {}) }
         let video: FullVideoInfo
         try {
             video = await parseVideoFull(task.videoId)
@@ -405,6 +405,8 @@ export async function retryTask(task: QueueTask): Promise<QueueTask> {
             const failInfo = error instanceof VideoParseError ? error.videoInfo : undefined
             const failure = networkFailure ? { reason: i18n.t('error.networkBlocked'), followUpUrl: undefined } : await describeParseFailure(task.videoId, failInfo?.Msg ?? stringify(error), failInfo === undefined ? undefined : { username: failInfo.Author, alias: failInfo.Alias })
             task.detail = i18n.t('error.retryParseFailed', { message: failure.reason })
+            // 站点说这个视频不可用（已删 / 仅好友可见）：打标记，让自动重试 alarm 别再反复捞它
+            if (isUnrecoverableParseFailure(isNetworkFetchError(error) ? '' : stringify((error instanceof VideoParseError ? error.videoInfo?.Msg : undefined) ?? error))) task.unrecoverable = true
             // 只有新失败给出了更具体的下一步才覆盖。外部视频重试仍会以 "external Video" 失败，
             // 而那种失败本身不带地址（地址在 FailVideoInfo.ExternalUrl 上）——无脑清空会把那条链接弄丢。
             if (failure.followUpUrl !== undefined) {

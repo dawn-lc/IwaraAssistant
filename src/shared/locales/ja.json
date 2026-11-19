@@ -163,6 +163,9 @@
         "aliasMax": "ALIAS の最大長"
     },
     "tasks": {
+        "actionForceOverwrite": "強制上書き",
+        "forceOverwriteHint": "上書きオプション付きで再投入します（既存ファイルの上書きを許可・改名なし・レジュームなし）。実際にそのファイルへ書き込み、取り消せません",
+        "forceOverwrote": "上書きオプションで [{id}] を再投入しました",
         "title": "ダウンロードキュー",
         "empty": "タスクはありません。iwara ページで動画リンクを右クリック →「Iwara Assistant → この動画をダウンロード」、またはページ内メニューから一括ダウンロードできます。",
         "filterLabel": "キューの絞り込み",
@@ -452,6 +455,7 @@
         }
     },
     "notify": {
+        "forceOverwriteAria2Only": "「強制上書き」は aria2 チャンネルでのみ有効です",
         "batchQueued": "一括登録が完了：全 {total} 件、失敗 {failed} 件",
         "batchQueuedSkipped": "、ダウンロード済みまたは進行中の {n} 件をスキップしました",
         "batchAllSkipped": "選択した {n} 件はすべてダウンロード済みか進行中です。新しいタスクは作成されませんでした",
