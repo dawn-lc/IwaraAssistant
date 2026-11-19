@@ -28,16 +28,17 @@ import { i18n } from '../../../shared/i18n'
 import { isNullOrUndefined, stringify } from '../../../shared/strings'
 import type { QueueTask } from '../../../shared/task'
 import { ARIA2_SCAN_MEMORY_KEY, CONFIG_KEY } from '../../../shared/storageKeys'
-import { emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
+import { ARIA2_FULL_SWEEP_ROUNDS, emptyScanMemory, isFileConflictErrorCode, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, aria2ProgressOf, nextStallSample, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, isAria2GidMissingError, SLOW_SPEED_THRESHOLD, type Aria2ScanMemory, type Aria2StallSample } from '../../../shared/aria2Recover'
 import { parseStoredConfig } from '../../storage/configStore'
 import { addTask, addTasks, findTask, getTasks, patchTask, notifyTask, syncTask, collapseDuplicateLiveTasks } from '../../storage/queue'
 import { EXTRACT_VIDEO_ID_FIELDS, aria2API, aria2Capabilities, aria2GlobalOptions, aria2RemoveResult, aria2TellStatus, extractVideoIdFromTask, isAria2Configured, type Aria2Status } from './client'
 import { aria2StatusFieldsWith } from '../../../shared/aria2Flavor'
 import { aria2StoppedQueryLimit } from '../../../shared/aria2Options'
+import { NETWORK_BREAKER_COOLDOWN_MS, classifyAria2Failure, networkBackoffDue, networkBackoffRemaining, nextNetworkBackoff, shouldOpenNetworkBreaker } from '../../../shared/aria2Network'
 import { connect, onNotification, resetConnection } from './ws'
 import { pushAfterDownload, flushMediaCenterPushes } from '../../iwara/mediaCenterPushQueue'
 import { isAria2QueueFull, rebuildAria2Task, restartAria2Task, type RecoverResult } from './recover'
-import { notifyInfo } from '../../runtime/notify'
+import { notifyInfo, notifyWarn } from '../../runtime/notify'
 
 /**
  * 慢速观察的跨轮记忆（videoId → 累计连续低速采样次数）。
@@ -314,13 +315,39 @@ async function runAria2Scan(): Promise<Aria2ScanOutcome> {
         // 结果窗口上限由服务端 `max-download-result` 决定（0 = 不限），要多了纯属浪费
         // 带宽：一条完整记录约 11 KB（提案 §9.5 实测 1134 条 = 12.2 MB）。
         const stoppedLimit = aria2StoppedQueryLimit(await aria2GlobalOptions())
+        // ── P1-1：先问计数，没变化就不拉 toldStopped ──
+        // 实测（远程那台 1134 条历史）：完整回包 12,815,311 B / 289 ms，而 getGlobalStat 只有
+        // 153 B。5 分钟一轮 ⇒ 每台机器每天约 3.5 GB 的本地回包与 JSON 解析，全在问「有没有新的」。
+        // numStoppedTotal 单调递增（含被挤出/被删的条目），sessionId 变化 = aria2 重启过。
+        const [statRes, sessionRes] = await Promise.all([aria2API<{ numStoppedTotal?: string }>('aria2.getGlobalStat', []).catch(() => undefined), aria2API<{ sessionId?: string }>('aria2.getSessionInfo', []).catch(() => undefined)])
+        const currentTotal = Number.parseInt(statRes?.result?.numStoppedTotal ?? '', 10)
+        const sessionId = sessionRes?.result?.sessionId ?? ''
+        const window = planStoppedWindow({
+            sessionChanged: scanMemory.sessionId !== '' && sessionId !== '' && sessionId !== scanMemory.sessionId,
+            currentTotal,
+            lastTotal: scanMemory.stoppedTotal,
+            fullSweepDue: scanMemory.sessionId === '' || scanMemory.scanRound === 0 || scanMemory.scanRound % ARIA2_FULL_SWEEP_ROUNDS === 0,
+            fullSize: stoppedLimit
+        })
+        if (window.restarted) {
+            // aria2 重启过：旧 gid 全部失效，慢速/停滞计数与恢复次数、网络退避都建立在那些 gid 上
+            scanMemory.slowPolls = {}
+            scanMemory.stallSamples = {}
+            scanMemory.recoverAttempts = {}
+            scanMemory.networkFailures = {}
+            scanMemory.networkBreakerUntil = 0
+            console.info('[iwara-assistant] aria2 会话已变化（重启过），重建扫描记忆')
+        }
         const [actRes, waitRes, stopRes] = await Promise.all([
             aria2API<Aria2Status[]>('aria2.tellActive', [fields]),
             // 这一路只要 ID 字段：用途是「别把排队任务当成 running / 当成不存在」，不需要速度与进度。
             // 空表时回包不到 100 字节；失败也只当空表（少一路不影响其余对账）。
             aria2API<Aria2Status[]>('aria2.tellWaiting', [0, 500, EXTRACT_VIDEO_ID_FIELDS]).catch(() => ({ id: 'waiting', jsonrpc: '2.0', result: [] as Aria2Status[] })),
-            aria2API<Aria2Status[]>('aria2.tellStopped', [0, stoppedLimit, fields])
+            window.num === 0 ? Promise.resolve({ result: [] as Aria2Status[] }) : aria2API<Aria2Status[]>('aria2.tellStopped', [0, window.num, fields])
         ])
+        scanMemory.scanRound += 1
+        if (Number.isFinite(currentTotal) && currentTotal >= 0) scanMemory.stoppedTotal = currentTotal
+        if (sessionId !== '') scanMemory.sessionId = sessionId
         const activeTasks = (actRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent))
         const queuedTasks = (waitRes.result ?? []).filter((task) => isNullOrUndefined(task.bittorrent) && (task.status === 'waiting' || task.status === 'paused'))
         const allTasks = [...activeTasks, ...queuedTasks, ...(stopRes.result ?? [])].filter((task) => isNullOrUndefined(task.bittorrent))
@@ -487,7 +514,8 @@ async function runAria2Scan(): Promise<Aria2ScanOutcome> {
             }
             lost++
         }
-        console.info(`[iwara-assistant] aria2 扫描完成: 共 ${allTasks.length} 任务（收编 ${adopted}，停止冗余 ${stopped}，无主 ${rejected}，失效 ${lost}，保留完成历史 ${historyKept}，完成表跳过 ${doneSkipped}）`)
+        // 常态下一轮扫描什么都不做（全 0）。无条件打日志 = 288 行/天噪音，把真正的告警埋掉。
+        if (adopted + stopped + rejected + lost > 0) console.info(`[iwara-assistant] aria2 扫描完成: 共 ${allTasks.length} 任务（收编 ${adopted}，停止冗余 ${stopped}，无主 ${rejected}，失效 ${lost}，保留完成历史 ${historyKept}，完成表跳过 ${doneSkipped}）`)
     } catch (error) {
         console.warn('[iwara-assistant] aria2 扫描失败:', stringify(error))
     } finally {
@@ -689,6 +717,54 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         return true
     }
 
+    // ── 网络层失败：与「链接过期」处置相反（这是国内网络环境的主路径）────────────────
+    //
+    // 直链过期（403/404）重解析有用；网络被阻断时新链接一样连不上，重解析只会在同一堵墙上
+    // 多撞几次。旧行为是「非文件冲突一律重解析 + 重建」：出口坏掉时 20 个任务每轮各打一次
+    // 解析、各重建一次，8 轮后全部标 failed —— 用户看到「全失败了」，真实原因却是网络。
+    //
+    // 所以这里做三件事：按指数退避（1min → 30min）、成片失败时熔断 10 分钟只发一条通知、
+    // 并且**不计入 recoverAttempts**（网络恢复后任务应当还能被救回来）。
+    if (needsRebuild && classifyAria2Failure(winner.errorCode, winner.errorMessage) === 'network') {
+        const now = Date.now()
+        const backoff = scanMemory.networkFailures[videoId]
+        if (scanMemory.networkBreakerUntil > now) {
+            // 熔断中：不解析、不重建、不记账（出口坏了，动作越多越糟）
+            delete scanMemory.slowPolls[videoId]
+            delete scanMemory.stallSamples[videoId]
+            return true
+        }
+        if (!networkBackoffDue(backoff, now)) {
+            // 退避期内：本轮放过，避免每 5 分钟撞一次同样的墙
+            delete scanMemory.slowPolls[videoId]
+            delete scanMemory.stallSamples[videoId]
+            return true
+        }
+        const next = nextNetworkBackoff(backoff, now)
+        scanMemory.networkFailures[videoId] = next
+        if (shouldOpenNetworkBreaker(scanMemory.networkFailures, now)) {
+            scanMemory.networkBreakerUntil = now + NETWORK_BREAKER_COOLDOWN_MS
+            notifyWarn('aria2-network-degraded', i18n.t('notify.aria2NetworkDegraded'), { kind: 'options', tab: 'download' })
+            console.warn(`[iwara-assistant] 多个任务因网络问题失败，暂停自动恢复 ${Math.round(NETWORK_BREAKER_COOLDOWN_MS / 60000)} 分钟`)
+            return true
+        }
+        console.warn(`[iwara-assistant] ${videoId} 网络层失败（第 ${next.count} 次，${Math.round(networkBackoffRemaining(next, now) / 1000)} 秒后再试；不计入恢复上限）`)
+        // 落到下面的正常重建：网络若只是抖一下，这次重解析就能救回来
+    }
+    if (needsRebuild && classifyAria2Failure(winner.errorCode, winner.errorMessage) === 'permanent') {
+        // 磁盘满、目录不可写、文件打不开：重试必然再撞，如实告诉用户
+        delete scanMemory.recoverAttempts[videoId]
+        delete scanMemory.slowPolls[videoId]
+        delete scanMemory.stallSamples[videoId]
+        if (queuedTask) {
+            await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2PermanentFailure', { id: videoId }) })
+            const failed = findTask({ id: queuedTask.id })
+            if (failed) await notifyTask(failed)
+        }
+        console.warn(`[iwara-assistant] ${videoId} 属于不可重试的失败（errorCode=${winner.errorCode ?? '?'}），直接标失败`)
+        return true
+    }
+
     // paused 且 aria2 队列已满：不动（源同款）。aria2 的 paused 很可能就是并发上限导致的，
     // 此时重启只是把一个排队任务换成另一个排队任务，白烧一次解析请求。
     if (winner.status === 'paused' && (await isAria2QueueFull())) {
@@ -731,6 +807,8 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
     // 所以这里**累加**而不是清零；只有观测到速度真的恢复（`trackSlowObservation`）才清。
     scanMemory.recoverAttempts[videoId] = attempts + 1
     delete scanMemory.slowPolls[videoId]
+    delete scanMemory.stallSamples[videoId]
+    delete scanMemory.networkFailures[videoId]
     // gid 可能变了（error/removed 走 addUri 重建）：不同步到队列，后续通知就全对不上
     if (queuedTask) await patchTask(queuedTask.id, { kindRef: result.gid, status: 'running' })
     else await addTask({ id: crypto.randomUUID(), videoId, kind: 'aria2', status: 'running', kindRef: result.gid })
@@ -754,9 +832,10 @@ function trackSlowObservation(videoId: string, status: Aria2Status, record = tru
     const table = scanMemory.slowPolls
     const speed = Number(status.downloadSpeed)
     if (status.status === 'active' && Number.isFinite(speed) && speed > SLOW_SPEED_THRESHOLD) {
-        // 速度真的恢复了：说明之前的恢复生效，才清掉尝试计数
+        // 速度真的恢复了：说明之前的恢复生效，才清掉尝试计数与网络退避
         delete table[videoId]
         delete scanMemory.recoverAttempts[videoId]
+        delete scanMemory.networkFailures[videoId]
         return 0
     }
     if (status.status !== 'active') {
@@ -837,6 +916,21 @@ export function watchAria2Endpoint(config: { aria2Path: string; aria2Token: stri
         })
     })
 }
+/**
+ * `onDownloadStop` 的收敛：拉一次终态再决定去向。
+ *
+ * 事件本身只说「停了」，不说停在哪 —— 可能是 complete、error、removed、paused。
+ * 直接当完成会把失败任务谎报成成功；直接当失败会把用户暂停的任务标红。所以只查询、再分派。
+ */
+async function handleDownloadStop(gid: string): Promise<void> {
+    if (!findTask({ kindRef: gid, kind: 'aria2' })) return
+    const status = await aria2TellStatus(gid)
+    if (!status) return
+    if (status.status === 'complete') return handleDownloadComplete(gid)
+    if (status.status === 'error' || status.status === 'removed') return handleDownloadError(gid)
+    // paused / waiting：交给扫描/probe 的正常同步，这里什么都不做
+}
+
 /** 事件处理器只绑一次（SW 重入时模块会重新求值，所以用模块级标记） */
 let notificationsBound = false
 
@@ -854,6 +948,13 @@ function bindNotifications(): void {
     onNotification('aria2.onDownloadError', (params) => {
         const gid = payloadGid(params)
         if (gid) void handleDownloadError(gid)
+    })
+    // `onDownloadStop`：下载在 aria2 侧停了（用户手动停、被 remove、或完成）。
+    // 没有它，用户直接在 aria2 里停掉的任务要等到下一轮扫描（最多 5 分钟）才在界面上变样。
+    // ⚠️ 我们自己取消/清理时**先摘掉 kindRef 再 remove**，所以那些事件找不到队列记录，天然被忽略。
+    onNotification('aria2.onDownloadStop', (params) => {
+        const gid = payloadGid(params)
+        if (gid) void handleDownloadStop(gid)
     })
     onNotification('aria2.onDownloadStart', (params) => {
         const gid = payloadGid(params)

@@ -25,6 +25,7 @@ import { getDownloadPath } from './downloadPath'
 import { aria2Download, browserDownload, browserDownloadErrorParse, downloadMetadata, iwaradlDownload, othersDownload, type ChannelContext } from './downloaders'
 import { deferBrowserStart, hasFreeBrowserSlot } from './browserQueue'
 import { describeParseFailure } from './parseFailure'
+import { isNetworkFetchError } from '../../shared/aria2Network'
 import { followUser, likeVideo } from '../iwara/interactions'
 import { checkIsHaveDownloadLink } from '../iwara/linkCheck'
 import { notifyWarn } from '../runtime/notify'
@@ -398,9 +399,11 @@ export async function retryTask(task: QueueTask): Promise<QueueTask> {
         try {
             video = await parseVideoFull(task.videoId)
         } catch (error) {
+            // 网络层失败（DNS 污染 / 连接重置 / 超时）不是「这条视频解析不了」：如实说清是网络问题。
+            // 这类失败在受限网络里是成片的，文案必须让用户去检查代理，而不是反复点重试。
+            const networkFailure = isNetworkFetchError(error)
             const failInfo = error instanceof VideoParseError ? error.videoInfo : undefined
-            const failure = await describeParseFailure(task.videoId, failInfo?.Msg ?? stringify(error), failInfo === undefined ? undefined : { username: failInfo.Author, alias: failInfo.Alias })
-            task.attempts = (task.attempts ?? 0) + 1
+            const failure = networkFailure ? { reason: i18n.t('error.networkBlocked'), followUpUrl: undefined } : await describeParseFailure(task.videoId, failInfo?.Msg ?? stringify(error), failInfo === undefined ? undefined : { username: failInfo.Author, alias: failInfo.Alias })
             task.detail = i18n.t('error.retryParseFailed', { message: failure.reason })
             // 只有新失败给出了更具体的下一步才覆盖。外部视频重试仍会以 "external Video" 失败，
             // 而那种失败本身不带地址（地址在 FailVideoInfo.ExternalUrl 上）——无脑清空会把那条链接弄丢。
