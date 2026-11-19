@@ -87,6 +87,7 @@ Chrome 终止 service worker 有**三条相互独立**的条件：空闲 30 秒�
 
 - **aria2 有三条实际行为线**（上游 1.36 / aria2-next 2.x / aria2-next 3.x），差异不止版本号：`2.4.9` 没有 `product` 字段，`3.1.1` 才有 `probe`/`moveDownload`/`media`，而且 **`3.1.x` 上 403 会永远停在 `active` 不报错**（上游与 2.4.9 都会正常给 `errorCode 22`）。判据与能力表在 `src/shared/aria2Flavor.ts`，实测记录与行为分叉见 [docs/08-aria2-flow.md](docs/08-aria2-flow.md#8-分支兼容上游-aria2--aria2-next)。
 - **`aria2.restart` 不存在**（1.36.0 `system.listMethods` 无此方法，调用返回 `No such method`）。源项目里那条 error 分支是死代码，照抄会让任务从队列消失。
+- **`all-proxy: ''` 不是「继承」而是「不走代理」**（实测：全局代理不通时，带空串的任务照样直连成功）。没配代理就别传这个键，传空串会静默废掉 `aria2.conf` 里的代理。同理，凡是能改变语义的选项都先问 `aria2.getGlobalOption`，别硬编码。
 - **aria2 的 `waiting` / `paused` 不是「正在下载」**：那是 aria2 自己的并发上限排队。映射成 `running` 会让界面谎报并发数。
 - **WS 与 HTTP 必须共用同一份认证参数**（`shared/aria2Rpc.ts` 的 `aria2AuthParams`）。两条传输路径各拼一次 `token:` 时，WS 会静默 401，再被「失败降级到 HTTP」掩盖。
 - **Firefox 拦内网明文 http 只针对 MV3**，MV2 扩展被豁免。本仓库的 Firefox 产物是 **MV2 + `persistent: true`**（`manifest/variants.ts`），所以局域网 aria2 可用。
