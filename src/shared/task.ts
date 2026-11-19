@@ -82,6 +82,16 @@ export interface QueueTask {
      * 留给用户自己处理（去作者主页加好友 / 确认后移除），所以自动重试的 alarm 会跳过它。
      */
     unrecoverable?: true
+    /**
+     * aria2 给出的**原始**错误码与报文（失败结算时落库）。
+     *
+     * 为什么要单独存：结算成 failed 之后，`discardFailedAria2Records` 会把 aria2 里那条 stopped 记录删掉
+     * （防「已完成/已停止」列表被重复失败撑大）。删完就只剩一句翻译后的通用文案——
+     * 2026-11-22 有四个任务因此变成无头案：用户问「aria2 里为什么找不到这个任务」，
+     * 而真正的 errorCode 已经随记录一起没了。
+     */
+    aria2ErrorCode?: string
+    aria2ErrorMessage?: string
     /** 入队时间（ms）；旧记录可能缺失，UI 需容错 */
     createdAt?: number
     /** 最后状态变更时间（ms）；用于排序与「多久没动」判定 */

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
+import { isPermanentAria2ErrorCode } from '../src/shared/aria2Network'
 import { ARIA2_UNSEEN_SETTLE_LIMIT, ARIA2_STOPPED_PAGE, pickUnseenQueueTasks, MAX_RECOVER_ATTEMPTS, MIN_SLOW_POLLS, MIN_STALL_POLLS, SLOW_SPEED_THRESHOLD, STALL_MIN_SAMPLE_INTERVAL_MS, aria2Progress, buildChangeUriParams, canRebuildFromOldUris, compareForKeep, emptyScanMemory, gidPriority, isAria2EngineAlive, isFileConflictErrorCode, isIdleAria2Status, isLiveAria2Status, isAria2GidMissingError, nextStallSample, parseScanMemory, planAria2Group, planResidualAdoption, planStoppedWindow, recoverCooldownRemaining, ARIA2_RECOVER_MIN_INTERVAL_MS, isUnrecoverableParseFailure, recoverExhausted, shouldRestartForSlowSpeed, shouldRestartForStall, taskLatestExpiry } from '../src/shared/aria2Recover'
 import { uriExpiresAt } from '../src/shared/url'
 import { RETRY_MAX_ATTEMPTS } from '../src/shared/constants'
@@ -685,6 +686,35 @@ test('接线：队列说 running、aria2 已报错的行必须收敛', () => {
     assert.match(body, /await tryRecover\(task\.videoId, record, task\)/, '非冲突类仍要走自动恢复，不能一律标失败')
 })
 
+test('接线：失败结算必须把 aria2 原始错误码落库（否则删记录后就是无头案）', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    const permanent = tracker.indexOf("classifyAria2Failure(winner.errorCode, winner.errorMessage) === 'permanent'")
+    assert.ok(permanent > 0, '永久失败分支必须在')
+    const branch = tracker.slice(permanent, permanent + 900)
+    assert.match(branch, /aria2ErrorCode: winner\.errorCode/, '永久失败要落库 errorCode')
+    assert.match(branch, /aria2ErrorMessage: winner\.errorMessage/, '永久失败要落库 errorMessage')
+    assert.match(tracker, /aria2ErrorCode: record\.errorCode, aria2ErrorMessage: record\.errorMessage/, '结算（冲突/其余）两条路径也要落库')
+})
+
+test('接线：删 aria2 记录之前先补归因，顺序不能反', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    const start = tracker.indexOf('async function discardFailedAria2Records')
+    assert.ok(start > 0, '清理函数必须在')
+    const body = tracker.slice(start, start + 1400)
+    const backfill = body.indexOf('aria2ErrorCode: record.errorCode')
+    const remove = body.indexOf('await aria2RemoveResult(record.gid)')
+    assert.ok(backfill > 0, '清理前要先把错误码落到队列行')
+    assert.ok(remove > 0 && backfill < remove, '顺序：先补证据、再删记录（反过来证据就没了）')
+})
+
+test('接线：磁盘/目录/IO 那一档不参与自动重试', () => {
+    assert.equal(isPermanentAria2ErrorCode('16'), true)
+    assert.equal(isPermanentAria2ErrorCode(' 9 '), true)
+    assert.equal(isPermanentAria2ErrorCode('22'), false, '22 是链接问题，重解析有用')
+    assert.equal(isPermanentAria2ErrorCode(undefined), false)
+    const alarms = readSource('src/background/runtime/alarms.ts')
+    assert.match(alarms, /!isPermanentAria2ErrorCode\(task\.aria2ErrorCode\)/, '自动重试必须跳过永久失败')
+})
 test('僵尸 active：active + 0 连接 + 0 字节 + URI 全 waiting 才成立', () => {
     const idle = { status: 'active', completedLength: '0', downloadSpeed: '0', connections: '0', files: [{ uris: [{ uri: 'https://x', status: 'waiting' }] }] }
     assert.equal(isIdleAria2Status(idle), true)

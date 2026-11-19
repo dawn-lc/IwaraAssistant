@@ -32,6 +32,11 @@ const NETWORK_CODES = new Set(['2', '6', '19', '23'])
 /** 磁盘/权限/目录这一档：重试必然再撞 */
 const PERMANENT_CODES = new Set(['9', '10', '15', '16', '17', '18'])
 
+/** 这一档的错误码是否属于「重试也白搭」（自动重试的 alarm 据此跳过） */
+export function isPermanentAria2ErrorCode(code: string | undefined): boolean {
+    return PERMANENT_CODES.has(typeof code === 'string' ? code.trim() : '')
+}
+
 /**
  * 把 aria2 的 `errorCode` + `errorMessage` 归到五档之一。
  *

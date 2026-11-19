@@ -476,7 +476,7 @@
         "aria2Failed": "aria2 download failed: {detail}",
         "aria2UnknownCode": "unknown error code",
         "aria2AdoptedFailure": "Failed task adopted by the aria2 scan",
-        "aria2PermanentFailure": "Video [{id}] hit a failure that retrying cannot fix (disk full, directory not writable, or file cannot be opened). Fix it, then retry manually.",
+        "aria2PermanentFailure": "Video [{id}] hit a failure that retrying cannot fix (disk full, directory not writable, or file cannot be opened; aria2 errorCode={code}). Fix it, then retry manually.",
         "aria2NetworkDegraded": "Several tasks failed for network reasons, so automatic recovery is paused for 10 minutes (the links did not expire). If you are on a restricted network, check your proxy settings, then click Rebuild on the affected tasks.",
         "aria2Recovered": "The download link for video [{id}] had expired; it was re-resolved and the download resumed",
         "aria2RecoverFailed": "Video [{id}] could not be recovered (no fresh link after repeated attempts); retry it manually from the tasks page",

@@ -292,6 +292,8 @@ async function discardFailedAria2Records(stopped: readonly Aria2Status[]): Promi
         // 顺手补打归因标记：旧版本的记录只有一句 detail，没有 `conflict`。
         // 不打标记 = 界面拿不到「强制覆盖」按钮，用户只能看着「目标文件已存在」无从下手。
         if (record.status === 'error' && isFileConflictErrorCode(record.errorCode) && task.conflict !== true) await patchTask(task.id, { conflict: true })
+        // 删记录之前先把归因落到队列行：这个 `removeDownloadResult` 之后，aria2 侧就再也查不到「为什么失败」了
+        if (record.errorCode !== undefined && task.aria2ErrorCode !== record.errorCode) await patchTask(task.id, { aria2ErrorCode: record.errorCode, aria2ErrorMessage: record.errorMessage })
         await aria2RemoveResult(record.gid)
         removed++
     }
@@ -321,12 +323,12 @@ async function settleErroredQueueTasks(stopped: readonly Aria2Status[]): Promise
         const conflict = isFileConflictErrorCode(record.errorCode)
         // 文件冲突类（含 errorCode 8：本地文件比远端大）：交给用户点「强制覆盖」，不再自动重建
         if (conflict) {
-            await patchTask(task.id, { status: 'failed', conflict: true, detail: i18n.t('notify.aria2FileConflict', { id: task.videoId }) })
+            await patchTask(task.id, { status: 'failed', conflict: true, detail: i18n.t('notify.aria2FileConflict', { id: task.videoId }), aria2ErrorCode: record.errorCode, aria2ErrorMessage: record.errorMessage })
             continue
         }
         // 其余错误先给一次自动恢复的机会（与 WS 那条路径同一套判据）
         if (await tryRecover(task.videoId, record, task)) continue
-        await patchTask(task.id, { status: 'failed', detail: record.errorMessage ?? i18n.t('notify.aria2Failed', { detail: record.errorCode ?? i18n.t('notify.aria2UnknownCode') }) })
+        await patchTask(task.id, { status: 'failed', detail: record.errorMessage ?? i18n.t('notify.aria2Failed', { detail: record.errorCode ?? i18n.t('notify.aria2UnknownCode') }), aria2ErrorCode: record.errorCode, aria2ErrorMessage: record.errorMessage })
         const failed = findTask({ id: task.id })
         if (failed) await notifyTask(failed)
     }
@@ -362,7 +364,7 @@ async function settleUnseenQueueTasks(seenGids: ReadonlySet<string>): Promise<nu
         if (status.status === 'error' || status.status === 'removed') {
             // 已中断的链接交给恢复链：过期就重解析，网络失败就退避，文件冲突先判是不是重复投递
             if (await tryRecover(task.videoId, status, task)) continue
-            await patchTask(task.id, { status: 'failed', detail: status.errorMessage ?? i18n.t('notify.aria2Failed', { detail: status.errorCode ?? i18n.t('notify.aria2UnknownCode') }) })
+            await patchTask(task.id, { status: 'failed', detail: status.errorMessage ?? i18n.t('notify.aria2Failed', { detail: status.errorCode ?? i18n.t('notify.aria2UnknownCode') }), aria2ErrorCode: status.errorCode, aria2ErrorMessage: status.errorMessage })
             settled++
         }
     }
@@ -915,7 +917,7 @@ async function recoverCore(videoId: string, winner: Aria2Status, queuedTask: Que
         delete scanMemory.slowPolls[videoId]
         delete scanMemory.stallSamples[videoId]
         if (queuedTask) {
-            await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2PermanentFailure', { id: videoId }) })
+            await patchTask(queuedTask.id, { status: 'failed', detail: i18n.t('notify.aria2PermanentFailure', { id: videoId, code: winner.errorCode ?? '?' }), aria2ErrorCode: winner.errorCode, aria2ErrorMessage: winner.errorMessage })
             const failed = findTask({ id: queuedTask.id })
             if (failed) await notifyTask(failed)
         }

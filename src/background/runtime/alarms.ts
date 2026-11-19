@@ -12,6 +12,7 @@
  * SW 挂起：alarm 触发即唤醒后台；持久化由队列/配置模块自理（挂起协议 2）。
  * 选举/清锁类 alarm 不复存在（后台即管理器）。
  */
+import { isPermanentAria2ErrorCode } from '../../shared/aria2Network'
 import { RETRY_BATCH_LIMIT, RETRY_MAX_ATTEMPTS } from '../../shared/constants'
 import { keepAliveWs } from '../backends/aria2/ws'
 import { retryTask } from '../download/dispatch'
@@ -51,8 +52,9 @@ async function retryFailedTasks(): Promise<void> {
         // ② 归因明确的失败**不自动重试**：`unrecoverable`（视频已删/仅好友可见）与
         //    `conflict`（目标文件已存在/同路径被占用）都不是重试能解决的，自动打出去只会
         //    白烧一次解析、在 aria2 里留一条新残骸。这两类留给用户：前者去加好友或移除，
-        //    后者用任务页的「强制覆盖」。
-        .filter((task) => task.status === 'failed' && task.unrecoverable !== true && task.conflict !== true && (task.attempts ?? 0) < RETRY_MAX_ATTEMPTS)
+        //    后者用任务页的「强制覆盖」。`aria2ErrorCode` 落在磁盘/目录/IO 那一档（9/10/15/16/17/18）同理：
+        //    重试必然再撞同一面墙，用户处理好存储再说。
+        .filter((task) => task.status === 'failed' && task.unrecoverable !== true && task.conflict !== true && !isPermanentAria2ErrorCode(task.aria2ErrorCode) && (task.attempts ?? 0) < RETRY_MAX_ATTEMPTS)
         .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
         .filter((task) => {
             if (seenVideos.has(task.videoId)) return false

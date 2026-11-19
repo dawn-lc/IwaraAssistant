@@ -476,7 +476,7 @@
         "aria2Failed": "aria2 下载失败: {detail}",
         "aria2UnknownCode": "未知错误码",
         "aria2AdoptedFailure": "aria2 扫描收编的失败任务",
-        "aria2PermanentFailure": "视频 [{id}] 属于不可重试的失败（磁盘空间不足/目录不可写/文件打不开），请处理后手动重试",
+        "aria2PermanentFailure": "视频 [{id}] 属于不可重试的失败（磁盘空间不足/目录不可写/文件打不开，aria2 errorCode={code}），请处理后手动重试",
         "aria2NetworkDegraded": "多个任务因网络问题失败，已暂停自动恢复 10 分钟（不是链接失效）。若你在网络受限地区，请检查代理设置，然后在任务页对相关任务点「重建」。",
         "aria2Recovered": "视频 [{id}] 的下载链接已失效，已重新解析并恢复下载",
         "aria2RecoverFailed": "视频 [{id}] 恢复失败（多次重试后仍无法重新获取地址），可在任务页手动重试",
