@@ -654,3 +654,15 @@ test('接线：扫描必须对不在三份列表里的任务逐条 tellStatus �
     assert.match(tracker, /if \(status === undefined\) \{/, '查不到 gid（not found）必须单独处理，不能混进「传输失败」')
     assert.match(tracker, /i18n\.t\('tasks\.staleAria2Gone'\)/, '如实告诉用户：aria2 里已经没有这条任务')
 })
+
+test('接线：扫描要清掉我们自己的失败记录（stopped 列表不被重试残骸撑大）', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /await discardFailedAria2Records\(stopRes\.result \?\? \[\]\)/, '不清就每轮重试都留一条 0 B error，AriaNg 里看起来就是重复失败任务在堆积')
+    // 收窄到函数体：只允许删 error/removed 的**我们自己的**记录
+    const start = tracker.indexOf('async function discardFailedAria2Records')
+    assert.ok(start > 0, '清理函数必须存在')
+    const body = tracker.slice(start, tracker.indexOf('async function settleUnseenQueueTasks'))
+    assert.match(body, /task\.status === 'failed'/, '只清队列里已记为 failed 的（已完成的历史要留作去重证据）')
+    assert.match(body, /record\.status !== 'error' && record\.status !== 'removed'/, 'complete 一律不删')
+    assert.match(body, /aria2RemoveResult\(record\.gid\)/, '清的是本轮 stopped 里那条记录')
+})

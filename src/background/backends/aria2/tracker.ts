@@ -266,6 +266,34 @@ async function handleDownloadError(gid: string, recoverable = true): Promise<voi
  *
  * 每轮最多 20 条（`pickUnseenQueueTasks`）：这些是残骸，不值得为它们把一轮扫描拖长。
  */
+/**
+ * 清掉**我们自己**留在 aria2 里的失败记录。
+ *
+ * 为什么会有堆积：每次重试/重建都是「清旧记录 + addUri」，失败时又会在 `stopped` 里留下一条
+ * `error`；而 `max-download-result` 默认很大（那台机器配到 4096），于是同一个视频重试 8 轮就留 8 条
+ * `0.0 B error`。AriaNg 的「已完成 / 已停止」把 complete + error + removed 全列出来，看起来就是
+ * 一堆重复的失败任务在涨。
+ *
+ * 判据刻意保守：**只删「队列里已经记为 failed、且 gid 就在本轮 stopped 列表里、状态是 error/removed」**
+ * 的记录。complete 一律保留——它既是「这个视频下过」的去重证据，也是用户的历史。别人的任务我们一条不碰
+ * （只有自己的 gid 会出现在队列里）。
+ */
+async function discardFailedAria2Records(stopped: readonly Aria2Status[]): Promise<number> {
+    if (stopped.length === 0) return 0
+    const byGid = new Map(stopped.map((item) => [item.gid, item]))
+    const ours = getTasks().filter((task) => task.status === 'failed' && task.kind === 'aria2' && task.kindRef !== undefined && task.kindRef !== '')
+    let removed = 0
+    for (const task of ours) {
+        const record = byGid.get(task.kindRef!)
+        if (record === undefined) continue
+        if (record.status !== 'error' && record.status !== 'removed') continue
+        await aria2RemoveResult(record.gid)
+        removed++
+    }
+    if (removed > 0) console.info(`[iwara-assistant] 清掉 ${removed} 条我们自己的失败记录（aria2 的 stopped 列表不再被重复失败撑大）`)
+    return removed
+}
+
 async function settleUnseenQueueTasks(seenGids: ReadonlySet<string>): Promise<number> {
     const stale = pickUnseenQueueTasks(getTasks(), seenGids)
     if (stale.length === 0) return 0
@@ -422,6 +450,8 @@ async function runAria2Scan(): Promise<Aria2ScanOutcome> {
         scanMemory.scanRound += 1
         if (Number.isFinite(currentTotal) && currentTotal >= 0) scanMemory.stoppedTotal = currentTotal
         if (sessionId !== '') scanMemory.sessionId = sessionId
+        // 先清掉我们自己的失败记录，再谈对账：否则 stopped 列表会被重试/重建留下的 error 越撑越大
+        await discardFailedAria2Records(stopRes.result ?? [])
         // 这三个列表里没出现过的任务要逐条确认：否则 gid 被清掉的那些会永远停在「下载中」
         const listedGids = new Set([...(actRes.result ?? []), ...(waitRes.result ?? []), ...(stopRes.result ?? [])].map((item) => item.gid))
         await settleUnseenQueueTasks(listedGids)

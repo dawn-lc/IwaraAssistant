@@ -103,7 +103,7 @@
 
 ---
 
-## 6. aria2 的七个坑（全部实测）
+## 6. aria2 的八个坑（全部实测）
 
 1. **`aria2.restart` 不存在**。1.36.0 的 `system.listMethods` 无此方法；调用返回 `{"code":1,"message":"No such method: aria2.restart"}`（无 token 时先回 `Unauthorized`，所以**必须带 token 才能测**）。源项目那条 error 分支是死代码且有害：`aria2API` 只 `fetch().json()`（RPC 错误不抛异常）→ `restartRes.result` 是 undefined → 仍执行 `removeDownloadResult`（真删了记录）→ `changeUri(undefined,…)` 静默失败 → 任务从队列消失。正确路径是「清结果 + `addUri`」。
 2. **WS 分支曾经不发 token**。`token:` 前缀只有 HTTP 拼了一处；WS 拿 `Unauthorized` → 抛异常 → 降级 HTTP（带 token）→ 看起来正常。等把「RPC 级错误不降级」改上去后，掩盖层被移除，缺陷才暴露成「环境自检 Unauthorized」。**同一个 RPC 有多条传输路径时，认证参数必须由唯一一处生成**；「失败自动降级」会静默掩盖前一条通道的毛病，降级路径必须可观测（日志计数）。
@@ -113,6 +113,7 @@
 
 6. **`all-proxy: ''` 的真实语义是「不走代理」，不是「继承」**。实测：全局代理指向一个不通的地址（`http://127.0.0.1:9`）时，不带该选项的任务继承代理、一直 `active` 连不上；带空串的任务 `getOption` 里**没有** `all-proxy` 键且**直连成功**。旧实现「用户没配代理就传空串」等于把用户 `aria2.conf` 里的代理静默关掉（两台测试机都没配代理，所以一直没暴露）。修法：没配就**别传这个键**（`shared/aria2Options.ts` 的 `aria2ProxyParams`）。凡是能改变语义的选项，先问 `aria2.getGlobalOption`。
 7. **上游默认值会让「aria2 通道」看起来比浏览器还慢**：`--max-connection-per-server` 默认 **1**（每个文件一条连接）、`--min-split-size` 默认 **20M**（<40 MB 的文件不分段）、`--retry-wait` 默认 **0**（此时 502/503 根本不重试）。用户 conf 里若没写过这几项，我们就是在用单连接下载，还把一次网关抖动升级成「任务失败」。现在投递时显式补，且**只往更并行的方向补**（conf 已配更高就不覆盖）。
+8. **失败记录也要清**：`removeDownloadResult` 不调用，`stopped` 列表就被我们自己的 `0 B error` 撑大——AriaNg 的「已完成/已停止」把 complete + error + removed 全列出来，用户看到的就是「一堆重复的失败任务在涨」。清法只认「队列里已 failed + gid 在本轮 stopped 里 + 状态 error/removed」，complete 留给去重证据，别人的记录一条不碰。
 
 **慢速判定的采样必须持久化**：源项目是每任务 worker 4 秒轮询 ×16 次；我们是分钟级探测，采样计数原本只存内存 → Chrome SW 空闲 30 秒就回收，而探测 1 分钟一次 ⇒ **每次都是新实例，「连续 2 次」永远数不到 2**（自移植以来从未触发过）。现在存 `storage.session`。
 
