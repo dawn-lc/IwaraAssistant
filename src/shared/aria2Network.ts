@@ -57,9 +57,15 @@ export function classifyAria2Failure(errorCode: string | undefined, errorMessage
     return 'unknown'
 }
 
-/** 与 `shared/aria2Recover.ts` 的 `isFileConflictErrorCode` 同口径（11 DUPLICATE_DOWNLOAD / 13 FILE_ALREADY_EXISTS） */
+/**
+ * 与 `shared/aria2Recover.ts` 的 `isFileConflictErrorCode` 同口径：
+ * 11 DUPLICATE_DOWNLOAD / 13 FILE_ALREADY_EXISTS / 8 本地文件比远端大。
+ *
+ * 8 必须归到这一档而不是 `permanent`：它不是「重试也没用所以放弃」，而是
+ * 「重建没用、但按覆盖参数重投一次就能好」——两个档位的处置完全不同。
+ */
 function isFileConflictCode(code: string): boolean {
-    return code === '11' || code === '13'
+    return code === '11' || code === '13' || code === '8'
 }
 
 /** 报文里出现这些词就当网络层问题（aria2 的 message 是英文原文） */

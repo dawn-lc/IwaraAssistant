@@ -667,6 +667,24 @@ test('接线：扫描要清掉我们自己的失败记录（stopped 列表不被
     assert.match(body, /aria2RemoveResult\(record\.gid\)/, '清的是本轮 stopped 里那条记录')
 })
 
+test('文件冲突码包含 8（本地文件比远端大）：重建救不了，但覆盖可以', () => {
+    assert.equal(isFileConflictErrorCode(13), true)
+    assert.equal(isFileConflictErrorCode('11'), true)
+    assert.equal(isFileConflictErrorCode(8), true, 'errorCode 8 若不归到冲突类，就会被当成未知错误反复重建')
+    assert.equal(isFileConflictErrorCode(22), false)
+})
+
+test('接线：队列说 running、aria2 已报错的行必须收敛', () => {
+    const tracker = readSource('src/background/backends/aria2/tracker.ts')
+    assert.match(tracker, /await settleErroredQueueTasks\(stopRes\.result \?\? \[\]\)/, '不看这一眼，扩展重载期间出错的任务会永远显示「下载中」（真机：zgC4YDXRi5Rq90）')
+    const start = tracker.indexOf('async function settleErroredQueueTasks')
+    assert.ok(start > 0)
+    const body = tracker.slice(start, tracker.indexOf('async function settleUnseenQueueTasks'))
+    assert.match(body, /record\.status === 'error' \|\| record\.status === 'removed'/, '只处理真正结束的记录')
+    assert.match(body, /isFileConflictErrorCode\(record\.errorCode\)/, '冲突类要给用户「强制覆盖」入口（打 conflict 标记）')
+    assert.match(body, /await tryRecover\(task\.videoId, record, task\)/, '非冲突类仍要走自动恢复，不能一律标失败')
+})
+
 test('自动恢复节流：同一视频两次尝试之间至少隔一分钟', () => {
     const now = 1_000_000_000
     assert.equal(recoverCooldownRemaining(undefined, now), 0, '没试过就该立刻能试（否则新失败永远不恢复）')

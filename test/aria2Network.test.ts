@@ -12,6 +12,9 @@ import { NETWORK_BACKOFF_BASE_MS, NETWORK_BACKOFF_CAP_MS, NETWORK_BREAKER_COOLDO
 test('分类：文件冲突与永久失败先分走（重试一定再撞）', () => {
     assert.equal(classifyAria2Failure('13', 'File already exists'), 'file-conflict')
     assert.equal(classifyAria2Failure('11', 'Duplicate download'), 'file-conflict')
+    // 8 = 本地文件比远端大（真机：218 480 256 B 的旧文件 vs 更短的远端）。它不是 permanent：
+    // 重建没用，但带覆盖参数重投一次就能好 → 归 file-conflict 才能拿到「强制覆盖」这条出路。
+    assert.equal(classifyAria2Failure('8', '/downloads/a.mp4 is larger than the remote file'), 'file-conflict')
     assert.equal(classifyAria2Failure('9', 'Not enough disk space'), 'permanent')
     assert.equal(classifyAria2Failure('17', 'File I/O error'), 'permanent')
 })

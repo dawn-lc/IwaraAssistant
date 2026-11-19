@@ -299,6 +299,41 @@ async function discardFailedAria2Records(stopped: readonly Aria2Status[]): Promi
     return removed
 }
 
+/**
+ * 把「队列写着 running、aria2 那边已经 error/removed」的行收敛成失败。
+ *
+ * 为什么需要单独一遍：WS 的 onDownloadError 是事件驱动的，扩展重载 / SW 回收 / WS 断连期间
+ * 发生的错误**不会重放**；而 settleUnseenQueueTasks 只处理「三条列表里都没有」的 gid。
+ * 这条 gid 明明在 stopped 里躺着，于是两边都不管，界面就一直显示「下载中」。
+ *
+ * 真机取证（2026-11-21，zgC4YDXRi5Rq90）：aria2 报 errorCode 8（本地文件比远端大），
+ * 队列里却一直是 running，detail 还停在上一轮的「恢复失败」上。
+ */
+async function settleErroredQueueTasks(stopped: readonly Aria2Status[]): Promise<number> {
+    const failedRecords = new Map(stopped.filter((record) => record.status === 'error' || record.status === 'removed').map((record) => [record.gid, record]))
+    if (failedRecords.size === 0) return 0
+    let settled = 0
+    for (const task of getTasks()) {
+        if (task.status !== 'running' || task.kind !== 'aria2' || task.kindRef === undefined || task.kindRef === '') continue
+        const record = failedRecords.get(task.kindRef)
+        if (record === undefined) continue
+        settled++
+        const conflict = isFileConflictErrorCode(record.errorCode)
+        // 文件冲突类（含 errorCode 8：本地文件比远端大）：交给用户点「强制覆盖」，不再自动重建
+        if (conflict) {
+            await patchTask(task.id, { status: 'failed', conflict: true, detail: i18n.t('notify.aria2FileConflict', { id: task.videoId }) })
+            continue
+        }
+        // 其余错误先给一次自动恢复的机会（与 WS 那条路径同一套判据）
+        if (await tryRecover(task.videoId, record, task)) continue
+        await patchTask(task.id, { status: 'failed', detail: record.errorMessage ?? i18n.t('notify.aria2Failed', { detail: record.errorCode ?? i18n.t('notify.aria2UnknownCode') }) })
+        const failed = findTask({ id: task.id })
+        if (failed) await notifyTask(failed)
+    }
+    if (settled > 0) console.info('[iwara-assistant] 收敛 ' + settled + ' 条「队列说在跑、aria2 已报错」的任务')
+    return settled
+}
+
 async function settleUnseenQueueTasks(seenGids: ReadonlySet<string>): Promise<number> {
     const stale = pickUnseenQueueTasks(getTasks(), seenGids)
     if (stale.length === 0) return 0
@@ -457,6 +492,8 @@ async function runAria2Scan(): Promise<Aria2ScanOutcome> {
         if (sessionId !== '') scanMemory.sessionId = sessionId
         // 先清掉我们自己的失败记录，再谈对账：否则 stopped 列表会被重试/重建留下的 error 越撑越大
         await discardFailedAria2Records(stopRes.result ?? [])
+        // 队列写着 running、aria2 那边其实已经 error 的：如实收敛（见 settleErroredQueueTasks）
+        await settleErroredQueueTasks(stopRes.result ?? [])
         // 这三个列表里没出现过的任务要逐条确认：否则 gid 被清掉的那些会永远停在「下载中」
         const listedGids = new Set([...(actRes.result ?? []), ...(waitRes.result ?? []), ...(stopRes.result ?? [])].map((item) => item.gid))
         await settleUnseenQueueTasks(listedGids)

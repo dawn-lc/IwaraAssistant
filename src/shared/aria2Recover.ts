@@ -37,6 +37,15 @@ export interface Aria2StatusLike {
 export const ARIA2_ERROR_DUPLICATE_DOWNLOAD = 11
 /** aria2 errorCode：目标文件已存在但没有控制文件（`FILE_ALREADY_EXISTS`） */
 export const ARIA2_ERROR_FILE_ALREADY_EXISTS = 13
+/**
+ * aria2 errorCode：**本地文件比远端文件大**（`The local file is larger than the remote file`）。
+ *
+ * 真机取证（2026-11-21，`zgC4YDXRi5Rq90`）：目标路径上的文件是上一次下载留下的完整文件（218 480 256 B），
+ * 而服务端这次给的 `Content-Length` 更小，`continue=true` 的长度校验直接拒绝 → 0 字节、`errorCode 8`。
+ * 重建同样无用（输出路径和那个更大的文件都没变），只有 `allow-overwrite=true` + `continue=false`
+ * 把文件截断重下才行 —— 也就是任务页的「强制覆盖」。
+ */
+export const ARIA2_ERROR_LOCAL_FILE_LARGER = 8
 
 /**
  * 该错误是否属于「文件层面已存在/被占用」，即**重建也一样会失败**。
@@ -77,7 +86,7 @@ export const ARIA2_ERROR_FILE_ALREADY_EXISTS = 13
 export function isFileConflictErrorCode(code: string | number | undefined): boolean {
     if (code === undefined) return false
     const value = Number(code)
-    return value === ARIA2_ERROR_FILE_ALREADY_EXISTS || value === ARIA2_ERROR_DUPLICATE_DOWNLOAD
+    return value === ARIA2_ERROR_FILE_ALREADY_EXISTS || value === ARIA2_ERROR_DUPLICATE_DOWNLOAD || value === ARIA2_ERROR_LOCAL_FILE_LARGER
 }
 
 /** 下载速度过慢阈值（字节/秒，16 KiB/s）——源 `ARIA2_SLOW_SPEED_THRESHOLD` */
