@@ -154,3 +154,32 @@ sequenceDiagram
 | 刚下完，队列还显示下载中            | WS 事件丢了，等 5 分钟对账                          | 扫描的 complete 分支               |
 | 任务在 aria2 里排队，界面显示排队中 | `waiting` 映射成 `queued`                           | 本文第 4 节                        |
 | 失败原因写着「未知错误码」          | 只有 aria2 没给 errorCode 时才这样（如被外部 kill） | `ARIA2_STATUS_FIELDS` 含 errorCode |
+
+## 8. 分支兼容（上游 aria2 / aria2-next）
+
+同一套 RPC 在三条实际行为线上并不等价，**只按版本号判断会踩坑**（`1.36.0` 与 `3.1.1` 是两条互不相干的版本线）。三次真机实测（2026-11-18 / 11-19）得到：
+
+| 行为                                                         | 上游 1.36.0          | aria2-next 2.4.9 | aria2-next 3.1.1                                  |
+| ------------------------------------------------------------ | -------------------- | ---------------- | ------------------------------------------------- |
+| `getVersion().product`                                       | 无                   | **无**           | `aria2-next`                                      |
+| `aria2.probe` / `aria2.moveDownload`                         | 无                   | 无               | **有**                                            |
+| 媒体任务（HLS/DASH）                                         | 不支持               | 不支持           | 支持：`totalLength` 恒 0，进度在 `media.progress` |
+| 403 过期直链                                                 | `error 22`（5 秒内） | `error 22`       | **永远 `active`、不报错**（每 10 秒重试）         |
+| `addUri` 选项（`force-save`/`referer`/`header`/`all-proxy`） | 全部接受             | 全部接受         | 全部接受                                          |
+| 取消后清结果                                                 | 1 次成功（35 ms）    | 1 次成功         | 1 次成功                                          |
+
+### 怎么判断
+
+判据在 `src/shared/aria2Flavor.ts` 的 `parseAria2Capabilities()`，**先看 `product`、再看 `enabledFeatures`**：2.4.9 没有 `product`，只能靠 `ED2K` 认出来。认不出来就按上游处理——把 aria2-next 当上游只是少用两个可选能力，反过来会让老版本行为莫名其妙地变。
+
+`aria2Capabilities()`（`backends/aria2/client.ts`）负责取一次 `getVersion`；只有**自报身份**的 aria2-next 才再补一次 `system.listMethods`，用方法表校正 `probe`/`moveDownload`（版本线判断是启发式，方法表是事实）。结果缓存 10 分钟，`resetAria2Capabilities()` 可强制重探。
+
+### 行为分叉点（就这三处）
+
+| 能力位                   | 影响                                                                                                       | 位置                                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `media`                  | 扫描/探测的字段集追加 `media`；进度改读 `aria2ProgressOf()`（`totalLength` 为 0 时退回 `media.progress`）  | `tracker.ts` `progressFields()`、`syncLiveState()` |
+| `stallsOnForbidden`      | 投递时给任务加 `max-tries: 5`，把永不出现的错误逼出来（实测 403 从「永不报错」变成 2 秒内 `errorCode 22`） | `downloaders.ts` `aria2AddUriParams()`             |
+| `probe` / `moveDownload` | 目前**只探测不使用**：两项都依赖「投递前预检」与「改目录」的新流程，留给后续单独做                         | `client.ts`                                        |
+
+**已知缺口**：媒体任务的慢速重启仍不生效（`shouldRestartForSlowSpeed` 要求 `totalLength > 0`，而媒体任务恒为 0）。正确的修法是把「停滞判定」按 `completedLength` / `media.progress` 的跨轮变化来做，与提案里的 P1-2 一起改。
