@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { MEDIA_LIST_CONCURRENCY, createMediaCenterMatcher, scanMediaPages, type MediaCenterListEntry, type MediaPage } from '../src/shared/mediaCenterMatch'
+import { MEDIA_LIST_CONCURRENCY, createMediaCenterMatcher, extractVideoId, scanMediaPages, type MediaCenterListEntry, type MediaPage } from '../src/shared/mediaCenterMatch'
 
 function entry(id: string, overrides: Partial<MediaCenterListEntry> = {}): MediaCenterListEntry {
     return { id, ...overrides }
@@ -52,6 +52,26 @@ test('标题只是「片段相似」不算命中（只认完整 ID）', () => {
     const other = createMediaCenterMatcher(['vhgZWCBx8X3lxT'])
     other.add(entry('mc-2', { title: 'vhgZWCBx8X3lx' }))
     assert.equal(other.resolve('vhgZWCBx8X3lxT'), undefined)
+})
+
+// ── 反向补齐：从远端记录反推视频 ID ──────────────────────
+
+test('反向补齐：fileHash 优先于标题（标签型方括号因此不会被采用）', () => {
+    // 真实记录：标题方括号里是标签，fileHash 才是视频 ID。只靠标题会去解析一个不存在的视频
+    assert.equal(extractVideoId(entry('mc-1', { fileHash: 'ByANiHdCm9g8e6', title: 'PhoenixReffaella[ZenlessZoneZero]' })), 'ByANiHdCm9g8e6')
+})
+
+test('反向补齐：没有可用 fileHash 时取标题方括号里的 ID（扫描导入的命名形态）', () => {
+    assert.equal(extractVideoId(entry('mc-1', { title: '能代 Sunny Side Up [dSl2ZwZVGXxOLq]' })), 'dSl2ZwZVGXxOLq')
+    assert.equal(extractVideoId(entry('mc-2', { fileHash: '', title: 'Ramiel - Who is she[vhgZWCBx8X3lxT].mp4' })), 'vhgZWCBx8X3lxT')
+})
+
+test('反向补齐：形态不像视频 ID 的方括号一律不取（宁可跳过也不发错请求）', () => {
+    // 太短 / 带下划线 / 带空格：都不是 iwara 视频 ID
+    assert.equal(extractVideoId(entry('mc-1', { title: 'clip[1080p60].mp4' })), undefined)
+    assert.equal(extractVideoId(entry('mc-2', { title: 'clip[my_final_cut]' })), undefined)
+    assert.equal(extractVideoId(entry('mc-3', { title: 'no brackets here' })), undefined)
+    assert.equal(extractVideoId(entry('mc-4')), undefined)
 })
 
 test('fileHash 命中优先于标题命中（即使标题记录先到）', () => {

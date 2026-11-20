@@ -6,7 +6,7 @@
  */
 import { apiUrl } from '../../shared/site'
 import { isNullOrUndefined } from '../../shared/strings'
-import type { FailVideoInfo, FullVideoInfo } from '../../shared/videoInfo'
+import type { FailVideoInfo, FullVideoInfo, PartialVideoInfo } from '../../shared/videoInfo'
 import { db } from '../storage/db'
 import { getAuth, refreshAccessToken } from './auth'
 import { getConfig } from '../storage/configStore'
@@ -73,6 +73,32 @@ function baseFieldsOf(raw: Iwara.Video) {
         Private: raw.private,
         Unlisted: raw.unlisted,
         External: !isNullOrUndefined(raw.embedUrl) && raw.embedUrl !== ''
+    }
+}
+
+/**
+ * 只取 `/video/:id` 的**基础元数据**，不碰文件源、不碰评论（反向补齐专用）。
+ *
+ * 为什么不复用 `parseVideoFull`：那条路径每个视频要 3+ 次请求，其中
+ * `getCommentDatas` 会**递归拉完所有评论**——热门视频几十次。补齐 2 万条就是几十万次请求，
+ * 而 MediaCenter 的 `updateMedia` 只吃标题/简介/作者/标签/上传时间这几项，
+ * 它们全在 `/video/:id` 的响应里。用 full 解析等于为了让 7 个字段多付两个数量级的代价。
+ *
+ * 刻意**不写** follows / friends 表：那是「你在站点上的关系」的缓存，由页面解析路径维护；
+ * 批量补齐顺手改写它会让角标状态随一次补库整体漂移。
+ */
+export async function parseVideoMeta(videoId: string): Promise<PartialVideoInfo> {
+    try {
+        const response = await fetchWithAuthRetry(apiUrl(`/video/${videoId}`), async (): Promise<RequestInit> => ({ headers: await getAuth() }))
+        const source = (await response.json()) as Iwara.Video & { message?: string | null }
+        if (isNullOrUndefined(source.id)) {
+            const msg = source.message ?? JSON.stringify(source)
+            throw new VideoParseError({ Type: 'fail', ID: videoId, Msg: msg })
+        }
+        return { Type: 'partial', ID: source.id, ...baseFieldsOf(source) }
+    } catch (error) {
+        if (error instanceof VideoParseError) throw error
+        throw new VideoParseError({ Type: 'fail', ID: videoId, Msg: error instanceof Error ? error.message : String(error) })
     }
 }
 

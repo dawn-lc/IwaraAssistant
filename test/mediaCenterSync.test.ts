@@ -70,6 +70,54 @@ test('进入阶段二必须先上报（否则「全部已映射」时会一直�
     assert.ok(pushPublish < poolStart, '阶段二的初始上报必须排在 runPool 之前')
 })
 
+// ── 反向补齐：远端有、本地库没有的记录 ────────────────────────────
+
+const backfillStart = source.indexOf('async function backfillTask(')
+assert.notEqual(backfillStart, -1, '未找到 backfillTask')
+const backfillSource = source.slice(backfillStart, source.indexOf('\n}\n', backfillStart))
+
+test('反向补齐必须走轻量解析（parseVideoMeta），不得用 full 解析', () => {
+    assert.match(backfillSource, /await parseVideoMeta\(videoId\)/)
+    // full 解析会额外拉文件源与**全部评论**：2 万条等于几十万次请求
+    assert.doesNotMatch(backfillSource, /parseVideoFull/, '补齐路径不得调用 full 解析')
+})
+
+test('反向补齐必须用远端记录自己的 filePath 推送（绝不覆盖成本机路径）', () => {
+    assert.match(backfillSource, /const filePath = await fetchMediaFilePath\(remoteId\)/, '路径必须读自远端记录')
+    assert.match(backfillSource, /pushToMediaCenter\(meta, remoteId, filePath\)/, 'filePath 必须作为第三个参数传入')
+})
+
+test('映射只在推送成功后写，且不抢走已有映射（失败的下次要能重试）', () => {
+    const okAt = backfillSource.indexOf('if (outcome.ok) {')
+    assert.notEqual(okAt, -1, '未找到推送成功分支')
+    const branch = backfillSource.slice(okAt, backfillSource.indexOf('} else {', okAt))
+    assert.match(branch, /db\.putIdmap\(\{ ID: videoId, href: remoteId \}\)/, '推送成功才写映射')
+    assert.match(branch, /await db\.getIdmap\(videoId\)/, '写映射前必须确认该视频还没有映射')
+    // 「补映射即可」那条早退分支允许写映射；这里只约束**推送路径**在成功前不得写
+    const pushPath = backfillSource.slice(backfillSource.indexOf('const filePath = await fetchMediaFilePath'), okAt)
+    assert.doesNotMatch(pushPath, /db\.putIdmap\(/, '推送之前不得写映射')
+})
+
+test('补齐必须覆盖「同一视频的第二条远端记录」（映射只认一条，元数据该补多条）', () => {
+    // 判据是「本记录是不是映射目标」，不是「这个视频有没有映射」：后者会把改名重传的重复记录永久漏掉
+    assert.match(backfillSource, /matched\.get\(videoId\) === item\.id/, '跳过判据必须落到具体的远端记录上')
+    assert.doesNotMatch(backfillSource, /matched\.has\(videoId\)/, '按 has 跳过会让重复记录永远只剩文件名')
+})
+
+test('补齐优先读本地库记录（批量入库刚刷过库，站点不可用时也要能补）', () => {
+    const localAt = backfillSource.indexOf('db.getVideosByIds([videoId])')
+    assert.notEqual(localAt, -1, '应先查本地记录')
+    assert.ok(localAt < backfillSource.indexOf('parseVideoMeta(videoId)'), '本地有记录时不该再问站点')
+    assert.match(backfillSource, /stored\.Type === 'full' \|\| stored\.Type === 'partial'/, '只有 full/partial 记录才带得动 updateMedia 需要的字段')
+})
+
+test('批量同步与补齐都不得在消息处理器里 await（Chrome 单事件 5 分钟上限）', () => {
+    const indexSource = readSource('src/background/index.ts')
+    assert.match(indexSource, /case 'SYNC_MEDIA_CENTER':\s*\n\s*case 'BACKFILL_MEDIA_CENTER':/, '两条消息应共用同一段派发')
+    assert.match(indexSource, /return startMediaSync\(/, '派发必须走 startMediaSync')
+    assert.doesNotMatch(indexSource, /await startMediaSync\(/, '整轮任务必须 fire-and-forget')
+})
+
 test('读取进度必须做残骸归一（session 里的 running 不等于真在跑）', () => {
     const readStart = source.indexOf('export async function readMediaSyncProgress(')
     assert.notEqual(readStart, -1, '未找到 readMediaSyncProgress')
@@ -109,7 +157,7 @@ test('options 页必须订阅快照（onChanged），而不是轮询进度消息
 })
 
 test('运行态必须同时看本地 busy 与快照 running（切页签回来不能丢）', () => {
-    assert.match(advancedSource, /const mediaRunning = mediaBusy \|\| mediaProgress\?\.running === true/, '运行态必须是「本次点击 + 后台快照」的并集')
+    assert.match(advancedSource, /const mediaRunning = mediaBusy !== null \|\| mediaProgress\?\.running === true/, '运行态必须是「本次点击 + 后台快照」的并集')
     // 按钮禁用与进度条都必须用 mediaRunning；用 mediaBusy 会让重挂载后的界面与后台脱节
     assert.match(advancedSource, /disabled=\{mediaRunning \|\|/, '按钮必须按 mediaRunning 禁用')
     assert.match(advancedSource, /mediaRunning \? <ProgressBar/, '进度条必须按 mediaRunning 渲染')

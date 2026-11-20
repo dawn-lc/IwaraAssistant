@@ -50,18 +50,43 @@ test('解析：running 却是未知阶段 ⇒ 不可信（否则界面会永远�
 
 test('解析：终态快照允许 stage 为 null', () => {
     const parsed = parseMediaSyncProgress({ running: false, stage: null, done: 0, total: 0, updatedAt: 5 })
-    assert.deepEqual(parsed, { running: false, stage: null, done: 0, total: 0, interrupted: undefined, updatedAt: 5 })
+    assert.deepEqual(parsed, { running: false, stage: null, done: 0, total: 0, interrupted: undefined, result: undefined, updatedAt: 5 })
 })
 
 test('解析：脏计数回落到 0（否则 done / total 会变成 NaN）', () => {
     const parsed = parseMediaSyncProgress({ running: true, stage: 'push', done: '37', total: null, updatedAt: 'now' })
-    assert.deepEqual(parsed, { running: true, stage: 'push', done: 0, total: 0, interrupted: undefined, updatedAt: 0 })
+    assert.deepEqual(parsed, { running: true, stage: 'push', done: 0, total: 0, interrupted: undefined, result: undefined, updatedAt: 0 })
 })
 
 test('解析：负数计数夹到 0，interrupted 只认 true', () => {
     assert.equal(parseMediaSyncProgress({ running: true, stage: 'push', done: -3, total: -1 })?.done, 0)
     assert.equal(parseMediaSyncProgress({ running: false, stage: null, interrupted: 'yes' })?.interrupted, undefined)
     assert.equal(parseMediaSyncProgress({ running: false, stage: null, interrupted: true })?.interrupted, true)
+})
+
+// ── 反向补齐：新阶段 + 终态结论（结论是 fire-and-forget 的唯一回传通道）──────
+
+test('解析：backfill 是已知阶段（否则页面会把它当成脏值，永远转圈）', () => {
+    const parsed = parseMediaSyncProgress({ running: true, stage: 'backfill', done: 12, total: 20573, updatedAt: 7 })
+    assert.equal(parsed?.stage, 'backfill')
+    assert.equal(mediaSyncRatio(parsed), 12 / 20573)
+})
+
+test('解析：终态结论原样带回（页面徽章只认这一份）', () => {
+    const parsed = parseMediaSyncProgress({ running: false, stage: null, done: 0, total: 0, updatedAt: 9, result: { kind: 'backfill', total: 20573, ok: 20500, failed: 73, skipped: 0, finishedAt: 11 } })
+    assert.deepEqual(parsed?.result, { kind: 'backfill', total: 20573, ok: 20500, failed: 73, skipped: 0, reason: undefined, finishedAt: 11 })
+})
+
+test('解析：结论形状不对 ⇒ 丢弃整块，而不是渲染半截（ok 是字符串会显示成 NaN）', () => {
+    assert.equal(parseMediaSyncProgress({ running: false, stage: null, result: { kind: 'upload', ok: 1 } })?.result, undefined)
+    assert.equal(parseMediaSyncProgress({ running: false, stage: null, result: { kind: 'sync' } })?.result?.ok, 0)
+    assert.equal(parseMediaSyncProgress({ running: false, stage: null, result: 'done' })?.result, undefined)
+})
+
+test('残骸归一不保留上一轮结论（那会让人以为刚跑完的那轮成功了）', () => {
+    const settled = settleInterrupted(progress({ stage: 'backfill', done: 1, total: 9, updatedAt: 3 }), false)
+    assert.equal(settled?.interrupted, true)
+    assert.equal(settled?.result, undefined)
 })
 
 // ── 残骸归一（不变量判定，不靠心跳超时）──────────────────────────

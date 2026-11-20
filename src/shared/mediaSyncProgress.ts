@@ -24,11 +24,39 @@
  * session 里的 `running: true` 仍会留到浏览器关闭——所以读取侧必须有
  * `settleInterrupted` 归一（见下），不能假设「session 里有 running 就一定在跑」。
  */
-export type MediaSyncStage = 'list' | 'push'
+export type MediaSyncStage = 'list' | 'push' | 'backfill'
+
+/**
+ * 长任务的**终态结论** —— fire-and-forget 的唯一回传通道。
+ *
+ * 为什么结论也写进快照：`SYNC_MEDIA_CENTER` / `BACKFILL_MEDIA_CENTER` 都由后台
+ * `void` 起任务、消息只回 `{ started }`。Chrome 对**单次事件**有 5 分钟硬上限，
+ * 12 万条推送要十几分钟——把整轮 `await` 在消息处理器里，到期 SW 被杀，
+ * 页面那边 `await send()` 的 promise 永远不 resolve（用户看到的就是「点了没反应」）。
+ * 结论既然不能再靠消息返回值，就只能落在快照里让页面订阅到。
+ */
+/** 起一轮长任务的返回：只回「起没起来」，结论另走快照（MediaTaskResult） */
+export interface MediaTaskStart {
+    started: boolean
+    reason?: string
+}
+
+export interface MediaTaskResult {
+    kind: 'sync' | 'backfill'
+    /** 本轮参与的数量（sync = 映射条数；backfill = 需要补齐的远端记录数） */
+    total: number
+    ok: number
+    failed: number
+    /** 刻意跳过（backfill：已有映射 / 提取不到视频 ID / 远端记录缺 filePath） */
+    skipped: number
+    /** 全局失败原因（仅当一条都没成功时给出，如实告知而不是拿「N 条失败」糊弄） */
+    reason?: string
+    finishedAt: number
+}
 
 export interface MediaSyncProgress {
     running: boolean
-    /** 当前阶段：list = 分页扫描远端列表；push = 逐条推送映射记录；null = 没在跑 */
+    /** 当前阶段：list = 分页扫描远端列表；push = 逐条推送映射记录；backfill = 反向补齐远端记录；null = 没在跑 */
     stage: MediaSyncStage | null
     /** 当前阶段已完成数量 */
     done: number
@@ -36,6 +64,8 @@ export interface MediaSyncProgress {
     total: number
     /** 上次同步没有正常收尾（扩展被重载/关闭），界面据此给出「已中断」而不是永远转圈 */
     interrupted?: boolean
+    /** 上一轮的终态结论（页面据此渲染结果徽章）；缺省表示这一轮还没跑过 */
+    result?: MediaTaskResult
     updatedAt: number
 }
 
@@ -76,14 +106,29 @@ export function parseMediaSyncProgress(raw: unknown): MediaSyncProgress | null {
     const record = raw as Record<string, unknown>
     if (typeof record['running'] !== 'boolean') return null
     const stage = record['stage']
-    const knownStage = stage === 'list' || stage === 'push' ? stage : null
+    const knownStage = stage === 'list' || stage === 'push' || stage === 'backfill' ? stage : null
     // running:true 却给了未知阶段 ⇒ 不可信；running:false 的快照允许 stage 为 null
     if (record['running'] && knownStage === null) return null
     const done = isFiniteCount(record['done']) ? Math.max(0, record['done']) : 0
     const total = isFiniteCount(record['total']) ? Math.max(0, record['total']) : 0
     const updatedAt = isFiniteCount(record['updatedAt']) ? record['updatedAt'] : 0
     const interrupted = record['interrupted'] === true ? true : undefined
-    return { running: record['running'], stage: knownStage, done, total, interrupted, updatedAt }
+    const result = parseMediaTaskResult(record['result'])
+    return { running: record['running'], stage: knownStage, done, total, interrupted, result, updatedAt }
+}
+
+/**
+ * 解析快照里的终态结论。脏值返回 undefined（当成「没有结论」而不是渲染半截）：
+ * 上一代或手工调试留下的 {kind:'sync', ok:'12'} 会让徽章显示成 NaN。
+ */
+export function parseMediaTaskResult(raw: unknown): MediaTaskResult | undefined {
+    if (typeof raw !== 'object' || raw === null) return undefined
+    const record = raw as Record<string, unknown>
+    const kind = record['kind']
+    if (kind !== 'sync' && kind !== 'backfill') return undefined
+    const count = (value: unknown): number => (isFiniteCount(value) ? Math.max(0, value) : 0)
+    const reason = typeof record['reason'] === 'string' && record['reason'] !== '' ? record['reason'] : undefined
+    return { kind, total: count(record['total']), ok: count(record['ok']), failed: count(record['failed']), skipped: count(record['skipped']), reason, finishedAt: count(record['finishedAt']) }
 }
 
 /**

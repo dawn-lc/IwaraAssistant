@@ -18,15 +18,15 @@
 import { getConfig } from '../storage/configStore'
 import { db } from '../storage/db'
 import { getDownloadPath } from '../download/downloadPath'
-import { parseVideoFull } from './videoApi'
+import { parseVideoFull, parseVideoMeta } from './videoApi'
 import { i18n } from '../../shared/i18n'
-import type { FullVideoInfo } from '../../shared/videoInfo'
+import type { FullVideoInfo, PartialVideoInfo } from '../../shared/videoInfo'
 import { getMoreCompleteVideoInfo } from '../../shared/videoInfo'
 import { MEDIA_CENTER_TARGET, describeEndpointFailure, describeEndpointInvalid, describeEndpointRejected, hasEndpointAccess, isNetworkLevelFailure, parseEndpoint } from '../../shared/endpoint'
 import { stringify } from '../../shared/strings'
 import { runPool } from '../../shared/concurrency'
-import { createMediaCenterMatcher, scanMediaPages, MEDIA_LIST_PAGE_SIZE, type MediaCenterListEntry, type MediaPage } from '../../shared/mediaCenterMatch'
-import { IDLE_MEDIA_SYNC_PROGRESS, parseMediaSyncProgress, settleInterrupted, type MediaSyncProgress, type MediaSyncStage } from '../../shared/mediaSyncProgress'
+import { createMediaCenterMatcher, extractVideoId, scanMediaPages, MEDIA_LIST_PAGE_SIZE, type MediaCenterListEntry, type MediaPage } from '../../shared/mediaCenterMatch'
+import { IDLE_MEDIA_SYNC_PROGRESS, parseMediaSyncProgress, settleInterrupted, type MediaSyncProgress, type MediaSyncStage, type MediaTaskResult, type MediaTaskStart } from '../../shared/mediaSyncProgress'
 import { MEDIA_SYNC_PROGRESS_KEY } from '../../shared/storageKeys'
 
 function apiBase(): string {
@@ -131,12 +131,27 @@ async function updateMedia(mediaCenterId: string, body: Record<string, unknown>)
     return { ok: true }
 }
 
-function buildUpdateBody(video: FullVideoInfo, filePath: string): Record<string, unknown> {
+/**
+ * `updateMedia` 真正读到的字段集合。
+ *
+ * 为什么不用 `FullVideoInfo`：反向补齐写入的是 **partial** 记录（没有 DownloadUrl / FileName /
+ * Comments —— 那些字段只有「真的下载过」才有），但它们携带的 RAW / 标题 / 作者 / 标签 / 上传时间
+ * 正是推送需要的全部内容。把类型收窄到这里，两条来源就能共用一个 body 构造器，
+ * 而不是为了类型整洁去给 2 万条记录伪造 full 字段。
+ */
+type PushableVideo = Pick<FullVideoInfo, 'ID' | 'Title' | 'Author' | 'UploadTime' | 'Alias' | 'RAW'> & {
+    Tags?: FullVideoInfo['Tags']
+    Description?: string
+}
+
+function buildUpdateBody(video: PushableVideo, filePath: string): Record<string, unknown> {
     const body: Record<string, unknown> = {
         filePath,
         fileHash: video.ID,
         title: video.Title,
-        description: video.Description ?? '',
+        // partial 记录没有展开的 Description，但 RAW 里就是站点原文（body）。
+        // 不这样回落的话，整批 partial 记录会把 MediaCenter 上已有的简介**清成空串**。
+        description: video.Description ?? video.RAW?.body ?? '',
         source: 'iwara',
         author: video.Author,
         tags: (video.Tags ?? []).map((tag) => tag.id),
@@ -175,13 +190,16 @@ export type PushOutcome = { ok: true } | { ok: false; error: string; networkLeve
  *
  * 不传 override 的路径（下载完成后的单条推送）完全不变：读 idmap → 验证 → 失效才重建。
  */
-export async function pushToMediaCenter(video: FullVideoInfo, mediaCenterIdOverride?: string): Promise<PushOutcome> {
+export async function pushToMediaCenter(video: PushableVideo, mediaCenterIdOverride?: string, filePathOverride?: string): Promise<PushOutcome> {
     if (!isMediaCenterConfigured()) return { ok: false, error: '', networkLevel: false }
 
     let mediaCenterId: string | undefined = mediaCenterIdOverride
 
     try {
-        const filePath = getDownloadPath(video).fullPath
+        // `filePathOverride` 只由**反向补齐**传入：那是远端记录自己的路径，文件在 NAS 上。
+        // 绝不能在这里回落到 `getDownloadPath`——那会把 MediaCenter 指向本机一个不存在的文件。
+        // 反向补齐的 partial 记录也满足 PushableVideo：getDownloadPath 只读 ID/标题/作者/别名/上传时间。
+        const filePath = filePathOverride ?? getDownloadPath(video as FullVideoInfo).fullPath
         if (!mediaCenterId) {
             const mapped = await db.getIdmap(video.ID)
             if (mapped?.href) {
@@ -255,13 +273,14 @@ async function describeMediaCenterFailure(outcome: { error: string; networkLevel
     return describeEndpointFailure(MEDIA_CENTER_TARGET, endpoint, outcome.error, await hasEndpointAccess(endpoint))
 }
 
-export interface MediaSyncResult {
-    total: number
-    pushed: number
-    failed: number
-    /** 全局失败原因（仅当一条都没推成功时给出；如实告知，不拿「N 条失败」糊弄） */
-    reason?: string
-}
+/**
+ * 反向补齐的并发度。
+ *
+ * 每条三次往返：读远端详情（家里 NAS）→ 解析 iwara 元数据（站点）→ 写回（NAS）。
+ * 站点那一侧是别人家的服务，2 路足够快（2 万条 ≈ 半小时到一小时），又不会把自己打成扫描器；
+ * 单条失败只影响它自己，不会拖垮整轮。
+ */
+const BACKFILL_CONCURRENCY = 2
 
 /**
  * 运行中的同步进度 —— **唯一运行真相**（`null` = 没在跑）。
@@ -364,15 +383,9 @@ function progressReporter(stage: MediaSyncStage): (done: number, total: number) 
  * 阶段二（推送）用 `PUSH_CONCURRENCY` 条并行的 worker，而不是串行 + sleep：
  * 每条推送是 2~3 次独立往返，串行一万条就是数万次往返，且 worker 里 sleep 只是空转槽位。
  */
-export async function syncCachedToMediaCenter(): Promise<MediaSyncResult> {
-    const result: MediaSyncResult = { total: 0, pushed: 0, failed: 0 }
-    if (!isMediaCenterConfigured()) return result
-
-    if (parseEndpoint(apiBase()) === null) {
-        result.reason = describeEndpointInvalid(MEDIA_CENTER_TARGET, apiBase())
-        return result
-    }
-
+async function syncTask(): Promise<MediaTaskResult> {
+    const result: MediaTaskResult = { kind: 'sync', total: 0, ok: 0, failed: 0, skipped: 0, finishedAt: 0 }
+    // 配置与端点检查在 startMediaSync 里做（那才是「起不起来」的判据），这里只负责流程
     publishProgress({ running: true, stage: 'list', done: 0, total: 0, updatedAt: Date.now() }, true)
     try {
         // ── 阶段一：分页扫描远端列表 + 建立/补齐映射 ──
@@ -441,8 +454,11 @@ export async function syncCachedToMediaCenter(): Promise<MediaSyncResult> {
                         result.failed++
                         return
                     }
-                    let video: FullVideoInfo
-                    if (stored.Type === 'full') {
+                    // partial 记录已含 updateMedia 需要的全部字段（RAW / 标题 / 作者 / 标签 / 上传时间）。
+                    // 对它们再解析一次 full 会额外拉文件源与**全部评论**（每支 3+ 次请求），
+                    // 而反向补齐写入的正是 partial 记录——不放行这条分支，每次同步都会重解析 2 万条。
+                    let video: FullVideoInfo | PartialVideoInfo
+                    if (stored.Type === 'full' || stored.Type === 'partial') {
                         video = stored
                     } else {
                         // 非 full 记录（只有列表页缓存）：现解析一次；解析失败计入失败而不是静默跳过
@@ -459,7 +475,7 @@ export async function syncCachedToMediaCenter(): Promise<MediaSyncResult> {
                         }
                     }
                     const outcome = await pushToMediaCenter(video, mediaCenterId)
-                    if (outcome.ok) result.pushed++
+                    if (outcome.ok) result.ok++
                     else {
                         result.failed++
                         firstFailure ??= { error: outcome.error, networkLevel: outcome.networkLevel }
@@ -472,12 +488,186 @@ export async function syncCachedToMediaCenter(): Promise<MediaSyncResult> {
             { concurrency: PUSH_CONCURRENCY }
         )
         // 一条都没成功 → 几乎必然是端点层面的问题（未授权/未启动/服务端拒绝），把真实原因交给 UI
-        if (result.pushed === 0 && firstFailure !== null) result.reason = await describeMediaCenterFailure(firstFailure)
+        if (result.ok === 0 && firstFailure !== null) result.reason = await describeMediaCenterFailure(firstFailure)
+        result.finishedAt = Date.now()
         return result
-    } finally {
-        // **先落终态快照，再释放内存标记**：顺序反了会有一个「内存空、存储仍写 running」
-        // 的窗口，那一刻打开页面会把刚跑完的同步判成「已中断」。
-        await browser.storage.session.set({ [MEDIA_SYNC_PROGRESS_KEY]: { ...IDLE_MEDIA_SYNC_PROGRESS, updatedAt: Date.now() } }).catch(() => undefined)
-        liveProgress = null
+    } catch (error) {
+        // 阶段二有 worker 兜底，能走到这里的只有阶段一之外的意外：如实带回原因，不静默吞掉
+        result.reason ??= error instanceof Error ? error.message : stringify(error)
+        result.finishedAt = Date.now()
+        return result
     }
+}
+
+/**
+ * 反向补齐：把 MediaCenter 里**没有映射**的记录用 iwara 元数据补全。
+ *
+ * ### 为什么需要它
+ *
+ * 常规同步只处理「库内已有视频」：远端记录若由别的工具产生（本项目现场就是
+ * /storage/iwara 的扫描导入），本地库根本没有那支视频——它既进不了阶段一的候选，
+ * 也不会有映射，一次都不会被推送。实测 20,573 条远端记录属于这种状态，且其中**没有一条**
+ * 在本地库中（不是匹配失败，是数据来源缺失）。
+ *
+ * ### 为什么不需要本地库
+ *
+ * 这类记录自己就带着 iwara 视频 ID：fileHash，或标题里的方括号（扫描导入的文件名形态）。
+ * 于是每条走三步：读远端详情拿 filePath → 解析站点元数据 → 用**远端自己的 filePath** 写回。
+ *
+ * ### 三条纪律
+ *
+ * 1. **绝不覆盖 filePath**：这些文件在 NAS 上，本机没有同名文件。用 getDownloadPath
+ *    会把记录指向一个不存在的路径，播放与再次下载全部废掉。
+ * 2. **只写 partial + idmap，不伪造 full**：full 记录意味着「这份文件被下载过」，
+ *    它们的 DownloadUrl / FileName / Comments 我们根本没有；而 partial 记录携带的
+ *    RAW / 标题 / 作者 / 标签 / 上传时间正是 updateMedia 需要的全部字段。
+ * 3. **幂等可续跑**：成功的写 idmap，下次直接跳过；失败的留空等下次。不需要额外游标——
+ *    「这条记录补过没有」本身就是进度。
+ * 4. **同一视频的多条远端记录都要补**（扫描导入的存量里，一个文件常被改名重传成两条）：
+ *    idmap 只认一条（否则下载记录会落到重复文件上），但元数据该补到每一条记录上——
+ *    跳过判据因此是「本记录是否已经是映射目标 / 自己就带着 ID 当 fileHash」，
+ *    而不是「这个视频有没有映射」（后者会把第二条记录永久漏掉，正是用户点开一条记录
+ *    发现它始终只有文件名的原因）。
+ */
+async function backfillTask(): Promise<MediaTaskResult> {
+    const result: MediaTaskResult = { kind: 'backfill', total: 0, ok: 0, failed: 0, skipped: 0, finishedAt: 0 }
+    const matched = await db.getAllIdmaps()
+    const pending: Array<{ videoId: string; remoteId: string; needsPush: boolean }> = []
+    const reportScan = progressReporter('list')
+    try {
+        await scanMediaPages({
+            fetchPage: fetchMediaPage,
+            apply: (items) => {
+                for (const item of items) {
+                    const videoId = extractVideoId(item)
+                    // 两种「不用补」：提不出 ID（噪声），以及**本记录就是映射目标**（元数据早已对齐）。
+                    // 判据必须是「本记录在不在位」，不能是「这个视频有没有映射」——后者会把同一视频的
+                    // 第二条远端记录永久漏掉，而扫描导入的存量里大量就是这种改名重传的重复文件。
+                    if (videoId === undefined || matched.get(videoId) === item.id) {
+                        result.skipped++
+                        continue
+                    }
+                    // 记录自己就带着 ID 当 fileHash：说明本流水线写过它，只差一条映射 —— 补映射即可
+                    pending.push({ videoId, remoteId: item.id, needsPush: item.fileHash !== videoId })
+                }
+            },
+            // 补齐要覆盖整份目录：不像阶段一那样「候选全命中就提前结束」
+            onProgress: (done, total) => reportScan(done, total)
+        })
+    } catch (error) {
+        result.reason = describeEndpointRejected(MEDIA_CENTER_TARGET, error instanceof Error ? error.message : stringify(error))
+        result.finishedAt = Date.now()
+        return result
+    }
+
+    result.total = pending.length
+    if (pending.length === 0) {
+        result.reason = i18n.t('notify.mediaBackfillNothing')
+        result.finishedAt = Date.now()
+        return result
+    }
+    // 进推进阶段就立刻上报：扫描阶段只写「已读 N 条」，不给这一跳用户会以为没开始
+    publishProgress({ running: true, stage: 'backfill', done: 0, total: pending.length, updatedAt: Date.now() }, true)
+
+    const report = progressReporter('backfill')
+    let settled = 0
+    let firstFailure: { error: string; networkLevel: boolean } | null = null
+    await runPool(
+        pending,
+        async ({ videoId, remoteId, needsPush }) => {
+            try {
+                if (!needsPush) {
+                    // 记录本身已经写着这个 ID（只是缺映射）：补映射就够了，再推一次只会白刷 updatedAt
+                    if (!(await db.getIdmap(videoId))?.href) await db.putIdmap({ ID: videoId, href: remoteId })
+                    result.ok++
+                    return
+                }
+                const filePath = await fetchMediaFilePath(remoteId)
+                if (filePath === undefined) {
+                    // 远端没有 filePath：宁可跳过，也不能拿本地模板造一个假的
+                    result.skipped++
+                    return
+                }
+                // 本地库优先：批量入库刚把库刷过一遍，而站点侧此刻可能正好不可用（未登录/限流）。
+                // 只有本地没有可用记录时才回站点解析——这也把两万条的请求量砍掉大半。
+                const [stored] = await db.getVideosByIds([videoId])
+                let meta: PushableVideo
+                if (stored !== undefined && (stored.Type === 'full' || stored.Type === 'partial')) {
+                    meta = stored
+                } else {
+                    const parsed = await parseVideoMeta(videoId)
+                    await db.putVideo(parsed)
+                    meta = parsed
+                }
+                const outcome = await pushToMediaCenter(meta, remoteId, filePath)
+                if (outcome.ok) {
+                    result.ok++
+                    // 映射写在**推送成功之后**，且只在该视频还没有映射时写：
+                    // 同一视频的第二条记录补完元数据就够，抢走映射会让下载记录落到重复文件上。
+                    if (!(await db.getIdmap(videoId))?.href) await db.putIdmap({ ID: videoId, href: remoteId })
+                } else {
+                    result.failed++
+                    firstFailure ??= { error: outcome.error, networkLevel: outcome.networkLevel }
+                }
+            } catch (error) {
+                // 站点侧 404/403（已删、私有、ID 是噪声）与网络失败都落这里：只记这一条，不中断整轮
+                result.failed++
+                const detail = error instanceof Error ? error.message : stringify(error)
+                firstFailure ??= { error: detail, networkLevel: isNetworkLevelFailure(detail) }
+            } finally {
+                report(++settled, pending.length)
+            }
+        },
+        { concurrency: BACKFILL_CONCURRENCY }
+    )
+    if (result.ok === 0 && firstFailure !== null) result.reason = await describeMediaCenterFailure(firstFailure)
+    result.finishedAt = Date.now()
+    return result
+}
+
+/**
+ * 读一条远端记录的 filePath。
+ *
+ * 为什么必须逐条 GET：列表端点不返回 filePath（实测字段里没有），而它恰好是唯一不能拿本地
+ * 路径顶替的东西（见 backfillTask 纪律 1）。两万次 GET 在并发下是分钟级，不值得为它改成「猜路径」。
+ */
+async function fetchMediaFilePath(mediaCenterId: string): Promise<string | undefined> {
+    const response = await fetch(apiBase() + '/api/media/' + mediaCenterId, { headers: authHeaders() })
+    if (!response.ok) return undefined
+    const body = (await response.json()) as { media?: { filePath?: unknown }; filePath?: unknown }
+    const media = (body.media ?? body) as { filePath?: unknown }
+    return typeof media.filePath === 'string' && media.filePath !== '' ? media.filePath : undefined
+}
+
+/**
+ * 起一轮长任务（同步 / 反向补齐）。
+ *
+ * **同步占位后立即返回**：整轮任务交给 runTask 的 void 调用。Chrome 对单次事件有 5 分钟硬上限，
+ * 12 万条推送要十几分钟——把整轮 await 在消息处理器里，到期 SW 被杀、页面永远拿不到响应。
+ * 进度与结论都走 storage.session 快照（页面订阅 onChanged）。
+ */
+export function startMediaSync(kind: 'sync' | 'backfill'): MediaTaskStart {
+    if (!isMediaCenterConfigured()) return { started: false, reason: i18n.t('notify.mediaNotConfigured') }
+    if (liveProgress !== null) return { started: false, reason: i18n.t('notify.mediaBusy') }
+    if (parseEndpoint(apiBase()) === null) return { started: false, reason: describeEndpointInvalid(MEDIA_CENTER_TARGET, apiBase()) }
+    publishProgress({ running: true, stage: kind === 'backfill' ? 'backfill' : 'list', done: 0, total: 0, updatedAt: Date.now() }, true)
+    void runTask(kind, kind === 'backfill' ? backfillTask : syncTask)
+    return { started: true }
+}
+
+/**
+ * 跑一轮任务并收尾。
+ *
+ * 收尾顺序固定：**先 await 写终态快照（含本轮结论），再释放内存标记**。反过来会留下一个
+ * 「内存已空、存储仍写 running」的窗口，那一刻打开页面会把刚跑完的这一轮判成「已中断」。
+ */
+async function runTask(kind: 'sync' | 'backfill', body: () => Promise<MediaTaskResult>): Promise<void> {
+    let result: MediaTaskResult
+    try {
+        result = await body()
+    } catch (error) {
+        result = { kind, total: 0, ok: 0, failed: 0, skipped: 0, reason: error instanceof Error ? error.message : stringify(error), finishedAt: Date.now() }
+    }
+    await browser.storage.session.set({ [MEDIA_SYNC_PROGRESS_KEY]: { ...IDLE_MEDIA_SYNC_PROGRESS, result, updatedAt: Date.now() } }).catch(() => undefined)
+    liveProgress = null
 }

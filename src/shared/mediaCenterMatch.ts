@@ -38,6 +38,27 @@ export interface MediaPage {
 /** 分页请求的页大小：服务端对分页请求把 `limit` 硬顶到 100，超过这个值只会被截断 */
 export const MEDIA_LIST_PAGE_SIZE = 100
 
+/** iwara 视频 ID 形态：纯字母数字 10~18 位（实测真实 ID 为 14 位，区间留了余量） */
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9]{10,18}$/
+
+/**
+ * 从一条远端记录里**反推 iwara 视频 ID** —— 反向补齐（远端有、本地库没有）的前提。
+ *
+ * 优先 `fileHash`：扩展与站点下载器创建的记录把视频 ID 原样写在这里，那是最强证据；
+ * 只有它不成立时才看标题里的方括号（扫描导入的文件普遍是 `标题[ID].mp4` 形态）。
+ *
+ * 为什么不能只靠标题：`PhoenixReffaella[ZenlessZoneZero]` 这种方括号里是**标签**，
+ * 拿它去解析等于请求一个不存在的视频。形态校验（纯字母数字 + 长度区间）挡掉绝大多数噪声，
+ * 剩下的按解析失败如实上报，绝不静默当成成功。
+ */
+export function extractVideoId(entry: MediaCenterListEntry): string | undefined {
+    const hash = entry.fileHash
+    if (typeof hash === 'string' && VIDEO_ID_PATTERN.test(hash)) return hash
+    if (typeof entry.title !== 'string') return undefined
+    const match = entry.title.match(/\[([A-Za-z0-9]{10,18})\]/)
+    return match?.[1]
+}
+
 /**
  * 页数安全上限（50 万条）。
  *
