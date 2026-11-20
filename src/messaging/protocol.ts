@@ -151,6 +151,14 @@ export type Req =
     /** 订阅页私有/不公开视频遍历入库（返回形状与 `SYNC_ALL_VIDEOS` 相同，理由同） */
     | { type: 'SYNC_SUBSCRIBED'; payload: Record<string, never> }
     /**
+     * 暂停 / 继续 / 停止当前这一轮站点遍历。
+     *
+     * 只改后台内存里的控制意图并把状态写进快照，真正生效在**页间闸门**上：
+     * 一页请求已经在飞，硬取消既救不回时间，也会让断点游标与「已处理」集合对不上。
+     * 停止与暂停的区别是收尾方式：停止保留断点（下次「继续」从该页起），暂停只是停在那里等人。
+     */
+    | { type: 'CONTROL_SITE_SYNC'; payload: { action: 'pause' | 'resume' | 'stop' } }
+    /**
      * 页面到达 `/videos` 时请求**自动**遍历订阅流（源项目 `menu.pageChange()` 的同款时机）。
      *
      * 与 `SYNC_SUBSCRIBED` 的分工：那条是用户点了按钮，无论配置与间隔都必须执行；
@@ -158,11 +166,21 @@ export type Req =
      */
     | { type: 'AUTO_SYNC_SUBSCRIBED'; payload: Record<string, never> }
     /**
-     * MediaCenter 批量同步（库内 full 记录）。
+     * MediaCenter 批量同步（把已有映射的记录重新推一遍）。
      *
-     * 进度推进不靠轮询：后台写 `storage.session` 快照，页面订阅 `storage.onChanged`。
+     * 只回 `{ started, reason? }`：整轮要十几分钟（12 万条映射），而 Chrome 对单次事件有
+     * 5 分钟上限，`await` 它必被杀。进度与终态结论都走 `storage.session` 快照，
+     * 页面订阅 `storage.onChanged`。
      */
     | { type: 'SYNC_MEDIA_CENTER'; payload: Record<string, never> }
+    /**
+     * MediaCenter **反向补齐**：远端有、本地视频库里没有的记录（扫描导入的存量）。
+     *
+     * 常规同步对它无效——阶段一只认「本地有视频」的候选，阶段二要靠本地 full/partial 记录拼 body。
+     * 这条消息改用远端记录自带的 iwara 视频 ID（fileHash / 标题方括号）去站点解析元数据，
+     * 再用**远端自己的 filePath** 写回。同样是 fire-and-forget，结论走快照。
+     */
+    | { type: 'BACKFILL_MEDIA_CENTER'; payload: Record<string, never> }
     /**
      * 读取 MediaCenter 同步进度的**初值**（options 高级页挂载时取一次）。
      *

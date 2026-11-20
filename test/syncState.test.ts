@@ -40,6 +40,22 @@ test('脏计数回 0、负数夹 0（进度条不能画到容器外）', () => {
     assert.deepEqual({ page: parsed.page, succeeded: parsed.succeeded, failed: parsed.failed, updatedAt: parsed.updatedAt }, { page: 0, succeeded: 0, failed: 0, updatedAt: 0 })
 })
 
+// ── 暂停标记（决定界面显示「暂停」还是「继续」）──────────────────
+
+test('暂停标记只认 true：缺省与脏值都按「在跑」处理', () => {
+    // 缺省时对象里不该多出这个键（页面靠 undefined 判断「没暂停」）
+    assert.equal('paused' in (parseSyncState(state({})) as object), false)
+    assert.equal(parseSyncState(state({ paused: false }))?.paused, undefined)
+    assert.equal(parseSyncState(state({ paused: 'yes' as unknown as boolean }))?.paused, undefined)
+    assert.equal(parseSyncState(state({ paused: true }))?.paused, true)
+})
+
+test('暂停不等于停跑：running 仍为 true，进度条不该消失', () => {
+    const paused = parseSyncState(state({ paused: true })) as SyncState
+    assert.equal(paused.running, true)
+    assert.equal(paused.paused, true)
+})
+
 test('message 不是字符串时回落空串（界面按空值隐藏状态行）', () => {
     assert.equal(parseSyncState({ ...state({}), message: { text: 'x' } })?.message, '')
     assert.equal(parseSyncState(state({ message: '已遍历 3 页' }))?.message, '已遍历 3 页')

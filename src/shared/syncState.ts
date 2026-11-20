@@ -20,6 +20,14 @@ export interface SyncState {
     page: number
     succeeded: number
     failed: number
+    /**
+     * 用户按下了「暂停」（循环停在页间闸门上，任务仍然活着）。
+     *
+     * 只有它能让界面把「暂停」按钮换成「继续」：遍历跑起来之后**没有别的信号**能区分
+     * 「正在慢慢翻页」与「停在那里等人」。也刻意不落成 `running: false`——那会让按钮变回可点、
+     * 用户再点一次就是第二条循环。
+     */
+    paused?: boolean
     /** 面向用户的进度/结论文案（后台已本地化） */
     message: string
     updatedAt: number
@@ -49,12 +57,15 @@ export function parseSyncState(raw: unknown): SyncState | null {
     if (typeof record['running'] !== 'boolean') return null
     const kind = record['kind'] === 'all' || record['kind'] === 'subscribed' ? record['kind'] : null
     if (record['running'] && kind === null) return null
+    // 只有 true 才算暂停；缺省/脏值一律按「在跑」处理（宁可多显示一颗暂停按钮，也不假装已暂停）
+    const paused = record['paused'] === true ? true : undefined
     return {
         running: record['running'],
         kind,
         page: isCount(record['page']) ? Math.max(0, record['page']) : 0,
         succeeded: isCount(record['succeeded']) ? Math.max(0, record['succeeded']) : 0,
         failed: isCount(record['failed']) ? Math.max(0, record['failed']) : 0,
+        ...(paused ? { paused } : {}),
         message: typeof record['message'] === 'string' ? record['message'] : '',
         updatedAt: isCount(record['updatedAt']) ? record['updatedAt'] : 0
     }

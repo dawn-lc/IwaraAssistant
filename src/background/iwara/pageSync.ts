@@ -82,6 +82,28 @@ const MAX_PAGE_RETRIES = 1
  */
 let running = false
 
+/**
+ * 用户对当前这一轮的控制意图（**内存态**，与任务同生共死）。
+ *
+ * 为什么不能只看持久层里的 paused：那是「给别人看的快照」，进程重启后它与真任务无关；
+ * 而这里是循环真正读的那个变量。两者由 patchSnapshot 单向同步（内存 → 快照），
+ * 永不反向读——否则一次崩溃残留的 paused: true 会让下一轮一开跑就自我暂停。
+ */
+let control: 'run' | 'pause' | 'stop' = 'run'
+
+/** 暂停时用来唤醒循环的 resolver（resume 与 stop 都会调它） */
+let wake: (() => void) | null = null
+
+/**
+ * 暂停期间的续命间隔。
+ *
+ * MV3 只会在**空闲 30 秒**后回收 SW（「单个事件 5 分钟」是另一条，管的是事件处理），
+ * 而不忙任何扩展 API 的暂停恰好就是空闲。所以暂停期间每 20 秒做一次 storage.local.get：
+ * 这不是「保活插件在后台赖着」，而是用户主动按了暂停、界面必须能真的停在那一页。
+ * （alarms 做不到：它只会事后唤醒**一个全新的** SW，内存里的循环早没了。）
+ */
+const PAUSE_HEARTBEAT_MS = 20_000
+
 /** 启动遍历的结果。**不含遍历结果**——那是快照的职责（理由见文件头）。 */
 export interface SyncStartResult {
     started: boolean
@@ -106,6 +128,9 @@ export type SyncFrom = 'resume' | 'restart'
 export async function startSiteSync(kind: SyncKind, from: SyncFrom = 'resume'): Promise<SyncStartResult> {
     if (running) return { started: false, reason: 'already-running' }
     running = true
+    // 上一轮可能停在 pause/stop 上：新一轮必须从干净的控制态开始
+    control = 'run'
+    wake = null
 
     let loggedIn = false
     try {
@@ -145,8 +170,12 @@ export async function startSiteSync(kind: SyncKind, from: SyncFrom = 'resume'): 
 async function settleRun(state: SyncState): Promise<void> {
     state.running = false
     state.kind = null
+    delete state.paused
     await report(state)
     running = false
+    // 复位控制意图：否则残留的 pause 会让下一轮一开跑就自我暂停
+    control = 'run'
+    wake = null
 }
 
 /**
@@ -168,6 +197,77 @@ export async function settleInterruptedSync(): Promise<void> {
 
 async function report(state: SyncState): Promise<void> {
     await browser.storage.local.set({ [SYNC_PROGRESS_KEY]: { ...state, updatedAt: Date.now() } })
+}
+
+export type SyncControlAction = 'pause' | 'resume' | 'stop'
+
+export interface SyncControlResult {
+    applied: boolean
+    reason?: 'not-running'
+}
+
+/**
+ * 暂停 / 继续 / 停止当前这一轮遍历。
+ *
+ * 只改**意图**并立刻把状态写进快照，真正生效在页间闸门（awaitControl）上——
+ * 一页的请求已经在飞，硬取消它既救不回时间，也会让游标与「已处理」集合对不上。
+ * 停止与暂停的区别：停止让循环跑到闸门就收尾（保留游标，下次「继续」从断点起），
+ * 暂停只是停在那里等人。
+ *
+ * 没有任务在跑时返回 not-running：界面上这两颗按钮只在 running 时出现，能落到这条分支的
+ * 是「点下去的同时任务刚好跑完」，如实回给页面而不是假装成功。
+ */
+export async function controlSiteSync(action: SyncControlAction): Promise<SyncControlResult> {
+    if (!running) return { applied: false, reason: 'not-running' }
+    control = action === 'resume' ? 'run' : action
+    wake?.()
+    wake = null
+    await patchSnapshot({ paused: action === 'pause' }).catch(() => undefined)
+    return { applied: true }
+}
+
+/**
+ * 把补丁写进当前快照（只读现有快照，不猜字段）。
+ *
+ * 循环里的 state 对象是闭包私有的，控制入口拿不到它；而快照里恰好有页面/计数/文案。
+ * 读不到快照说明这一轮还没写过（或 storage 不可用）——那就什么都不做，绝不凭空造一份。
+ */
+async function patchSnapshot(patch: { paused?: boolean }): Promise<void> {
+    const stored = parseSyncState((await browser.storage.local.get(SYNC_PROGRESS_KEY))[SYNC_PROGRESS_KEY])
+    if (!stored) return
+    const next: SyncState = { ...stored }
+    if (patch.paused === true) next.paused = true
+    else delete next.paused
+    await report(next)
+}
+
+/**
+ * 页间闸门：暂停时在这里等，用户点停止则返回 false。
+ *
+ * 返回 false 的调用点必须以「被用户停止」收尾：**不能**走自然结束那条路（那里会删游标），
+ * 否则「停在 N 页、下次继续」这句话立刻变成假话。
+ */
+async function awaitControl(): Promise<boolean> {
+    if (control === 'pause') {
+        await patchSnapshot({ paused: true }).catch(() => undefined)
+        while (control === 'pause') {
+            await new Promise<void>((resolve) => {
+                const timer = setTimeout(() => {
+                    wake = null
+                    resolve()
+                }, PAUSE_HEARTBEAT_MS)
+                wake = () => {
+                    clearTimeout(timer)
+                    wake = null
+                    resolve()
+                }
+            })
+            // 超时唤醒（没人点继续）：做一次扩展 API 调用给空闲计时器续命
+            if (control === 'pause') await browser.storage.local.get(SYNC_PROGRESS_KEY).catch(() => undefined)
+        }
+        if (control !== 'stop') await patchSnapshot({ paused: false }).catch(() => undefined)
+    }
+    return control !== 'stop'
 }
 
 /**
@@ -303,8 +403,17 @@ async function runAllVideos(startPage = 0): Promise<void> {
     /** 游标当前指向的位置：连续完成的最后一页 + 1，理由见 `advanceSyncCursor` */
     let contiguous = startPage
 
+    /** 用户点了「停止」：收尾时保留游标（不是自然跑完，不能删断点） */
+    let stopped = false
+
     try {
         for (let page = startPage; page < 100_000; page++) {
+            // 页间闸门：暂停停在这里等，停止则带着断点收尾
+            if (!(await awaitControl())) {
+                stopped = true
+                state.message = i18n.t('notify.syncStopped', { page, ok: state.succeeded, failed: state.failed })
+                break
+            }
             state.page = page
             state.message = i18n.t('notify.syncPage', { page, ok: state.succeeded, failed: state.failed })
             await report(state)
@@ -337,6 +446,11 @@ async function runAllVideos(startPage = 0): Promise<void> {
             await sleep(PAGE_INTERVAL_MS + Math.random() * 1000)
         }
 
+        // 被用户停止：**不跑补跑轮、也不删游标**——「停在 N 页、下次继续」必须是真的
+        if (stopped) {
+            await writeSyncCursor(advanceSyncCursor(contiguous, processed))
+            return
+        }
         const unresolved = retryFailed.length > 0 ? await retryFailedPages(retryFailed, state, processed) : []
         // 补跑轮可能把中间那几个洞补上，游标因此还能再往前推一段
         contiguous = advanceSyncCursor(contiguous, processed)
@@ -362,6 +476,11 @@ async function retryFailedPages(pages: number[], state: SyncState, processed: Se
     for (let round = 0; round < MAX_PAGE_RETRIES && pending.length > 0; round++) {
         const stillFailed: number[] = []
         for (const page of pending) {
+            // 暂停/停止优先于补跑：剩下的失败页留到下一轮，别让「停止」变成「再跑二十分钟」
+            if (!(await awaitControl())) {
+                state.message = i18n.t('notify.syncStopped', { page, ok: state.succeeded, failed: state.failed })
+                return pending
+            }
             state.message = i18n.t('notify.syncRetry', { page, round: round + 1, total: pending.length })
             await report(state)
             try {
@@ -399,6 +518,10 @@ async function runSubscribed(): Promise<void> {
         let consecutiveFailures = 0
 
         for (let page = 0; page < MAX_FIND_PAGES; page++) {
+            if (!(await awaitControl())) {
+                state.message = i18n.t('notify.syncStopped', { page, ok: state.succeeded, failed: state.failed })
+                break
+            }
             state.page = page
             state.message = i18n.t('notify.subscribedPage', { page, collected: collected.length })
             await report(state)

@@ -47,8 +47,8 @@ import { syncKeepAlive } from './runtime/keepAlive'
 import { startAria2Tracking, watchAria2Endpoint } from './backends/aria2/tracker'
 import { consumeNotificationTarget, notifyInfo } from './runtime/notify'
 import { readFriendApproveProgress, startFriendApproval } from './iwara/friendApprove'
-import { autoSyncSubscribed, settleInterruptedSync, startSiteSync, ingestPageVideos } from './iwara/pageSync'
-import { readMediaSyncProgress, syncCachedToMediaCenter } from './iwara/mediaCenter'
+import { autoSyncSubscribed, controlSiteSync, settleInterruptedSync, startSiteSync, ingestPageVideos } from './iwara/pageSync'
+import { readMediaSyncProgress, startMediaSync } from './iwara/mediaCenter'
 import { promoteAuthor } from './iwara/promoteAuthor'
 import { removePlaylistItems } from './iwara/playlists'
 import { checkLinkReachable } from './iwara/linkCheck'
@@ -264,12 +264,19 @@ onMessage<Req>(async (req, sender) => {
             return startSiteSync('all', req.payload.from === 'restart' ? 'restart' : 'resume')
         case 'SYNC_SUBSCRIBED':
             return startSiteSync('subscribed')
+        case 'CONTROL_SITE_SYNC':
+            // 只有在跑的循环读得到这条意图；没在跑时如实回 applied:false（页面据此提示，而不是假装成功）
+            return controlSiteSync(req.payload.action)
         case 'AUTO_SYNC_SUBSCRIBED':
             // 页面到达 /videos 时的自动遍历（源 menu.pageChange() 同款时机）；
             // 与手动路径分开：这里按配置 + 最小间隔 + 登录态自己决定跑不跑
             return autoSyncSubscribed()
         case 'SYNC_MEDIA_CENTER':
-            return syncCachedToMediaCenter()
+        case 'BACKFILL_MEDIA_CENTER':
+            // **不 await 整轮任务**：Chrome 对单次事件有 5 分钟上限，12 万条推送要十几分钟，
+            // 到期 SW 被杀、页面那边的 promise 永远不 resolve。这里同步占位后立即返回 { started }，
+            // 进度与终态结论写 storage.session 快照（页面订阅 onChanged）。见 mediaCenter 文件头。
+            return startMediaSync(req.type === 'BACKFILL_MEDIA_CENTER' ? 'backfill' : 'sync')
         case 'GET_MEDIA_SYNC_STATE':
             return readMediaSyncProgress()
         case 'REMOVE_PLAYLIST_ITEMS': {
