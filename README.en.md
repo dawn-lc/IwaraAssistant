@@ -10,11 +10,6 @@
 
 **Iwara Assistant** is a **browser extension** for [iwara.tv](https://www.iwara.tv) that aims to improve the site's batch downloading and video management experience.
 
-- **Chrome (MV3) and Firefox (MV2) share the same code base** and behave identically.
-- Four download channels: the browser's built-in downloads, aria2, iwaradl, and opening the direct link for an external downloader.
-- System notifications are the only channel for result feedback; one click takes you where you need to go.
-- Nothing is collected and nothing is sent back to the developer.
-
 > [!IMPORTANT]
 > **Firefox is listed on [AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)** (with automatic updates). **The Chrome Web Store rejected it** (a content-policy determination, a prohibited item that cannot be solved by changing code), so Chromium-based browsers must load it manually — functionality is identical to a store installation, and the reason is explained [below](#why-not-in-the-store).
 
@@ -24,7 +19,7 @@
 
 | Area          | Capabilities                                                                                                                                                                                       |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Download      | Four channels; path templates with live preview; link pre-checks; batch de-duplication; concurrency limit for the browser channel; retry on failure; metadata JSON                                 |
+| Download      | Four channels (built-in browser downloads / aria2 / iwaradl / open the direct link); path templates with live preview; link pre-checks; batch de-duplication; retry on failure; metadata JSON      |
 | Page          | Card checkboxes with a cross-tab selection; select all / invert / clear; floating menu; manual ID entry; beautification and widescreen; bottom-right watermark; automatic rescan on SPA navigation |
 | Tasks         | Queue groups (needs attention / in progress / completed); progress; retry; removal (cancels the downloader first); clear finished; reconciliation on startup; toolbar badge                        |
 | Settings      | Nine tabs; instant save; interface language `auto` / 中文 / English / 日本語; settings validation and defaults                                                                                     |
@@ -33,6 +28,7 @@
 | Security      | Phishing and look-alike site protection: full-screen warning plus network-level blocking, released only after the user explicitly chooses "continue"                                               |
 | Social        | Auto follow / auto like; batch approval of friend requests (9 condition types, any / all modes, live progress)                                                                                     |
 | Sync          | Full paginated crawl of all uploads into the library (pausable / resumable / continues from the checkpoint); subscription feed sync; MediaCenter push and reverse backfill                         |
+| Privacy       | Everything stays on your machine: no server, no analytics, nothing sent back to the developer — see [PRIVACY.md](PRIVACY.md)                                                                       |
 
 ## Installation
 
@@ -40,6 +36,8 @@
 | --------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | **Firefox 128+**                              | [Install from AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)                | Reviewed and approved, updates automatically                           |
 | Chrome / Edge / Brave / Vivaldi / Opera / Arc | Manual loading ([guide](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装)) | Rejected by the store, functionality identical to a store installation |
+
+Chrome and Firefox versions are **feature-identical**; the only differences come from each host: Firefox is an MV2 persistent background page (a LAN aria2 works directly), Chrome is an MV3 service worker (no permanently running background).
 
 ### Firefox (recommended)
 

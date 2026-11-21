@@ -2,11 +2,11 @@
 
 **Iwara Assistant** 是一个用于 [iwara.tv](https://www.iwara.tv) 的**浏览器扩展**，旨在增强站点的批量下载与视频管理体验。
 
-- **Chrome（MV3）与 Firefox（MV2）共用同一份代码**，行为一致。
-- **Firefox 已上架 [AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)**（自动更新）；**Chrome 应用商店被拒**（内容政策判定，属禁止项），Chromium 系请手动加载。
+- 支持 Chrome / Edge / Brave / Vivaldi / Opera 与 Firefox，两个版本**功能一致**（差别只在宿主自身的限制，见 [[Chromium 系手动安装]]）。
+- **Firefox 已上架 [AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)**（自动更新）；**Chrome 应用商店被拒**，Chromium 系需手动加载。
 - 四种下载通道：浏览器内建下载、aria2、iwaradl、打开直链交给外部下载器。
-- 系统通知是唯一的结果反馈通道，点一下就能跳到该去的地方。
-- 不收集、不向开发者回传任何数据（见 [PRIVACY.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/PRIVACY.md)）。
+- 后台发生的事（入队、完成、失败、发现网盘链接）会弹系统通知，点一下跳到对应位置；页面内不弹 toast、不显示进度条。
+- 数据全在本机：不收集、不向开发者回传任何数据（见 [[安装与首次配置]] 的权限说明）。
 
 ## 主要功能
 
