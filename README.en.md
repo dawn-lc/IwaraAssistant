@@ -23,7 +23,7 @@
 | Page          | Card checkboxes with a cross-tab selection; select all / invert / clear; floating menu; manual video ID entry; beautification and widescreen; bottom-right watermark; rebuilt automatically after you switch pages                                                            |
 | Tasks         | Three queue groups (needs attention / in progress / completed); progress; retry; removal cancels the download first; clear finished; checks with your downloader automatically on startup; toolbar badge                                                                      |
 | Settings      | Nine tabs; saved as you change them; interface language `auto` / 中文 / English / 日本語; an invalid value falls back to the default automatically                                                                                                                            |
-| Migration     | Finds the data left by the old userscript and imports it in one click; settings can be pasted in or imported from a migration package                                                                                                                                         |
+| Migration     | Imports the video library from the previous-generation userscript (IwaraDownloadTool) in one click; settings can be pasted in or imported from a migration package                                                                                                            |
 | Notifications | A system notification pops up when background work has a result (queued, completed, failed, cloud-drive link found); click it to jump to the matching place                                                                                                                   |
 | Security      | Phishing-site protection: when one is hit, the whole page becomes a warning and that page's requests are blocked, released only after you confirm "continue"                                                                                                                  |
 | Social        | Auto follow / auto like; batch approval of friend requests (9 condition types, all of them or any of them)                                                                                                                                                                    |
@@ -94,9 +94,9 @@ This project is open source under [Apache-2.0](LICENSE). Third-party dependencie
 
 Development and build toolchain: TypeScript (Apache-2.0), esbuild (MIT), tsx (MIT), Prettier (MIT), Playwright (Apache-2.0), WebdriverIO (MIT), web-ext (MPL-2.0), resvg (MPL-2.0). The icons are SVGs drawn inside the repository and rendered at build time; no third-party assets are used.
 
-## Similar projects and acknowledgements
+## Related projects and acknowledgements
 
-- [IwaraDownloadTool](https://github.com/IwaraEnhance/IwaraDownloadTool) (Apache-2.0): this project's feature set and a number of edge-case behaviours were informed by that userscript, and the migration page exists precisely for its existing users.
+- [IwaraDownloadTool](https://github.com/IwaraEnhance/IwaraDownloadTool) (Apache-2.0): the **previous generation by the same author**, a userscript. Iwara Assistant is its successor as a browser extension — it inherits the feature set and a number of edge-case behaviours, and the migration page brings the old script's video library and settings across.
 - [iwaradl](https://github.com/Izumiko/iwaradl) (MIT): a CLI downloader, used here as one of the download backends.
 - [MediaCenter](https://github.com/dawn-lc/MediaCenter): a local media library, and the experimental metadata push target.
 - [aria2](https://github.com/aria2/aria2) and [Motrix-Next](https://github.com/AnInsomniacy/motrix-next): the recommended self-hosted downloader and graphical front end.

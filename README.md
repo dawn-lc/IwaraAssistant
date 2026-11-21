@@ -23,7 +23,7 @@
 | 页面 | 视频卡片复选框与跨标签页选区；全选 / 反选 / 取消；悬浮菜单；手动输入视频 ID；美化与宽屏；右下角水印；切换页面后自动重建                                  |
 | 任务 | 三组队列（需要处理 / 进行中 / 已完成）；进度；重试；移除时先取消下载；清空已结束；启动时自动与下载器核对；工具栏角标                                     |
 | 配置 | 九个页签；改完即存；界面语言 `auto` / 中文 / English / 日本語；填错自动回落默认值                                                                        |
-| 迁移 | 检测得到旧版油猴脚本的数据，点一次导入；配置可粘贴或导入迁移包                                                                                           |
+| 迁移 | 从上一代油猴脚本（IwaraDownloadTool）导入视频库，点一次即可；配置可粘贴或导入迁移包                                                                      |
 | 通知 | 后台有结果时弹系统通知（入队、完成、失败、发现网盘链接），点一下跳到对应位置                                                                             |
 | 安全 | 仿冒站点防护：命中时整页警告并拦下该页请求，你确认「继续访问」后才放行                                                                                   |
 | 社交 | 自动关注 / 自动点赞；好友请求批量审批（9 类条件，可要求全部满足或任一满足）                                                                              |
@@ -94,9 +94,9 @@ npm run test:unit    # 单元测试；另有 test:e2e（Playwright）与 test:e2
 
 开发与构建工具链：TypeScript（Apache-2.0）、esbuild（MIT）、tsx（MIT）、Prettier（MIT）、Playwright（Apache-2.0）、WebdriverIO（MIT）、web-ext（MPL-2.0）、resvg（MPL-2.0）。图标是仓库内自绘 SVG 在构建期渲染的，不引用第三方素材。
 
-## 同类项目与致谢
+## 相关项目与致谢
 
-- [IwaraDownloadTool](https://github.com/IwaraEnhance/IwaraDownloadTool)（Apache-2.0）：本项目的功能面与一批边界行为参考了这个油猴脚本，迁移页正是为它的老用户准备。
+- [IwaraDownloadTool](https://github.com/IwaraEnhance/IwaraDownloadTool)（Apache-2.0）：**同一作者的上一代作品**（油猴脚本）。Iwara Assistant 是它的浏览器扩展继任版，功能面与一批边界行为沿用自它，迁移页负责把旧脚本的视频库与配置带过来。
 - [iwaradl](https://github.com/Izumiko/iwaradl)（MIT）：CLI 下载器，本项目把它当作一个下载后端。
 - [MediaCenter](https://github.com/dawn-lc/MediaCenter)：本地媒体库，实验性元数据推送目标。
 - [aria2](https://github.com/aria2/aria2) 与 [Motrix-Next](https://github.com/AnInsomniacy/motrix-next)：推荐自建的下载器与图形界面。
