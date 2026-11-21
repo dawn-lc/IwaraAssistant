@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 故障排查文档
+    url: https://github.com/dawn-lc/IwaraAssistant/blob/main/docs/10-troubleshooting.md
+    about: 装了没反应、解析失败、aria2 连不上、任务卡住、速度慢——先看这里
+  - name: 安全漏洞（私密渠道）
+    url: https://github.com/dawn-lc/IwaraAssistant/security/advisories/new
+    about: 安全问题不要开公开 issue，请用 GitHub 的私密漏洞上报
+  - name: 参与开发
+    url: https://github.com/dawn-lc/IwaraAssistant/blob/main/CONTRIBUTING.md
+    about: 环境、门禁、提交约定与 PR 流程

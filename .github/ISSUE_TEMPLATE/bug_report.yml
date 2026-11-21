@@ -1,0 +1,76 @@
+name: Bug 报告
+description: 功能不符合预期、报错、卡住
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先看 [docs/10-troubleshooting.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/docs/10-troubleshooting.md)：装了没反应、解析失败、aria2 连不上、任务卡住、速度慢这几类问题都有现成结论。
+
+        **安全漏洞不要用这个模板**，请按 [SECURITY.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/SECURITY.md) 走私密渠道。
+  - type: input
+    id: version
+    attributes:
+      label: 扩展版本
+      description: 扩展管理页（或 AMO 产品页）显示的版本号
+      placeholder: 0.1.34
+    validations:
+      required: true
+  - type: dropdown
+    id: browser
+    attributes:
+      label: 浏览器
+      options:
+        - Chrome / Chromium 系
+        - Firefox（AMO 安装）
+        - Firefox（临时载入）
+        - Edge / Brave / Vivaldi / Opera
+        - 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: 下载通道
+      options:
+        - 浏览器内建下载
+        - aria2
+        - iwaradl
+        - 打开直链
+        - 与下载无关
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 能稳定复现的最小步骤优于描述。说明页面类型（列表页 / 详情页 / 任务页）
+      placeholder: |
+        1. 打开订阅页并勾选 3 个视频
+        2. 悬浮菜单 → 下载所选
+        3. 其中 1 条在任务队列里停在「需要处理」
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为 / 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误码、日志或截图
+      description: |
+        任务队列里那条记录的原始错误码/报文最有价值；调试模式（isDebug 开关或水印五连击）下有 `[Debug]` 前缀日志。
+        aria2 问题请附 `aria2.getVersion` 的版本与分支（上游 1.36 / aria2-next 2.x / 3.x 的行为不同）。
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 已经刷新过 iwara 标签页，且看的是任务队列而不是页面
+          required: true
+        - label: 已读过 docs/10-troubleshooting.md，不是其中的已知行为
+          required: true

@@ -1,0 +1,31 @@
+name: 功能建议
+description: 想要新能力，或现有行为不符合使用场景
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        功能边界与「有意不做」的清单在 [docs/05-features.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/docs/05-features.md) 与 [AGENTS.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/AGENTS.md) 第 9 节，先确认不是刻意的取舍。
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 你实际在做什么、卡在哪一步。场景比「希望支持 X」有用得多
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的做法
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 现在是怎么绕过的
+      description: 现有的替代手段（其他通道、手动操作、外部工具）
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 已确认这不是 docs/05 里记录的有意取舍
+          required: true

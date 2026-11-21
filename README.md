@@ -1,5 +1,13 @@
 # IwaraAssistant
 
+[English](README.en.md) ｜ [日本語](README.ja.md)
+
+[![CI](https://github.com/dawn-lc/IwaraAssistant/actions/workflows/ci.yml/badge.svg)](https://github.com/dawn-lc/IwaraAssistant/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Firefox AMO](https://img.shields.io/amo/v/iwara-assistant?label=AMO&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/firefox/addon/iwara-assistant/)
+[![AMO 用户](https://img.shields.io/amo/users/iwara-assistant?label=users)](https://addons.mozilla.org/firefox/addon/iwara-assistant/)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520.11-5FA04E?logo=nodedotjs&logoColor=white)](package.json)
+
 iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一个真正好用的界面里：页面上只留高频的「勾选 / 下载」动作，配置、任务队列、进度与迁移全部在扩展自己的页面完成。
 
 - **Chrome（MV3）与 Firefox（MV2）共用同一份代码**，行为一致。
@@ -40,7 +48,7 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 
 在 [AMO 产品页](https://addons.mozilla.org/firefox/addon/iwara-assistant/) 点「添加到 Firefox」，确认权限即完成安装，后续随版本自动更新。
 
-- 上架版本 **0.1.32**，与仓库同步（2026-10-31 通过审核）。后续版本要先过 AMO 审核，商店通常会比仓库提交晚一点；要提前用最新代码就走下面的临时载入。
+- 上架版本以 [AMO 产品页](https://addons.mozilla.org/firefox/addon/iwara-assistant/) 显示的版本号为准（徽章同源）。每次发版都要过 AMO 审核，商店版本通常比仓库最新提交晚一两天；要立刻用主干代码就走下面的临时载入。
 - 最低 **Firefox 128**（`strict_min_version`），低于此版本 AMO 会拦下。
 - 上架包是 **MV2**，所以局域网里的 aria2 直接用 `http://192.168.x.x:6800/jsonrpc` 就行，不受 MV3 本地网络限制。
 
@@ -140,13 +148,45 @@ npm run build:chrome   # → dist/chrome
 | ------------------ | ----------------------------------------- | ----------------------------------------------------------------- |
 | 下载方式           | 浏览器内建下载                            | 另有 aria2 / iwaradl（需先配端点）/ 打开直链（交付后不再追踪）    |
 | 同时下载数         | 3                                         | 只作用于浏览器通道；aria2 / iwaradl 的并发由它们自己控制          |
-| 保存路径模板       | `/Iwara/%#AUTHOR#%/%#TITLE#%[%#ID#%].mp4` | 支持 `%#AUTHOR#%` / `%#TITLE#%` / `%#ID#%` 等变量，下方有实时预览 |
+| 保存路径模板       | `/Iwara/%#AUTHOR#%/%#TITLE#%[%#ID#%].mp4` | 变量见[路径与文件名](#路径与文件名)，输入框下方有实时预览         |
 | 第三方网盘链接检查 | 关                                        | 开启后简介/评论里出现网盘链接就**不下载**，留一条待办等你自己决定 |
 | 自动复制保存文件名 | 关                                        | 检测到网盘链接时，把文件名写进剪贴板                              |
 
 其余页签：RPC（端点与环境自检）、过滤（列表改写）、清洗（文件名规则）、好友、迁移、高级（实验功能、界面语言、后台保活）、引导。
 
 完整清单见 [docs/05-features.md](docs/05-features.md#配置与多语言)。
+
+### 路径与文件名
+
+路径模板在「下载」页签配置，支持以下变量（大小写敏感，`%#` 与 `#%` 之间是变量名）：
+
+| 变量             | 含义                 | 示例输出                              |
+| ---------------- | -------------------- | ------------------------------------- |
+| `%#AUTHOR#%`     | 作者用户名           | `Mr.Quin`                             |
+| `%#ALIAS#%`      | 作者昵称（可能为空） | `摸鱼奎恩`                            |
+| `%#TITLE#%`      | 视频标题             | `【Quin】黑暗之魂3 一周目攻略 Part22` |
+| `%#ID#%`         | 视频 ID              | `MrQuinWo22Ne22`                      |
+| `%#QUALITY#%`    | 实际下载的画质       | `Source` / `540` / `360`              |
+| `%#UploadTime#%` | 视频发布时间         | `2022-02-22`                          |
+| `%#NowTime#%`    | 投递时刻的当前时间   | `2022-02-22`                          |
+
+`%#UploadTime#%` 与 `%#NowTime#%` 可以带 [dayjs](https://day.js.org/docs/en/display/format) 格式串，每次出现的格式独立解析：`%#NowTime:YYYY-MM-DD_HH.mm.ss#%` → `2022-02-22_22.22.22`；不带格式时固定是 `YYYY-MM-DD`（不是原始时间戳）。
+
+完整示例（Windows 盘符、Unix 绝对路径、相对路径都支持；UNC 路径 `\\server\share` 与 `..` 越界会被拒绝并提示）：
+
+```text
+D:/Iwara/%#AUTHOR#%/(%#ALIAS#%)%#UploadTime:YYYY-MM-DD#%_%#TITLE#%_%#QUALITY#%[%#ID#%].mp4
+```
+
+渲染结果：
+
+```text
+D:\Iwara\Mr.Quin\(摸鱼奎恩)2022-02-22_【Quin】黑暗之魂3 一周目攻略 Part22_Source[MrQuinWo22Ne22].mp4
+```
+
+「清洗」页签控制文件名规范化链路：NFKC 归一 → Emoji 替换 → 组合符号折叠 → Windows 非法字符替换 → 长度截断（标题默认 72、昵称默认 64）。这些规则只作用于 `%#TITLE#%` 与 `%#ALIAS#%`，其余变量原样展开。
+
+各通道对路径的用法不同：**aria2 / iwaradl** 收到完整的目录 + 文件名（会按模板建目录）；**浏览器内建下载**只接受相对于浏览器下载目录的文件名，所以盘符与根会被去掉、子目录仍然保留（两个宿主都自动建目录）；**打开直链**只把文件名作为提示交给外部下载器。
 
 ### 通知
 
@@ -204,6 +244,32 @@ npm run build:chrome   # → dist/chrome
 **扩展会不会上传我的数据？**
 不会。所有数据在本地，见 [PRIVACY.md](PRIVACY.md)。
 
+**下载很慢，或者在 aria2 里看到同一条任务反复重建？**
+先看是哪条通道。aria2 侧投递时会显式补上 `max-connection-per-server` 与 `split`（默认各 4，可在「下载」页签调）——上游 aria2 这两个默认值是 **1** 与 20M，不显式给就是单连接、小文件不分段。仍然慢就查代理带宽、aria2 全局的 `max-overall-download-limit`、以及自己填的连接数。速度长期低于 64 KiB/s 的任务会被自动重启（重新解析直链后原地换地址），这是刻意行为，不是卡死。
+
+**任务一直停在「排队」？**
+浏览器通道的并发上限（默认 3）在起作用：超出的任务等前一个结束才开跑，避免几十条传输同时打向同一个 CDN。换成 aria2 / iwaradl 后，「排队」由它们自己的并发上限决定，与本扩展无关。
+
+**解析失败 / 提示没有权限？**
+常见三类：直链过期（重新点一次下载即可，扩展会重新解析；aria2 侧的 403 也会依据错误报文自动重建）、首选画质到最后一级都拿不到（在「下载」页签调低首选画质或改网络环境）、登录态失效（重新登录 iwara.tv 并刷新页面）。私有视频需要与作者互为好友，这类访问控制不在扩展能绕过的范围内。
+
+**通知没有弹出来？**
+扩展用系统通知作为唯一反馈：先确认操作系统的浏览器通知权限没关、没有开「专注模式 / 勿扰」。通知被压掉不影响任务本身，任务队列与工具栏角标仍会更新。
+
+**升级或重装扩展之后数据还在吗？**
+同一扩展 ID 升级不会丢：配置、队列、视频库都在 `browser.storage.local` 与扩展自己的 IndexedDB 里。只有你在扩展管理页「移除」扩展时，浏览器才会连同数据一起清空——想手动备份就用「迁移」页签导出完整迁移包。
+
+**装了却没反应 / 页面上没有复选框？**
+按顺序排查：① 是否刷新过 iwara 标签页（扩展安装或更新后已打开的页不会自动注入）；② 当前页是不是视频列表页或视频详情页（其他页面本就没有复选框）；③ 「下载」页签里的「自动注入复选框」是否被关掉（关掉后按 `Space` 也能手动开）；④ Chrome 系请确认加载的是直接含 `manifest.json` 的目录，不是它的上一级。更细的排查步骤见 [docs/10-troubleshooting.md](docs/10-troubleshooting.md)。
+
+## 与 Iwara 的关系与免责声明
+
+- 本项目是独立开发的第三方工具，与 Iwara 官方**没有任何合作、授权或隶属关系**。
+- 只通过站点本身公开提供的页面与 API 交互：不绕过访问控制，不破解任何付费或私有内容，不代理、不转发视频。
+- 请自行确认下载行为符合所在地法律法规与 Iwara 的服务条款；开发者与贡献者不对使用后果承担责任，包括但不限于账号受限。
+- 如果你喜欢站上的内容，请优先支持创作者：开通 [Iwara 高级会员](https://www.iwara.tv/page/premium) 或直接对作者打赏。
+- 本项目以 [Apache-2.0](LICENSE) 开源，代码与文档按「现状」提供，不附带任何明示或默示担保。
+
 ## 开发
 
 技术实现细节按主题拆在 `docs/`：
@@ -219,7 +285,10 @@ npm run build:chrome   # → dist/chrome
 | [07-install-chromium.md](docs/07-install-chromium.md)       | Chromium 系手动安装：获取产物、加载、更新、数据保留与故障排查           |
 | [08-aria2-flow.md](docs/08-aria2-flow.md)                   | aria2 任务管理逻辑图：三条入口、扫描对账、状态映射、失败与取消时序      |
 | [09-debug-bridge.md](docs/09-debug-bridge.md)               | 调试通道：扩展主动连本机调试服务，快照、日志环、白名单命令              |
+| [10-troubleshooting.md](docs/10-troubleshooting.md)         | 故障排查：装了没反应、解析失败、aria2 连不上、任务卡住、抓日志与导出    |
 | [store-listing.md](docs/store-listing.md)                   | AMO 上架素材与文案、Chrome Web Store 拒绝记录                           |
+
+**参与贡献**：先读 [CONTRIBUTING.md](CONTRIBUTING.md)（环境、门禁、提交约定、PR 流程）。安全漏洞请走 [SECURITY.md](SECURITY.md) 的私密渠道，不要开公开 issue。
 
 **参与开发前先读 [AGENTS.md](AGENTS.md)**：门禁清单、架构铁律、目录归位、代码约定，以及一批「平台事实」（Chrome 的终止条件、Firefox MV2 的能力边界、aria2 的不存在方法）。这些规则背后的事故与实测记录在 [docs/agent-notes.md](docs/agent-notes.md)——遇到「为什么不能这么写」的疑问，先在那里找答案，别按通用惯例改代码。
 
@@ -231,6 +300,30 @@ npm run dev:chrome   # watch 模式
 npm run test:unit    # 单元测试
 npm run test:e2e     # Playwright e2e
 ```
+
+## 依赖与许可
+
+本项目以 [Apache-2.0](LICENSE) 开源。第三方依赖（运行时代码全部打包进扩展，不加载任何远程代码）：
+
+| 依赖                                                          | 用途                      | 许可证 |
+| ------------------------------------------------------------- | ------------------------- | ------ |
+| [zod](https://github.com/colinhacks/zod)                      | 配置 schema 与脏数据回落  | MIT    |
+| [idb](https://github.com/jakearchibald/idb)                   | IndexedDB 的 Promise 封装 | ISC    |
+| [React](https://github.com/facebook/react) / react-dom        | 扩展页面 UI               | MIT    |
+| [i18next](https://github.com/i18next/i18next) / react-i18next | 三语界面与文案校验        | MIT    |
+| [sonner](https://github.com/emilkowalski/sonner)              | 页内轻提示                | MIT    |
+| [dayjs](https://github.com/iamkun/dayjs)                      | 路径模板的时间格式化      | MIT    |
+
+开发与构建工具链：TypeScript（Apache-2.0）、esbuild（MIT）、tsx（MIT）、Prettier（MIT）、Playwright（Apache-2.0）、WebdriverIO（MIT）、web-ext（MPL-2.0）、resvg（MPL-2.0）。图标是仓库内自绘 SVG 在构建期渲染的，不引用第三方素材。
+
+## 同类项目与致谢
+
+- [IwaraDownloadTool](https://github.com/IwaraEnhance/IwaraDownloadTool)（Apache-2.0）：本项目的功能面与一批边界行为参考了这个油猴脚本，迁移页正是为它的老用户准备。
+- [iwaradl](https://github.com/Izumiko/iwaradl)（MIT）：CLI 下载器，本项目把它当作一个下载后端。
+- [MediaCenter](https://github.com/dawn-lc/MediaCenter)：本地媒体库，实验性元数据推送目标。
+- [aria2](https://github.com/aria2/aria2) 与 [Motrix-Next](https://github.com/AnInsomniacy/motrix-next)：推荐自建的下载器与图形界面。
+
+感谢每一位提交 issue、提供实测日志与帮忙验证修复的人——大部分「平台事实」都是从这些反馈里纠正过来的。
 
 ## 隐私与许可
 
