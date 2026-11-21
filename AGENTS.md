@@ -124,15 +124,16 @@ Chrome 终止 service worker 有**三条相互独立**的条件：空闲 30 秒�
 
 ## 8. 改动的连带责任（改完必须同步的清单）
 
-| 改了什么                              | 还要改                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------------------- |
-| 消息协议（`protocol.ts`）             | 后台 `case`、`test/protocol.test.ts`、`docs/04`                                     |
-| 配置字段（`configSchema.ts`）         | UI、三语文案、`test/configSchema.test.ts`、必要时的 `docs/05`                       |
-| 用户可见文案                          | `src/shared/locales/{en,zh,ja}.json` **三份**（键必须完全一致）                     |
-| 页面 UI 契约（class / testid / 结构） | Playwright 与 WDIO 里对应的选择器与断言                                             |
-| 版本号（`package.json`）              | `GuideTab` 的 `RELEASES` + 三语 `guide.changelog.vXXXX`（漏了会让「引导页」用例红） |
-| 目录结构                              | `README` 的目录树、`docs/01` 的「源码目录结构」、9 处左右的旧路径注释               |
-| 缓存/存储键                           | `src/shared/storageKeys.ts`（唯一来源，不要在调用点拼字符串）                       |
+| 改了什么                              | 还要改                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 消息协议（`protocol.ts`）             | 后台 `case`、`test/protocol.test.ts`、`docs/04`                                                        |
+| 配置字段（`configSchema.ts`）         | UI、三语文案、`test/configSchema.test.ts`、必要时的 `docs/05`                                          |
+| 用户可见文案                          | `src/shared/locales/{en,zh,ja}.json` **三份**（键必须完全一致）                                        |
+| 页面 UI 契约（class / testid / 结构） | Playwright 与 WDIO 里对应的选择器与断言                                                                |
+| 版本号（`package.json`）              | `GuideTab` 的 `RELEASES` + 三语 `guide.changelog.vXXXX`（漏了会让「引导页」用例红）                    |
+| 目录结构                              | `README` 的目录树、`docs/01` 的「源码目录结构」、9 处左右的旧路径注释                                  |
+| 缓存/存储键                           | `src/shared/storageKeys.ts`（唯一来源，不要在调用点拼字符串）                                          |
+| 用户可见的用法文档                    | **Wiki**（源稿 `docs/wiki/`，发布命令见该目录 README）；`docs/` 只放开发文档，别把安装/排查/FAQ 写进去 |
 
 **重构必须清尾**：改完主路径后主动删除旧类型、旧常量、旧方法、旧选择器、旧字典键、旧测试路径。清理完跑一次死代码审计（一次性脚本，查完删），确认归零，而不是只改主路径。
 
