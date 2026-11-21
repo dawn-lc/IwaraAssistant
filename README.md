@@ -11,24 +11,24 @@
 **Iwara Assistant** 是一个用于 [iwara.tv](https://www.iwara.tv) 的**浏览器扩展**，旨在增强站点的批量下载与视频管理体验。
 
 > [!IMPORTANT]
-> **Firefox 已上架 [AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)**（自动更新）。**Chrome 应用商店已拒绝**（内容政策判定，属禁止项，改代码解决不了），Chromium 系请手动加载——功能与商店安装完全一致，原因见[下文](#为什么不在商店里)。
+> **Firefox 已上架 [AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)**（自动更新）。**Chrome 应用商店已拒绝**（内容政策），Chromium 系请手动加载——功能与商店安装完全一致，原因见[下文](#为什么不在商店里)。
 
 > **用法查 [Wiki](https://github.com/dawn-lc/IwaraAssistant/wiki)，实现查 [docs/](docs/)。** 本文件只讲定位与安装。
 
 ## 功能
 
-| 领域 | 能力                                                                                                               |
-| ---- | ------------------------------------------------------------------------------------------------------------------ |
-| 下载 | 四种通道（浏览器内建 / aria2 / iwaradl / 打开直链）；路径模板与实时预览；链接预检；批量去重；失败重试；元数据 JSON |
-| 页面 | 卡片复选框与跨标签页选区；全选 / 反选 / 取消；悬浮菜单；手动输入 ID；美化与宽屏；右下角水印；SPA 切页自动重扫      |
-| 任务 | 队列分组（需要处理 / 进行中 / 已完成）；进度；重试；移除（先取消下载器）；清空已结束；启动对账；工具栏角标         |
-| 配置 | 九个页签；即时保存；界面语言 `auto` / 中文 / English / 日本語；配置校验与默认值                                    |
-| 迁移 | 自动只读检测旧版油猴脚本的页面数据库，显式一键导入；配置支持粘贴裸 JSON 或导入完整迁移包                           |
-| 通知 | 仅在后台发生的事件（入队、完成、失败、发现网盘链接）走系统通知，点击跳到对应位置                                   |
-| 安全 | 钓鱼仿冒站点防护：全屏警告 + 网络层封锁，用户明确「继续访问」后才放行                                              |
-| 社交 | 自动关注 / 自动点赞；好友请求批量审批（9 类条件、any / all 模式、实时进度）                                        |
-| 同步 | 全量投稿分页遍历入库（可暂停 / 继续 / 断点续跑）；订阅流同步；MediaCenter 推送与反向补齐                           |
-| 隐私 | 数据全在本机：无服务端、无统计、不向开发者回传，见 [PRIVACY.md](PRIVACY.md)                                        |
+| 领域 | 能力                                                                                                                                                     |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 下载 | 四种通道（浏览器内建 / aria2 / iwaradl / 打开直链）；路径模板与实时预览；检测简介与评论里的网盘链接；批量去重；浏览器下载并发可调；失败重试；元数据 JSON |
+| 页面 | 视频卡片复选框与跨标签页选区；全选 / 反选 / 取消；悬浮菜单；手动输入视频 ID；美化与宽屏；右下角水印；切换页面后自动重建                                  |
+| 任务 | 三组队列（需要处理 / 进行中 / 已完成）；进度；重试；移除时先取消下载；清空已结束；启动时自动与下载器核对；工具栏角标                                     |
+| 配置 | 九个页签；改完即存；界面语言 `auto` / 中文 / English / 日本語；填错自动回落默认值                                                                        |
+| 迁移 | 检测得到旧版油猴脚本的数据，点一次导入；配置可粘贴或导入迁移包                                                                                           |
+| 通知 | 后台有结果时弹系统通知（入队、完成、失败、发现网盘链接），点一下跳到对应位置                                                                             |
+| 安全 | 仿冒站点防护：命中时整页警告并拦下该页请求，你确认「继续访问」后才放行                                                                                   |
+| 社交 | 自动关注 / 自动点赞；好友请求批量审批（9 类条件，可要求全部满足或任一满足）                                                                              |
+| 同步 | 批量抓取全站投稿信息（可暂停 / 继续 / 断点续跑）；订阅流；推送到 MediaCenter 并反向补齐                                                                  |
+| 隐私 | 数据全在本机：无服务端、无统计、不向开发者回传，见 [PRIVACY.md](PRIVACY.md)                                                                              |
 
 ## 安装
 
@@ -37,13 +37,13 @@
 | **Firefox 128+**                              | [AMO 商店安装](https://addons.mozilla.org/firefox/addon/iwara-assistant/)              | 审核通过，自动更新           |
 | Chrome / Edge / Brave / Vivaldi / Opera / Arc | 手动加载（[教程](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装)） | 商店已拒，功能与商店安装一致 |
 
-Chrome 与 Firefox 两个版本**功能一致**，差别只在宿主自身的限制：Firefox 是 MV2 持久后台（局域网 aria2 可直接用），Chrome 是 MV3 service worker（没有常驻后台）。
+两个版本**功能一样**，差别只有宿主限制带来的两处：Firefox 版能连局域网里的 aria2，后台常驻、长时间任务不会被浏览器回收；Chrome 版只能连本机地址，且浏览器空闲时后台可能被回收，进行中的任务会中断（重新打开后如实显示中断）。
 
 ### Firefox（推荐）
 
-在 [AMO 产品页](https://addons.mozilla.org/firefox/addon/iwara-assistant/) 点「添加到 Firefox」即完成安装。上架版本以产品页显示的版本号为准（徽章同源）；每次发版都要过审，商店通常比仓库最新提交晚一两天。
+在 [AMO 产品页](https://addons.mozilla.org/firefox/addon/iwara-assistant/) 点「添加到 Firefox」即完成安装。上架版本以产品页显示的版本号为准；每次发版都要过审，商店通常比仓库最新提交晚一两天。
 
-上架包是 **MV2**，所以局域网里的 aria2 直接用 `http://192.168.x.x:6800/jsonrpc` 就行，不受 MV3 本地网络限制。要立刻用主干代码就本地构建后临时载入：`npm install && npm run build` → `about:debugging#/runtime/this-firefox` →「临时载入附加组件」→ 选 `dist/firefox/manifest.json`（Firefox 退出后失效）。
+要立刻用主干代码就本地构建后临时载入：`npm install && npm run build` → `about:debugging#/runtime/this-firefox` →「临时载入附加组件」→ 选 `dist/firefox/manifest.json`（Firefox 退出后失效）。
 
 ### Chromium 系（Chrome / Edge / Brave / Vivaldi / Opera）
 
@@ -56,9 +56,9 @@ Chrome 与 Firefox 两个版本**功能一致**，差别只在宿主自身的限
 
 ### 为什么不在商店里
 
-2026-10-30 提交的版本被 **Chrome 应用商店拒绝**：违规类型「内容政策」，参考 ID `Grey Lithium`（色情内容），依据是「我们不允许发布任何……会将用户定向到此类内容的产品」，改版要求是「取消发布」而不是「改完再交」。
+2026-10-30 提交的版本被 **Chrome 应用商店拒绝**：违规类型「内容政策」，参考 ID `Grey Lithium`（色情内容），依据是「我们不允许发布任何……会将用户定向到此类内容的产品」。
 
-扩展本身不含也不展示成人内容：代码里没有露骨素材，图标是自绘 SVG，全部 JS 打包在包内，不代理也不绕过站点限制。被拒的实际原因是**服务对象**——它只对 iwara.tv 生效，而该站点是成人站点，这属于 Chrome 的禁止项而非可整改项，因此不再重投。不接受为了过审把扩展改成「通用下载器」或抹掉站点名：那会同时踩上欺骗行为与关键字堆砌条款，而站点性质不会因此改变。同一份代码在 AMO 已通过审核。完整记录见 [docs/store-listing.md](docs/store-listing.md)。
+扩展本身不含也不展示成人内容：代码里没有露骨素材，图标是自绘 SVG，不代理也不绕过站点限制。被拒的实际原因是**服务对象**——它只对 iwara.tv 生效，而该站点是成人站点。这属于 Chrome 的禁止项而非可整改项，因此不再重投；同一份代码在 AMO 已通过审核。拒绝记录、申诉材料与「为什么不改成通用下载器」的判断见 [docs/store-listing.md](docs/store-listing.md)。
 
 ## 文档
 
@@ -83,14 +83,14 @@ npm run test:unit    # 单元测试；另有 test:e2e（Playwright）与 test:e2
 
 本项目以 [Apache-2.0](LICENSE) 开源。第三方依赖（运行时代码全部打包进扩展，不加载任何远程代码）：
 
-| 依赖                                                          | 用途                      | 许可证 |
-| ------------------------------------------------------------- | ------------------------- | ------ |
-| [zod](https://github.com/colinhacks/zod)                      | 配置 schema 与脏数据回落  | MIT    |
-| [idb](https://github.com/jakearchibald/idb)                   | IndexedDB 的 Promise 封装 | ISC    |
-| [React](https://github.com/facebook/react) / react-dom        | 扩展页面 UI               | MIT    |
-| [i18next](https://github.com/i18next/i18next) / react-i18next | 三语界面与文案校验        | MIT    |
-| [sonner](https://github.com/emilkowalski/sonner)              | 页内轻提示                | MIT    |
-| [dayjs](https://github.com/iamkun/dayjs)                      | 路径模板的时间格式化      | MIT    |
+| 依赖                                                          | 用途         | 许可证 |
+| ------------------------------------------------------------- | ------------ | ------ |
+| [zod](https://github.com/colinhacks/zod)                      | 配置校验     | MIT    |
+| [idb](https://github.com/jakearchibald/idb)                   | 本地视频库   | ISC    |
+| [React](https://github.com/facebook/react) / react-dom        | 扩展页面界面 | MIT    |
+| [i18next](https://github.com/i18next/i18next) / react-i18next | 三语界面     | MIT    |
+| [sonner](https://github.com/emilkowalski/sonner)              | 页内提示     | MIT    |
+| [dayjs](https://github.com/iamkun/dayjs)                      | 时间格式化   | MIT    |
 
 开发与构建工具链：TypeScript（Apache-2.0）、esbuild（MIT）、tsx（MIT）、Prettier（MIT）、Playwright（Apache-2.0）、WebdriverIO（MIT）、web-ext（MPL-2.0）、resvg（MPL-2.0）。图标是仓库内自绘 SVG 在构建期渲染的，不引用第三方素材。
 
