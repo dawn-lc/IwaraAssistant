@@ -15,7 +15,7 @@ A browser extension for iwara.tv. It moves batch video downloading, selection an
 - System notifications are the only channel for result feedback; one click takes you where you need to go.
 - Nothing is collected and nothing is sent back to the developer.
 
-> Technical implementation (architecture, cross-browser differences, manifests, messaging protocol, testing and releasing) is split across the [docs/](docs/) directory; this document only covers how to use the extension.
+> A guided tour and more troubleshooting steps live in the [Wiki](https://github.com/dawn-lc/IwaraAssistant/wiki); technical implementation (architecture, cross-browser differences, manifests, messaging protocol, testing and releasing) is split across the [docs/](docs/) directory, while this document only covers how to use the extension.
 
 > [!IMPORTANT]
 > **Firefox: available on AMO**, [install here](https://addons.mozilla.org/firefox/addon/iwara-assistant/) (updates automatically).
@@ -245,7 +245,7 @@ See "Permissions" above; it is used in exactly two places.
 No. All data stays local, see [PRIVACY.md](PRIVACY.md).
 
 **Downloads are slow, or the same task keeps being rebuilt in aria2?**
-First check which channel it is. On the aria2 side `max-connection-per-server` and `split` are set explicitly when submitting (both default to 4 and can be changed on the "Download" tab) — upstream aria2 defaults these to **1** and 20M, so without explicit values you get a single connection and no segmentation for small files. If it is still slow, check the proxy bandwidth, aria2's global `max-overall-download-limit`, and the connection count you entered yourself. Tasks that stay below 64 KiB/s for a long time are restarted automatically (the direct link is re-resolved and the address swapped in place); this is deliberate behaviour, not a hang.
+First check which channel it is. On the aria2 side `max-connection-per-server` and `split` are set explicitly when submitting (both default to 4 and can be changed on the "Download" tab) — upstream aria2 defaults these to **1** and 20M, so without explicit values you get a single connection and no segmentation for small files. If it is still slow, check the proxy bandwidth, aria2's global `max-overall-download-limit`, and the connection count you entered yourself. Tasks below **16 KiB/s** on two consecutive samples (one sample per minute) are restarted automatically (the direct link is re-resolved and the address swapped in place); this is deliberate behaviour, not a hang. Once progress is past 98% the restart is skipped, except when the speed is 0 (that means the connection is dead).
 
 **A task stays in "queued" forever?**
 The concurrency limit of the browser channel (default 3) is at work: tasks beyond it wait for the previous one to finish, so that dozens of transfers do not hit the same CDN at once. After switching to aria2 / iwaradl, "queued" is decided by their own concurrency limits and has nothing to do with this extension.
