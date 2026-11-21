@@ -8,7 +8,7 @@
 [![AMO 用户](https://img.shields.io/amo/users/iwara-assistant?label=users)](https://addons.mozilla.org/firefox/addon/iwara-assistant/)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520.11-5FA04E?logo=nodedotjs&logoColor=white)](package.json)
 
-**Iwara Assistant** 是一个用于 [iwara.tv](https://www.iwara.tv) 的**浏览器扩展**，旨在增强站点的下载与管理体验：勾选、投递、队列、进度与迁移全部收敛到扩展自己的页面，站点侧只保留「勾选 / 下载」这类高频动作。
+**Iwara Assistant** 是一个用于 [iwara.tv](https://www.iwara.tv) 的**浏览器扩展**，旨在增强站点的批量下载与视频管理体验。
 
 - **Chrome（MV3）与 Firefox（MV2）共用同一份代码**，行为一致。
 - 四种下载通道：浏览器内建下载、aria2、iwaradl、打开直链交给外部下载器。

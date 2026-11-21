@@ -8,7 +8,7 @@
 [![AMO users](https://img.shields.io/amo/users/iwara-assistant?label=users)](https://addons.mozilla.org/firefox/addon/iwara-assistant/)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520.11-5FA04E?logo=nodedotjs&logoColor=white)](package.json)
 
-**Iwara Assistant** is a **browser extension** for [iwara.tv](https://www.iwara.tv) that aims to improve the site's downloading and management experience: selection, dispatch, the queue, progress and migration all live on the extension's own pages, leaving only high-frequency actions such as "tick / download" on the site itself.
+**Iwara Assistant** is a **browser extension** for [iwara.tv](https://www.iwara.tv) that aims to improve the site's batch downloading and video management experience.
 
 - **Chrome (MV3) and Firefox (MV2) share the same code base** and behave identically.
 - Four download channels: the browser's built-in downloads, aria2, iwaradl, and opening the direct link for an external downloader.

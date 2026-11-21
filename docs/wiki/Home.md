@@ -1,6 +1,6 @@
 # 欢迎来到 Iwara Assistant Wiki
 
-**Iwara Assistant** 是 iwara.tv 的浏览器扩展：页面上只留高频的「勾选 / 下载」动作，配置、任务队列、进度与迁移全部在扩展自己的页面完成。
+**Iwara Assistant** 是一个用于 [iwara.tv](https://www.iwara.tv) 的**浏览器扩展**，旨在增强站点的批量下载与视频管理体验。
 
 - **Chrome（MV3）与 Firefox（MV2）共用同一份代码**，行为一致。
 - **Firefox 已上架 [AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)**（自动更新）；**Chrome 应用商店被拒**（内容政策判定，属禁止项），Chromium 系请手动加载。
