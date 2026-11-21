@@ -8,7 +8,7 @@
 [![AMO ユーザー](https://img.shields.io/amo/users/iwara-assistant?label=users)](https://addons.mozilla.org/firefox/addon/iwara-assistant/)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520.11-5FA04E?logo=nodedotjs&logoColor=white)](package.json)
 
-iwara.tv 用のブラウザ拡張です。動画の一括ダウンロード・選択・管理を、実際に使いやすい画面にまとめました。ページ上に残すのは頻度の高い「チェック / ダウンロード」の操作だけで、設定・タスクキュー・進捗・移行はすべて拡張機能自身のページで行います。
+**Iwara Assistant** は [iwara.tv](https://www.iwara.tv) 用の**ブラウザ拡張**で、サイトでのダウンロードと管理の体験を向上させることを目的としています。選択・投入・キュー・進捗・移行は拡張自身のページに集約し、サイト側には「チェック / ダウンロード」といった高頻度の操作だけを残します。
 
 - **Chrome（MV3）と Firefox（MV2）が同じコードを共有**しており、挙動は一致します。
 - 4 つのダウンロード経路：ブラウザ内蔵ダウンロード、aria2、iwaradl、直リンクを外部ダウンローダーに渡す。
