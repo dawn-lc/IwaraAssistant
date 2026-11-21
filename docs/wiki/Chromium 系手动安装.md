@@ -1,10 +1,10 @@
-# 07 Chromium 系手动安装指南
+# Chromium 系手动安装指南
 
-本扩展**无法从 Chrome 应用商店安装**（原因见 [README「为什么不在商店里」](../README.md#为什么不在商店里)），Chromium 系浏览器只能手动加载。这份文档给出从零到能用的完整步骤，含更新、回滚与常见故障。
+本扩展**无法从 Chrome 应用商店安装**（原因见 [README「为什么不在商店里」](https://github.com/dawn-lc/IwaraAssistant#为什么不在商店里)），Chromium 系浏览器只能手动加载。这份文档给出从零到能用的完整步骤，含更新、回滚与常见故障。
 
-Firefox 用户不需要本文：已在 [AMO 上架](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，直接装。
+Firefox 用户不需要本文：已在 [AMO 上架](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，直接装（见 [[安装与首次配置]]）。
 
-手动加载（sideload，"加载已解压的扩展程序"）在功能上与商店安装**完全一致**：同一个 `dist/chrome` 目录，全站权限、下载通道、后台任务、系统通知都正常。
+手动加载（sideload，「加载已解压的扩展程序」）在功能上与商店安装**完全一致**：同一个 `dist/chrome` 目录，全站权限、下载通道、后台任务、系统通知都正常。
 
 ## 适用浏览器
 
@@ -81,7 +81,7 @@ gh run download --repo dawn-lc/IwaraAssistant --name extension-zips
 2. 打开 **开发者模式**。
 3. 点 **加载已解压的扩展程序**，选同一个目录。
 
-加载成功后扩展卡片上会显示版本号（如 `0.1.32`），且**没有**红色「错误」按钮。
+加载成功后扩展卡片上会显示版本号，且**没有**红色「错误」按钮。
 
 ## 第三步：确认能用
 
@@ -119,7 +119,7 @@ npm run build:chrome
 未打包扩展的 ID 由**加载目录的绝对路径**决定。所以：
 
 - **保持同一个目录 + 同一次浏览器配置** → 更新后配置、任务队列、视频库（IndexedDB）全部保留，无需重新登录或迁移。
-- **换了目录、换了电脑、换了浏览器** → 新 ID，等于全新安装，旧数据不会跟过来。要搬数据用选项页「迁移」里的导出/导入迁移包（完整备份，含视频库）。
+- **换了目录、换了电脑、换了浏览器** → 新 ID，等于全新安装，旧数据不会跟过来。要搬数据用选项页「迁移」里的导出 / 导入迁移包（完整备份，含视频库），见 [[从旧版油猴脚本迁移]]。
 - **先在旧环境导出再换路径**，否则旧数据只能靠手动找浏览器 profile 目录捞，很麻烦。
 
 卸载扩展（点卡片上的「移除」）会**同时删除**该扩展的存储与 IndexedDB。想留数据就先导出。
@@ -131,7 +131,7 @@ npm run build:chrome
 
 ## 常见问题
 
-**浏览器提示这个扩展「不受信任」/不来自商店，或者建议停用开发者模式扩展**
+**浏览器提示这个扩展「不受信任」/ 不来自商店，或者建议停用开发者模式扩展**
 Chrome 对侧载扩展的固定标记与提示，无法关闭，忽略即可。它不代表扩展有问题，也不影响任何功能。
 
 **报「清单文件缺失或不可读取」**
@@ -146,14 +146,14 @@ Chrome 对侧载扩展的固定标记与提示，无法关闭，忽略即可。�
 **能不能装成 `.crx`**
 不要。Chrome 稳定版已不再支持拖入 crx 安装（除企业策略），而且 crx 里的代码无法和仓库源码逐行对照。用「加载已解压的扩展程序」。
 
-**公司/学校账号装不上**
-组织策略可能禁止加载未打包扩展（`ExtensionInstallBlocklist` / 强制商店来源）。这个改不了，换个人浏览器配置，或改用 Firefox（[AMO 已上架](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，策略限制同样可能存在）。
+**公司 / 学校账号装不上**
+组织策略可能禁止加载未打包扩展（`ExtensionInstallBlocklist` / 强制商店来源）。这个改不了，换个人浏览器配置，或改用 Firefox（AMO 已上架，策略限制同样可能存在）。
 
 **换台电脑要重装一遍吗**
 要，但只需重复「第一步 + 第二步」。想同步数据就在旧机器导出迁移包、新机器导入。
 
 **这个扩展会不会偷偷干别的**
-不会。全部 JS 都打包在包内，没有远程代码、没有 `eval`、不含任何统计上报；`<all_urls>` 的两处用途写在 [Wiki 的权限说明](https://github.com/dawn-lc/IwaraAssistant/wiki/安装与首次配置#权限说明为什么需要全站访问) 里。担心的话直接读 `src/`，构建只是把这些 TS 编译成 IIFE。
+不会。全部 JS 都打包在包内，没有远程代码、没有 `eval`、不含任何统计上报；`<all_urls>` 的两处用途写在 [Wiki 的权限说明](https://github.com/dawn-lc/IwaraAssistant/wiki/安装与首次配置#权限说明为什么需要全站访问) 里。担心的话直接读仓库的 `src/`，构建只是把这些 TS 编译成 IIFE。
 
 ## 安全与信任边界
 
@@ -162,4 +162,4 @@ Chrome 对侧载扩展的固定标记与提示，无法关闭，忽略即可。�
 1. **来源**：只用本仓库源码构建，或本仓库 Actions 产出的 `extension-zips`。别人转发的包无法验证。
 2. **可验证性**：`npm run build:chrome` 是确定性的，同一 commit 构建出的产物可以互相比较；想核对某个行为，直接看 `src/background/` 与 `src/content/`。
 
-Firefox 不需要看本文：它已在 [AMO 上架](https://addons.mozilla.org/firefox/addon/iwara-assistant/)，直接安装即可，自动更新；只有想跑仓库最新代码时才走 `about:debugging#/runtime/this-firefox` 临时载入 `dist/firefox/manifest.json`。上架状态见 [06-testing-and-release.md](06-testing-and-release.md#未完成事项代码之外)。
+Firefox 不需要看本文：它已在 AMO 上架，直接安装即可、自动更新；只有想跑仓库最新代码时才走 `about:debugging#/runtime/this-firefox` 临时载入 `dist/firefox/manifest.json`。上架状态与发布流程见仓库的 [docs/06-testing-and-release.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/docs/06-testing-and-release.md)。

@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: 故障排查文档
-    url: https://github.com/dawn-lc/IwaraAssistant/blob/main/docs/10-troubleshooting.md
+    url: https://github.com/dawn-lc/IwaraAssistant/wiki/故障排查
     about: 装了没反应、解析失败、aria2 连不上、任务卡住、速度慢——先看这里
   - name: 安全漏洞（私密渠道）
     url: https://github.com/dawn-lc/IwaraAssistant/security/advisories/new

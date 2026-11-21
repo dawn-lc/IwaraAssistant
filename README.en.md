@@ -36,10 +36,10 @@ A browser extension for iwara.tv. It moves batch downloading, selection and mana
 
 ## Installation
 
-| Browser                                       | How to install                                                                | Notes                                                                  |
-| --------------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **Firefox 128+**                              | [Install from AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/) | Reviewed and approved, updates automatically                           |
-| Chrome / Edge / Brave / Vivaldi / Opera / Arc | Manual loading ([guide](docs/07-install-chromium.md))                         | Rejected by the store, functionality identical to a store installation |
+| Browser                                       | How to install                                                                               | Notes                                                                  |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Firefox 128+**                              | [Install from AMO](https://addons.mozilla.org/firefox/addon/iwara-assistant/)                | Reviewed and approved, updates automatically                           |
+| Chrome / Edge / Brave / Vivaldi / Opera / Arc | Manual loading ([guide](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装)) | Rejected by the store, functionality identical to a store installation |
 
 ### Firefox (recommended)
 
@@ -52,7 +52,7 @@ The published package is **MV2**, so an aria2 instance on your local network wor
 **Option 1: build from source** (requires Node ≥ 20.11) — `git clone` this repository, then `npm install && npm run build:chrome`; the output is in `dist/chrome`.
 **Option 2: download a CI artifact** — go to [Actions](https://github.com/dawn-lc/IwaraAssistant/actions/workflows/ci.yml), pick the latest green run → Artifacts → `extension-zips` → extract `chrome.zip`.
 
-Once you have the directory: open `chrome://extensions` (`edge://extensions` on Edge) → enable "Developer mode" → "Load unpacked" → choose the directory that **contains `manifest.json` directly** → reload the iwara pages that are already open. The full steps (including updating, rolling back, keeping data and troubleshooting) are in [docs/07-install-chromium.md](docs/07-install-chromium.md).
+Once you have the directory: open `chrome://extensions` (`edge://extensions` on Edge) → enable "Developer mode" → "Load unpacked" → choose the directory that **contains `manifest.json` directly** → reload the iwara pages that are already open. The full steps (including updating, rolling back, keeping data and troubleshooting) are in the [Wiki: manual installation for Chromium-based browsers](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装).
 
 > Only take artifacts from this repository's source or from this repository's Actions. Zips / crx files republished by third parties cannot be checked against the source; do not use them.
 
@@ -64,12 +64,11 @@ The extension itself contains and displays no adult content: there are no explic
 
 ## Documentation
 
-| Entry                                                      | Contents                                                                                                                                                                                                                                                                |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [**Wiki**](https://github.com/dawn-lc/IwaraAssistant/wiki) | For users: installation and first-time setup, download channels and endpoints, available path variables, batch delivery, task queue and automatic recovery, private and unlisted videos, legacy library migration, sync and MediaCenter, debugging and data export, FAQ |
-| [docs/10-troubleshooting.md](docs/10-troubleshooting.md)   | Troubleshooting: installed but nothing happens, parse failures, aria2 cannot connect, stuck tasks, slow speeds, capturing logs and exporting data                                                                                                                       |
-| [docs/05-features.md](docs/05-features.md)                 | The authoritative list of features and behaviour boundaries (including the trade-offs we "intentionally do not do")                                                                                                                                                     |
-| [docs/](docs/)                                             | Technical implementation: architecture, cross-browser differences, manifest, messaging protocol, testing and releasing, aria2 flow, debug channels, AMO listing assets                                                                                                  |
+| Entry                                                      | Contents                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**Wiki**](https://github.com/dawn-lc/IwaraAssistant/wiki) | For users: installation (including manual loading for Chromium-based browsers), download channels and endpoints, available path variables, batch delivery, task queue and automatic recovery, private and unlisted videos, legacy library migration, sync and MediaCenter, debugging and data export, troubleshooting, FAQ |
+| [docs/05-features.md](docs/05-features.md)                 | The authoritative list of features and behaviour boundaries (including the trade-offs we "intentionally do not do")                                                                                                                                                                                                        |
+| [docs/](docs/)                                             | Technical implementation: architecture, cross-browser differences, manifest, messaging protocol, testing and releasing, aria2 flow, debug channels, AMO listing assets                                                                                                                                                     |
 
 ## Development
 

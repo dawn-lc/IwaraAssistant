@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        提交前请先看 [docs/10-troubleshooting.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/docs/10-troubleshooting.md)：装了没反应、解析失败、aria2 连不上、任务卡住、速度慢这几类问题都有现成结论。
+        提交前请先看 [Wiki：故障排查](https://github.com/dawn-lc/IwaraAssistant/wiki/故障排查)：装了没反应、解析失败、aria2 连不上、任务卡住、速度慢这几类问题都有现成结论。
 
         **安全漏洞不要用这个模板**，请按 [SECURITY.md](https://github.com/dawn-lc/IwaraAssistant/blob/main/SECURITY.md) 走私密渠道。
   - type: input
@@ -72,5 +72,5 @@ body:
       options:
         - label: 已经刷新过 iwara 标签页，且看的是任务队列而不是页面
           required: true
-        - label: 已读过 docs/10-troubleshooting.md，不是其中的已知行为
+        - label: 已读过 Wiki 的故障排查，不是其中的已知行为
           required: true

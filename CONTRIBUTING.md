@@ -66,7 +66,7 @@ npm run test:firefox:smoke    # web-ext run 装载冒烟
 
 ## 报告 Bug
 
-请用 issue 模板填写，并附上：扩展版本、浏览器与版本、下载通道、任务队列里的原始错误码/报文、调试模式下的控制台片段（抓日志方式见 [docs/10-troubleshooting.md](docs/10-troubleshooting.md#10-抓日志与导出数据)）。**安全漏洞不要开公开 issue**，走 [SECURITY.md](SECURITY.md)。
+请用 issue 模板填写，并附上：扩展版本、浏览器与版本、下载通道、任务队列里的原始错误码/报文、调试模式下的控制台片段（抓日志方式见 [Wiki：故障排查](https://github.com/dawn-lc/IwaraAssistant/wiki/故障排查#10-抓日志与导出数据)）。**安全漏洞不要开公开 issue**，走 [SECURITY.md](SECURITY.md)。
 
 ## 许可
 

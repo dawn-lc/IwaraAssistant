@@ -1,12 +1,12 @@
 # 商店上架素材
 
-分发路线：**AMO**（Firefox，已上架，见下文第二节）、**Firefox 自建签名自更新**（设环境变量，包内注入 `gecko.update_url`）、**Chromium 系手动加载**（Chrome Web Store 已拒绝且不再重投，见下文与 [07-install-chromium.md](07-install-chromium.md)）。
+分发路线：**AMO**（Firefox，已上架，见下文第二节）、**Firefox 自建签名自更新**（设环境变量，包内注入 `gecko.update_url`）、**Chromium 系手动加载**（Chrome Web Store 已拒绝且不再重投，见下文与 [Wiki：Chromium 系手动安装](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装)）。
 
 > 首轮发布建议保留旧版脚本一个发布周期，README 提供迁移指引；确认无误后用户再禁用旧脚本。发布流程见 [06-testing-and-release.md](06-testing-and-release.md)。
 
 ## 一、Chrome Web Store
 
-> **状态：已拒绝，不再提交。** Chromium 系改为手动加载，安装流程见 [07-install-chromium.md](07-install-chromium.md)。本节以下内容仅作存档与申诉参考。
+> **状态：已拒绝，不再提交。** Chromium 系改为手动加载，安装流程见 [Wiki：Chromium 系手动安装](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装)。本节以下内容仅作存档与申诉参考。
 
 ### 拒绝记录（2026-10-30）
 

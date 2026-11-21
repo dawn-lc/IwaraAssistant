@@ -36,10 +36,10 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 
 ## 安装
 
-| 浏览器                                        | 安装方式                                                                  | 备注                         |
-| --------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------- |
-| **Firefox 128+**                              | [AMO 商店安装](https://addons.mozilla.org/firefox/addon/iwara-assistant/) | 审核通过，自动更新           |
-| Chrome / Edge / Brave / Vivaldi / Opera / Arc | 手动加载（[教程](docs/07-install-chromium.md)）                           | 商店已拒，功能与商店安装一致 |
+| 浏览器                                        | 安装方式                                                                               | 备注                         |
+| --------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------- |
+| **Firefox 128+**                              | [AMO 商店安装](https://addons.mozilla.org/firefox/addon/iwara-assistant/)              | 审核通过，自动更新           |
+| Chrome / Edge / Brave / Vivaldi / Opera / Arc | 手动加载（[教程](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装)） | 商店已拒，功能与商店安装一致 |
 
 ### Firefox（推荐）
 
@@ -52,7 +52,7 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 **方式一：源码构建**（需 Node ≥ 20.11）—— `git clone` 本仓库后 `npm install && npm run build:chrome`，产物在 `dist/chrome`。
 **方式二：下载 CI 产物** —— 到 [Actions](https://github.com/dawn-lc/IwaraAssistant/actions/workflows/ci.yml) 选最新一次绿色运行 → Artifacts → `extension-zips` → 解压出 `chrome.zip`。
 
-拿到目录后：打开 `chrome://extensions`（Edge 是 `edge://extensions`）→ 开启「开发者模式」→「加载已解压的扩展程序」→ 选**直接含 `manifest.json`** 的目录 → 刷新已打开的 iwara 页面。完整步骤（含更新、回滚、数据保留与故障排查）见 [docs/07-install-chromium.md](docs/07-install-chromium.md)。
+拿到目录后：打开 `chrome://extensions`（Edge 是 `edge://extensions`）→ 开启「开发者模式」→「加载已解压的扩展程序」→ 选**直接含 `manifest.json`** 的目录 → 刷新已打开的 iwara 页面。完整步骤（含更新、回滚、数据保留与装不上的排查）见 [Wiki：Chromium 系手动安装](https://github.com/dawn-lc/IwaraAssistant/wiki/Chromium-系手动安装)。
 
 > 只从本仓库源码或本仓库 Actions 取产物。第三方转发的 zip / crx 无法与源码对照，不要用。
 
@@ -64,12 +64,11 @@ iwara.tv 的浏览器扩展。把视频批量下载、选择与管理搬到一�
 
 ## 文档
 
-| 入口                                                       | 内容                                                                                                                                                             |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [**Wiki**](https://github.com/dawn-lc/IwaraAssistant/wiki) | 面向使用者：安装与首次配置、下载通道与端点、路径可用变量、批量投递、任务队列与自动恢复、私有与不公开视频、旧库迁移、同步与 MediaCenter、调试与数据导出、常见问题 |
-| [docs/10-troubleshooting.md](docs/10-troubleshooting.md)   | 故障排查：装了没反应、解析失败、aria2 连不上、任务卡住、速度慢、抓日志与导出                                                                                     |
-| [docs/05-features.md](docs/05-features.md)                 | 功能与行为边界的权威清单（含「有意不做」的取舍）                                                                                                                 |
-| [docs/](docs/)                                             | 技术实现：架构、跨浏览器差异、manifest、消息协议、测试与发布、aria2 流程、调试通道、AMO 上架素材                                                                 |
+| 入口                                                       | 内容                                                                                                                                                                                     |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**Wiki**](https://github.com/dawn-lc/IwaraAssistant/wiki) | 面向使用者：安装（含 Chromium 手动加载）、下载通道与端点、路径可用变量、批量投递、任务队列与自动恢复、私有与不公开视频、旧库迁移、同步与 MediaCenter、调试与数据导出、故障排查、常见问题 |
+| [docs/05-features.md](docs/05-features.md)                 | 功能与行为边界的权威清单（含「有意不做」的取舍）                                                                                                                                         |
+| [docs/](docs/)                                             | 技术实现：架构、跨浏览器差异、manifest、消息协议、测试与发布、aria2 流程、调试通道、AMO 上架素材                                                                                         |
 
 ## 开发
 
